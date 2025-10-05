@@ -1,0 +1,62 @@
+{
+  "name": "jarvis-5.0",
+  "version": "1.0.0",
+  "description": "AI-powered overlay assistant with voice activation and screen analysis",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "serve": "python3 -m http.server 8000"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nikhilatfiveguys/Jarvis.git"
+  },
+  "homepage": "https://github.com/nikhilatfiveguys/Jarvis#readme",
+  "bugs": {
+    "url": "https://github.com/nikhilatfiveguys/Jarvis/issues"
+  },
+  "keywords": [
+    "ai",
+    "assistant",
+    "overlay",
+    "voice-recognition",
+    "screen-capture",
+    "jarvis",
+    "electron",
+    "macos",
+    "productivity",
+    "automation"
+  ],
+  "author": "Aaron Soni",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "dependencies": {
+    "screenshot-desktop": "^1.15.2",
+    "run-applescript": "^5.0.0"
+  },
+  "build": {
+    "appId": "com.aaronsoni.jarvis",
+    "productName": "Jarvis 5.0",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/screenshot-desktop/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    }
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

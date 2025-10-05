@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis 5.0 - AI Overlay Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- True floating overlay - no container -->
+    <div id="jarvis-overlay" class="overlay">
+        <!-- Sleek minimal HUD -->
+        <div class="minimal-hud">
+            <!-- Text input area -->
+            <div class="input-section">
+                <button id="attach-btn" class="attach-btn" title="Attach (files/photo/screenshot)">+</button>
+                <input type="text" id="text-input" placeholder="Ask Jarvis anything...">
+                <button id="send-btn" class="send-btn">Send</button>
+            </div>
+            
+            <!-- Drag handle (six dots) -->
+            <div id="drag-handle" class="drag-handle">
+                <div class="drag-dots">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Answer This button - positioned under HUD when no output, moves next to humanize when output shown -->
+        <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Answer what's on screen">Answer This</button>
+        
+        <!-- Floating UI containers anchored to overlay -->
+        <div id="attachments-preview" class="attachments-preview hidden"></div>
+        <!-- Attach dropdown menu (outside HUD so it doesn't sit behind output) -->
+        <div id="attach-menu" class="attach-menu hidden">
+            <div class="attach-item" data-action="upload-file">Upload file</div>
+            <div class="attach-item" data-action="upload-photo">Upload photo</div>
+            <div class="attach-item" data-action="take-screenshot">Take screenshot</div>
+            <div class="attach-item" data-action="take-photo">Take photo</div>
+        </div>
+
+        <!-- Draggable output chip -->
+        <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag me to drop text into apps"></div>
+        <!-- Humanize button -->
+        <button id="humanize-btn" class="humanize-btn hidden" title="Make it sound more human">Humanize</button>
+        <!-- Floating close button positioned outside the output box -->
+        <button id="close-output-floating" class="close-output-floating hidden" aria-label="Hide output" title="Hide">×</button>
+    </div>
+
+    <!-- Activation indicator -->
+    <div id="activation-indicator" class="activation-indicator hidden">
+        <div class="activation-content">
+            <div class="jarvis-logo">🤖</div>
+            <div class="activation-text">Jarvis Activated</div>
+        </div>
+    </div>
+
+    <!-- Instructions overlay (hidden in Electron) -->
+    <div id="instructions" class="instructions hidden">
+        <div class="instructions-content">
+            <h2>Jarvis 5.0 - AI Overlay Assistant</h2>
+            <div class="instruction-item">
+                <strong>Voice Activation:</strong> Say "Jarvis" to activate the overlay
+            </div>
+            <div class="instruction-item">
+                <strong>Hotkey:</strong> Press <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>Space</kbd> to toggle overlay
+            </div>
+            <div class="instruction-item">
+                <strong>Features:</strong> OpenAI GPT-4 Vision screen analysis, voice commands, AI assistance
+            </div>
+            <button id="start-jarvis" class="start-btn">Start Jarvis</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

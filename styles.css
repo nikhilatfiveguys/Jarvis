@@ -1,0 +1,648 @@
+
+/* Reset and base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: transparent;
+    color: #fff;
+    overflow: hidden;
+}
+
+/* Utility classes */
+.hidden {
+    display: none !important;
+}
+
+/* True floating overlay - minimal */
+.overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: transparent;
+    z-index: 9999;
+    animation: slideIn 0.3s ease;
+    pointer-events: auto;
+    will-change: transform, left, top;
+}
+
+/* Minimal sleek HUD */
+.minimal-hud {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 30px;
+    padding: 6px 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 8px;
+    min-width: 300px;
+    max-width: 450px;
+}
+
+/* Input section */
+.input-section {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    gap: 8px;
+}
+
+.attach-btn {
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.attach-btn:hover { color: #ffffff; }
+
+.attachments-preview {
+    position: absolute; /* float near HUD */
+    display: flex;
+    flex-direction: row; /* row above HUD */
+    align-items: center;
+    gap: 6px;
+    z-index: 2000;
+}
+
+.attach-menu {
+    position: absolute;
+    background: rgba(30,30,30,0.96);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    backdrop-filter: blur(12px);
+    z-index: 2500; /* above output */
+    min-width: 180px;
+    overflow: hidden;
+}
+
+.attach-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.attach-item:hover { background: rgba(255,255,255,0.1); }
+
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    background: rgba(30,30,30,0.8);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px;
+    font-size: 11px;
+    justify-content: flex-end; /* right-align content */
+    text-align: right;
+    min-width: 110px;
+}
+
+.attachment-chip img { max-height: 20px; max-width: 28px; border-radius: 4px; }
+.attachment-remove { cursor: pointer; opacity: 0.8; margin-left: 2px; }
+.attachment-remove:hover { opacity: 1; }
+
+#text-input {
+    background: transparent;
+    border: none;
+    color: #fff;
+    padding: 6px 0;
+    font-size: 0.85rem;
+    outline: none;
+    flex: 1;
+    min-width: 0;
+}
+
+#text-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.send-btn {
+    background: #007AFF;
+    border: none;
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.8rem;
+}
+
+.send-btn:hover {
+    background: #0056CC;
+    transform: scale(1.05);
+}
+
+.send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Drag handle (6 dots menu) */
+.drag-handle {
+    cursor: move;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    border: none;
+    position: relative;
+    z-index: 1000;
+    pointer-events: auto;
+    padding: 0;
+}
+
+.drag-handle:hover {
+    transform: scale(1.1);
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+    transform: scale(0.95);
+}
+
+.drag-dots {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    gap: 1px;
+    width: 8px;
+    height: 12px;
+}
+
+.dot {
+    width: 2px;
+    height: 2px;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+    display: block;
+}
+
+/* Draggable state */
+.overlay.dragging {
+    cursor: grabbing;
+    user-select: none;
+}
+
+@keyframes slideIn {
+    from { 
+        opacity: 0; 
+        transform: translate(-50%, -50%) scale(0.9); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translate(-50%, -50%) scale(1); 
+    }
+}
+
+/* Model dropdown */
+.model-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: rgba(40, 40, 40, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+    margin-top: 8px;
+    overflow: hidden;
+    min-width: 200px;
+}
+
+.model-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    font-size: 0.9rem;
+}
+
+.model-option:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.model-option .model-icon {
+    font-size: 1.1rem;
+}
+
+.model-option .model-text {
+    color: #fff;
+    font-weight: 500;
+}
+
+/* Draggable output chip */
+.drag-output {
+    position: relative;
+    margin-top: 0.5rem;
+    background: rgba(0,0,0,0.7);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    max-width: 450px;
+    width: 100%;
+    color: #eaeaea;
+    cursor: grab;
+    user-select: text;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: visible; /* allow X button half outside */
+    backdrop-filter: blur(12px);
+    line-height: 1.4;
+    z-index: 1000; /* ensure above surrounding elements */
+    /* Custom scrollbar styling */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+}
+
+/* Close (X) button on output */
+.close-output {
+    position: absolute;
+    top: -10px; /* half outside vertically */
+    right: -10px; /* half outside horizontally */
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.35);
+    background: rgba(120,120,120,0.5); /* subtle gray like Cluely */
+    color: #fff;
+    font-size: 14px;
+    line-height: 20px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 2000; /* overlay above output */
+    box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    backdrop-filter: blur(6px);
+}
+
+.close-output:hover {
+    background: rgba(255,255,255,0.15);
+}
+
+/* Floating close button half in/half out of output */
+.close-output-floating {
+    position: absolute; /* relative to overlay so it moves at the same rate */
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.35);
+    background: rgba(120,120,120,0.55); /* subtle gray like Cluely */
+    color: #fff;
+    font-size: 10px;
+    line-height: 14px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 3000;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.55);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    /* Position half inside, half outside */
+    top: -8px; /* half of 16px height */
+    right: -8px; /* half of 16px width */
+}
+
+.close-output-floating:hover { 
+    background: rgba(150,150,150,0.6); 
+    opacity: 1;
+}
+
+/* Show close button when hovering over top-right area of overlay */
+.overlay:hover .close-output-floating {
+    opacity: 1;
+}
+
+/* Humanize button */
+.humanize-btn {
+    position: absolute;
+    bottom: -25px;
+    left: 0;
+    background: rgba(60, 60, 70, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: pointer;
+    z-index: 2000;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(6px);
+}
+
+.humanize-btn:hover {
+    background: rgba(80, 80, 90, 0.9);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.humanize-btn.hidden {
+    display: none;
+}
+
+.answer-this-btn {
+    background: rgba(60, 60, 70, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 10px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 1000;
+    white-space: nowrap;
+}
+
+/* Default state: centered under HUD when no output */
+.answer-this-btn.answer-this-default {
+    position: relative;
+    margin-top: 8px;
+    display: block;
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Positioned state: next to humanize button when output is shown */
+.answer-this-btn:not(.answer-this-default) {
+    position: absolute;
+    bottom: -25px;
+    left: 70px; /* Position next to humanize button */
+}
+
+.answer-this-btn:hover {
+    background: rgba(80, 80, 90, 0.9);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.answer-this-btn.hidden {
+    display: none;
+}
+
+/* Webkit scrollbar styling for better appearance */
+.drag-output::-webkit-scrollbar {
+    width: 12px;
+}
+
+.drag-output::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+}
+
+.drag-output::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 6px;
+    transition: background 0.2s ease;
+    border: 2px solid rgba(0, 0, 0, 0.2);
+}
+
+.drag-output::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.7);
+}
+
+.drag-output:active { cursor: grabbing; }
+
+
+
+#text-input {
+    background: transparent;
+    border: none;
+    color: #fff;
+    padding: 0.5rem;
+    font-size: 0.9rem;
+    outline: none;
+    min-width: 200px;
+}
+
+#text-input::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85rem;
+}
+
+.screenshot-btn, #send-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    padding: 0.5rem;
+    border-radius: 50%;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.8rem;
+    min-width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#send-btn { display: none; }
+
+.screenshot-btn:hover, #send-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+#send-btn:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.8);
+}
+
+#send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Temporary notification for responses */
+.notification {
+    display: none !important;
+}
+
+@keyframes notificationSlide {
+    from { 
+        opacity: 0; 
+        transform: translateX(-50%) translateY(-20px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateX(-50%) translateY(0); 
+    }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .floating-input {
+        min-width: 280px;
+    }
+    
+    #text-input {
+        min-width: 150px;
+    }
+}
+
+/* Instructions overlay (hidden in Electron) */
+.instructions {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.instructions-content {
+    text-align: center;
+    max-width: 500px;
+    padding: 2rem;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.instructions h2 {
+    font-size: 2.5rem;
+    margin-bottom: 2rem;
+    background: linear-gradient(45deg, #00d4ff, #00ff88);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.instruction-item {
+    margin: 1rem 0;
+    font-size: 1.1rem;
+    color: #e0e0e0;
+}
+
+kbd {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+.start-btn {
+    background: linear-gradient(45deg, #00d4ff, #00ff88);
+    border: none;
+    color: #000;
+    padding: 1rem 2rem;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border-radius: 50px;
+    cursor: pointer;
+    margin-top: 2rem;
+    transition: transform 0.2s ease;
+}
+
+.start-btn:hover {
+    transform: scale(1.05);
+}
+
+/* Activation indicator */
+.activation-indicator {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1001;
+    animation: fadeIn 0.3s ease;
+}
+
+.activation-content {
+    background: rgba(0, 0, 0, 0.9);
+    padding: 2rem 3rem;
+    border-radius: 20px;
+    text-align: center;
+    border: 2px solid #00ff88;
+    box-shadow: 0 10px 30px rgba(0, 255, 136, 0.3);
+}
+
+.jarvis-logo {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    animation: bounce 0.6s ease;
+}
+
+.activation-text {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #00ff88;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes bounce {
+    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-10px); }
+    60% { transform: translateY(-5px); }
+}
+
+/* Thinking dots animation */
+.thinking-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.thinking-dot {
+    width: 4px;
+    height: 4px;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+    animation: thinkingPulse 1.4s infinite ease-in-out;
+}
+
+.thinking-dot:nth-child(1) {
+    animation-delay: 0s;
+}
+
+.thinking-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.thinking-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes thinkingPulse {
+    0%, 80%, 100% {
+        transform: scale(0.8);
+        opacity: 0.5;
+    }
+    40% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+}
