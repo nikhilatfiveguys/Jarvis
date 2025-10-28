@@ -1,9 +1,9 @@
 # 🤖 Jarvis 5.0 - AI Overlay Assistant
 
-An intelligent macOS overlay assistant powered by AI with voice activation, screen analysis, and seamless integration with your workflow.
+An intelligent **macOS-only** overlay assistant powered by AI with voice activation, screen analysis, and seamless integration with your workflow. Works above all windows, including fullscreen apps!
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
-![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+![Platform](https://img.shields.io/badge/platform-macOS%20only-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 ## ✨ Features
@@ -11,9 +11,10 @@ An intelligent macOS overlay assistant powered by AI with voice activation, scre
 - 🎯 **AI-Powered Assistant** - Get intelligent responses to your queries
 - 🎤 **Voice Activation** - Say "Jarvis" to activate hands-free
 - 📸 **Screen Analysis** - Analyze what's on your screen with AI vision
-- ⌨️ **Keyboard Shortcuts** - Quick access with ⌘+⇧+Space
+- ⌨️ **Keyboard Shortcuts** - Quick access with ⌥+Space
+- 🖥️ **Fullscreen Overlay** - Works above all windows, even fullscreen apps
 - 🌐 **Web Integration** - Open websites, search, and get summaries
-- 🖥️ **App Control** - Launch and control applications
+- 🍎 **App Control** - Launch and control macOS applications
 - 💬 **Text & Voice Input** - Flexible input methods
 - 🎨 **Beautiful UI** - Modern, minimal overlay design
 
@@ -49,8 +50,10 @@ sudo xattr -rd com.apple.quarantine "/Applications/Jarvis 5.0.app"
 
 ### Activation Methods
 - Say **"Jarvis"** to activate with voice
-- Press **⌘+⇧+Space** to toggle the overlay
+- Press **⌥+Space** (Option+Space) to toggle the overlay
 - Type directly in the input field
+
+> **Note:** The overlay appears above ALL windows on macOS, including fullscreen applications like games, videos, and presentations!
 
 ### Commands
 - **"What's on my screen?"** - Analyze current screen content
@@ -60,7 +63,8 @@ sudo xattr -rd com.apple.quarantine "/Applications/Jarvis 5.0.app"
 - Ask any question for AI-powered responses
 
 ### Keyboard Shortcuts
-- **⌘+⇧+Space** - Toggle overlay visibility
+- **⌥+Space** (Option+Space) - Toggle overlay visibility
+- **⌘+⇧+J** - Voice activation
 - **Escape** - Hide overlay
 - **Enter** - Send message
 
@@ -87,14 +91,11 @@ npm start
 ### Project Structure
 ```
 jarvis-5.0/
-├── main.js              # Electron main process
+├── main.cjs             # Electron main process (macOS-optimized)
 ├── index.html           # Main overlay UI
 ├── script.js            # UI logic and API integration
 ├── styles.css           # Styling
-├── overlay.html         # Overlay window
 ├── package.json         # Dependencies and scripts
-├── getActiveUrl.js      # Browser URL detection
-├── summarizeWebsite.js  # Web scraping and summarization
 └── node_modules/        # Dependencies
 ```
 
@@ -139,11 +140,12 @@ Or modify the code to store API keys securely.
 
 ## 📝 Requirements
 
-- macOS 10.15 (Catalina) or later
+- **macOS 10.15 (Catalina) or later** (macOS-only application)
 - 200 MB disk space
 - Internet connection for AI features
 - Microphone permission (for voice activation)
 - Screen Recording permission (for screen analysis)
+- Accessibility permissions (for fullscreen overlay support)
 
 ## 🔒 Privacy
 
@@ -171,15 +173,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - First launch requires right-click to open (macOS security)
 - Requires permissions for microphone and screen recording
 - Voice activation may not work without microphone permission
+- **Note:** This application is designed exclusively for macOS and will not run on Windows or Linux
 
 ## 🗺️ Roadmap
 
-- [ ] Windows and Linux support
 - [ ] Custom hotkey configuration
 - [ ] Plugin system for extensions
 - [ ] Local AI model support
-- [ ] Multi-monitor support
+- [ ] Multi-monitor support improvements
 - [ ] Dark/Light theme toggle
+- [ ] Enhanced fullscreen app compatibility
 
 ## 👏 Acknowledgments
 

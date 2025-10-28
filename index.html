@@ -11,13 +11,6 @@
     <div id="jarvis-overlay" class="overlay">
         <!-- Sleek minimal HUD -->
         <div class="minimal-hud">
-            <!-- Text input area -->
-            <div class="input-section">
-                <button id="attach-btn" class="attach-btn" title="Attach (files/photo/screenshot)">+</button>
-                <input type="text" id="text-input" placeholder="Ask Jarvis anything...">
-                <button id="send-btn" class="send-btn">Send</button>
-            </div>
-            
             <!-- Drag handle (six dots) -->
             <div id="drag-handle" class="drag-handle">
                 <div class="drag-dots">
@@ -29,23 +22,51 @@
                     <span class="dot"></span>
                 </div>
             </div>
+            
+            <!-- Text input area -->
+            <div class="input-section">
+                <input type="text" id="text-input" placeholder="Ask Jarvis anything...">
+                <button id="send-btn" class="send-btn">Send</button>
+            </div>
+            
+            <!-- Message counter for free users -->
+            <div id="message-counter" class="message-counter hidden">
+                <span id="message-count-text">0/10</span>
+            </div>
+            
+            <!-- Settings button -->
+            <button id="settings-btn" class="settings-btn" title="Settings">
+                <div class="menu-icon">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </button>
         </div>
+        
+        <!-- Settings menu -->
+        <div id="settings-menu" class="settings-menu hidden">
+            <div class="settings-item" id="account-info-btn">
+                <span class="settings-text">Settings</span>
+            </div>
+            <div class="settings-item" id="clear-chat-btn">
+                <span class="settings-text">Clear Chat History</span>
+            </div>
+            <div class="settings-item" id="settings-close-btn">
+                <span class="settings-text">Close</span>
+            </div>
+        </div>
+        
         
         <!-- Answer This button - positioned under HUD when no output, moves next to humanize when output shown -->
         <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Answer what's on screen">Answer This</button>
         
-        <!-- Floating UI containers anchored to overlay -->
-        <div id="attachments-preview" class="attachments-preview hidden"></div>
-        <!-- Attach dropdown menu (outside HUD so it doesn't sit behind output) -->
-        <div id="attach-menu" class="attach-menu hidden">
-            <div class="attach-item" data-action="upload-file">Upload file</div>
-            <div class="attach-item" data-action="upload-photo">Upload photo</div>
-            <div class="attach-item" data-action="take-screenshot">Take screenshot</div>
-            <div class="attach-item" data-action="take-photo">Take photo</div>
-        </div>
 
         <!-- Draggable output chip -->
-        <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag me to drop text into apps"></div>
+        <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag me to drop text into apps">
+            <!-- Resize handle -->
+            <div id="resize-handle" class="resize-handle" title="Drag to resize"></div>
+        </div>
         <!-- Humanize button -->
         <button id="humanize-btn" class="humanize-btn hidden" title="Make it sound more human">Humanize</button>
         <!-- Floating close button positioned outside the output box -->
@@ -60,22 +81,40 @@
         </div>
     </div>
 
-    <!-- Instructions overlay (hidden in Electron) -->
-    <div id="instructions" class="instructions hidden">
-        <div class="instructions-content">
-            <h2>Jarvis 5.0 - AI Overlay Assistant</h2>
-            <div class="instruction-item">
-                <strong>Voice Activation:</strong> Say "Jarvis" to activate the overlay
+    <!-- Account Info Modal -->
+    <div id="account-modal" class="account-modal hidden">
+        <div class="account-modal-content">
+            <div class="account-modal-header">
+                <h3>Account & Premium Status</h3>
+                <button id="account-modal-close" class="account-modal-close">×</button>
             </div>
-            <div class="instruction-item">
-                <strong>Hotkey:</strong> Press <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>Space</kbd> to toggle overlay
+            <div class="account-modal-body">
+                <div class="account-info">
+                    <div class="account-section">
+                        <div class="account-label">Account:</div>
+                        <div id="user-email" class="account-value">Free Tier</div>
+                    </div>
+                    <div class="account-section">
+                        <div class="account-label">Premium Status:</div>
+                        <div id="premium-status" class="account-value">Free</div>
+                    </div>
+                    <div class="account-section">
+                        <div class="account-label">Features:</div>
+                        <div id="feature-list" class="feature-list">
+                            <div class="feature-item">✅ Voice Recording</div>
+                            <div class="feature-item">✅ Screenshot Analysis</div>
+                            <div class="feature-item">✅ Web Search</div>
+                            <div class="feature-item">❌ Document Processing</div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="instruction-item">
-                <strong>Features:</strong> OpenAI GPT-4 Vision screen analysis, voice commands, AI assistance
+            <div class="account-modal-footer">
+                <button id="account-modal-ok" class="account-modal-btn">OK</button>
             </div>
-            <button id="start-jarvis" class="start-btn">Start Jarvis</button>
         </div>
     </div>
+
 
     <script src="script.js"></script>
 </body>

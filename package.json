@@ -1,62 +1,203 @@
 {
-  "name": "jarvis-5.0",
-  "version": "1.0.0",
-  "description": "AI-powered overlay assistant with voice activation and screen analysis",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
-    "build": "electron-builder",
-    "serve": "python3 -m http.server 8000"
+ "name": "jarvis-5.0",
+ "version": "1.0.0",
+ "description": "AI-powered overlay assistant with voice activation and screen analysis",
+ "main": "main.js",
+ "scripts": {
+  "start": "electron .",
+  "build": "electron-builder",
+  "build-signed": "./build-signed.sh",
+  "build-unsigned": "electron-builder --config electron-builder-unsigned.json",
+  "validate": "node validate-config.js",
+  "test-auth": "node test-auth.js",
+  "test-user": "node test-user-experience.js",
+  "test-pkce": "node test-pkce.js",
+  "dev": "NODE_ENV=development electron .",
+  "prod": "NODE_ENV=production electron ."
+ },
+ "repository": {
+  "type": "git",
+  "url": "https://github.com/nikhilatfiveguys/Jarvis.git"
+ },
+ "homepage": "https://github.com/nikhilatfiveguys/Jarvis#readme",
+ "bugs": {
+  "url": "https://github.com/nikhilatfiveguys/Jarvis/issues"
+ },
+ "keywords": [
+  "ai",
+  "assistant",
+  "overlay",
+  "voice-recognition",
+  "screen-capture",
+  "jarvis",
+  "electron",
+  "macos-only",
+  "fullscreen-overlay",
+  "productivity",
+  "automation"
+ ],
+ "author": "Aaron Soni",
+ "license": "MIT",
+ "devDependencies": {
+  "@electron/notarize": "^3.1.0",
+  "electron": "^32.0.0",
+  "electron-builder": "^24.0.0",
+  "electron-localshortcut": "^3.2.1"
+ },
+ "dependencies": {
+  "@polar-sh/sdk": "^0.39.1",
+  "axios": "^1.12.2",
+  "crypto-js": "^4.2.0",
+  "electron-store": "^11.0.2",
+  "form-data": "^4.0.4",
+  "node-record-lpcm16": "^1.0.1",
+  "wav": "^1.0.2",
+  "whisper-node": "^0.1.0"
+ },
+ "build": {
+  "appId": "com.aaronsoni.jarvis",
+  "productName": "Jarvis 5.0",
+  "icon": "icon.icns",
+  "directories": {
+   "output": "dist"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/nikhilatfiveguys/Jarvis.git"
-  },
-  "homepage": "https://github.com/nikhilatfiveguys/Jarvis#readme",
-  "bugs": {
-    "url": "https://github.com/nikhilatfiveguys/Jarvis/issues"
-  },
-  "keywords": [
-    "ai",
-    "assistant",
-    "overlay",
-    "voice-recognition",
-    "screen-capture",
-    "jarvis",
-    "electron",
-    "macos",
-    "productivity",
-    "automation"
+  "files": [
+   "main.js",
+   "script.js",
+   "index.html",
+   "styles.css",
+   "paywall.html",
+   "paywall.js",
+   "account-window.html",
+   "voice-recorder.js",
+   "polar-config.js",
+   "polar-integration.js",
+   "polar-success-handler.js",
+   "polar-webhook-handler.js",
+   "webhook-handler.js",
+   "summarizeWebsite.js",
+   "icon.icns",
+   "JarvisLogo.png",
+   "config/**/*",
+   "!node_modules/**/*",
+   "node_modules/axios/**/*",
+   "node_modules/form-data/**/*",
+   "node_modules/combined-stream/**/*",
+   "node_modules/delayed-stream/**/*",
+   "node_modules/asynckit/**/*",
+   "node_modules/es-set-tostringtag/**/*",
+   "node_modules/get-intrinsic/**/*",
+   "node_modules/es-object-atoms/**/*",
+   "node_modules/es-errors/**/*",
+   "node_modules/math-intrinsics/**/*",
+   "node_modules/gopd/**/*",
+   "node_modules/es-define-property/**/*",
+   "node_modules/has-symbols/**/*",
+   "node_modules/get-proto/**/*",
+   "node_modules/dunder-proto/**/*",
+   "node_modules/call-bind-apply-helpers/**/*",
+   "node_modules/hasown/**/*",
+   "node_modules/has-tostringtag/**/*",
+   "node_modules/function-bind/**/*",
+   "node_modules/has/**/*",
+   "node_modules/define-properties/**/*",
+   "node_modules/object-keys/**/*",
+   "node_modules/foreach/**/*",
+   "node_modules/define-property/**/*",
+   "node_modules/is-descriptor/**/*",
+   "node_modules/is-data-descriptor/**/*",
+   "node_modules/is-accessor-descriptor/**/*",
+   "node_modules/kind-of/**/*",
+   "node_modules/is-buffer/**/*",
+   "node_modules/is-core-module/**/*",
+   "node_modules/has-flag/**/*",
+   "node_modules/supports-color/**/*",
+   "node_modules/mime-types/**/*",
+   "node_modules/mime-db/**/*",
+   "node_modules/proxy-from-env/**/*",
+   "node_modules/follow-redirects/**/*",
+   "node_modules/node-record-lpcm16/**/*",
+   "node_modules/wav/**/*",
+   "node_modules/whisper-node/**/*",
+   "node_modules/@polar-sh/**/*",
+   "node_modules/zod/**/*",
+   "node_modules/crypto-js/**/*"
   ],
-  "author": "Aaron Soni",
-  "license": "MIT",
-  "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.0.0"
-  },
-  "dependencies": {
-    "screenshot-desktop": "^1.15.2",
-    "run-applescript": "^5.0.0"
-  },
-  "build": {
-    "appId": "com.aaronsoni.jarvis",
-    "productName": "Jarvis 5.0",
-    "directories": {
-      "output": "dist"
+  "asarUnpack": [
+   "node_modules/axios/**/*",
+   "node_modules/form-data/**/*",
+   "node_modules/combined-stream/**/*",
+   "node_modules/delayed-stream/**/*",
+   "node_modules/asynckit/**/*",
+   "node_modules/es-set-tostringtag/**/*",
+   "node_modules/get-intrinsic/**/*",
+   "node_modules/es-object-atoms/**/*",
+   "node_modules/es-errors/**/*",
+   "node_modules/math-intrinsics/**/*",
+   "node_modules/gopd/**/*",
+   "node_modules/es-define-property/**/*",
+   "node_modules/has-symbols/**/*",
+   "node_modules/get-proto/**/*",
+   "node_modules/dunder-proto/**/*",
+   "node_modules/call-bind-apply-helpers/**/*",
+   "node_modules/hasown/**/*",
+   "node_modules/has-tostringtag/**/*",
+   "node_modules/function-bind/**/*",
+   "node_modules/has/**/*",
+   "node_modules/define-properties/**/*",
+   "node_modules/object-keys/**/*",
+   "node_modules/foreach/**/*",
+   "node_modules/define-property/**/*",
+   "node_modules/is-descriptor/**/*",
+   "node_modules/is-data-descriptor/**/*",
+   "node_modules/is-accessor-descriptor/**/*",
+   "node_modules/kind-of/**/*",
+   "node_modules/is-buffer/**/*",
+   "node_modules/is-core-module/**/*",
+   "node_modules/has-flag/**/*",
+   "node_modules/supports-color/**/*",
+   "node_modules/mime-types/**/*",
+   "node_modules/mime-db/**/*",
+   "node_modules/proxy-from-env/**/*",
+   "node_modules/follow-redirects/**/*",
+   "node_modules/node-record-lpcm16/**/*",
+   "node_modules/wav/**/*",
+   "node_modules/whisper-node/**/*",
+   "node_modules/@polar-sh/**/*",
+   "node_modules/zod/**/*",
+   "node_modules/crypto-js/**/*"
+  ],
+  "mac": {
+   "category": "public.app-category.productivity",
+   "hardenedRuntime": false,
+   "gatekeeperAssess": false,
+   "identity": null,
+   "icon": "icon.icns",
+   "target": [
+    {
+     "target": "dmg",
+     "arch": [
+      "arm64",
+      "x64"
+     ]
     },
-    "files": [
-      "**/*",
-      "node_modules/**/*"
-    ],
-    "asarUnpack": [
-      "node_modules/screenshot-desktop/**/*"
-    ],
-    "mac": {
-      "category": "public.app-category.productivity"
+    {
+     "target": "zip",
+     "arch": [
+      "arm64",
+      "x64"
+     ]
     }
+   ]
   },
-  "engines": {
-    "node": ">=14.0.0"
-  }
+  "dmg": {
+   "sign": false
+  },
+  "afterPack": "build/afterPack.js",
+  "win": null,
+  "linux": null
+ },
+ "engines": {
+  "node": ">=14.0.0"
+ }
 }

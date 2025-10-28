@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis Settings</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .license-container {
+            background: #2a2a2a;
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            border: 1px solid #333;
+        }
+
+        .logo {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 20px;
+            background: #007AFF;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+            font-weight: bold;
+        }
+
+        h1 {
+            color: #ffffff;
+            margin-bottom: 8px;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 32px;
+            font-size: 16px;
+        }
+
+        /* Premium User Section */
+        .premium-user-section {
+            margin-bottom: 32px;
+        }
+
+        .user-info {
+            background: #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .user-email {
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .next-billing {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+
+        .manage-subscription-btn {
+            background: #333;
+            color: white;
+            border: 1px solid #444;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .manage-subscription-btn:hover {
+            background: #444;
+        }
+
+
+        /* Free User Section */
+        .free-user-section {
+            margin-bottom: 32px;
+        }
+
+        .features-preview {
+            background: #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .features-preview h3 {
+            color: #ffffff;
+            margin-bottom: 16px;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .features-preview ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .features-preview li {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+            margin-bottom: 8px;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .features-preview li:before {
+            content: "✓";
+            color: #28a745;
+            font-weight: bold;
+            position: absolute;
+            left: 0;
+        }
+
+        .get-premium-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .get-premium-btn:hover {
+            background: #218838;
+        }
+
+        /* Keyboard Shortcuts Section */
+        .shortcuts-section {
+            background: #333;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .shortcuts-section h3 {
+            color: #ffffff;
+            margin-bottom: 16px;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .shortcuts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .shortcut-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            transition: background 0.2s ease;
+        }
+
+        .shortcut-item:hover {
+            background: #333;
+        }
+
+        .shortcut-key {
+            background: #444;
+            color: rgba(255, 255, 255, 0.9);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 500;
+            font-size: 12px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+        }
+
+        .shortcut-desc {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        @media (max-width: 480px) {
+            .license-container {
+                padding: 24px;
+                margin: 10px;
+            }
+
+            h1 {
+                font-size: 20px;
+            }
+
+            .subtitle {
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="license-container">
+        <div class="logo">J</div>
+
+        <!-- Premium User Section (shown when subscribed) -->
+        <div id="premium-user-section" class="premium-user-section" style="display: none;">
+            <div class="user-info">
+                <div class="user-email" id="user-email-display">theonlygoated@gmail.com</div>
+                <div class="next-billing" id="next-billing-display">Next billing: November 22, 2025</div>
+            </div>
+            <button id="manage-subscription-btn" class="manage-subscription-btn">Manage Subscription</button>
+        </div>
+
+                <!-- Free User Section (shown when not subscribed) -->
+                <div id="free-user-section" class="free-user-section">
+                    <div class="features-preview">
+                        <h3>Premium Features</h3>
+                        <ul>
+                            <li>✓ Unlimited AI responses</li>
+                            <li>✓ Screenshot analysis</li>
+                            <li>✓ Voice activation</li>
+                            <li>✓ Advanced features</li>
+                        </ul>
+                    </div>
+                    <button id="get-premium-btn" class="get-premium-btn">Get Premium</button>
+                </div>
+
+        <!-- Keyboard Shortcuts Section -->
+        <div class="shortcuts-section">
+            <h3>Keyboard Shortcuts</h3>
+            <div class="shortcuts-list">
+                <div class="shortcut-item">
+                    <span class="shortcut-key">Option + Space</span>
+                    <span class="shortcut-desc">Toggle Jarvis overlay on/off</span>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-key">Command + S</span>
+                    <span class="shortcut-desc">Start/stop voice recording</span>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-key">Double-click 6 dots</span>
+                    <span class="shortcut-desc">Move Jarvis to top of screen</span>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-key">Answer This button</span>
+                    <span class="shortcut-desc">Answer question on your screen</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hidden sections for functionality -->
+        <div id="subscription-status" class="status-card" style="display: none;">
+            <div class="status-title">Free Plan</div>
+            <div class="status-description">Basic features available</div>
+        </div>
+        <div id="payment-section" class="payment-section" style="display: none;"></div>
+        <div id="license-info" class="license-info" style="display: none;"></div>
+        <div class="features-list" style="display: none;"></div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        // Check subscription status on load
+        async function checkSubscriptionStatus() {
+            try {
+                console.log('Checking subscription status...');
+                const result = await ipcRenderer.invoke('check-subscription-status');
+                console.log('Subscription status result:', result);
+                
+                if (result && result.hasActiveSubscription && result.subscriptionData) {
+                    updateUI('premium', result.subscriptionData);
+                } else {
+                    updateUI('free');
+                }
+            } catch (error) {
+                console.error('Error checking subscription status:', error);
+                updateUI('free');
+            }
+        }
+
+        // Update UI based on subscription status
+        function updateUI(status, subscriptionData = null) {
+            const premiumSection = document.getElementById('premium-user-section');
+            const freeSection = document.getElementById('free-user-section');
+            
+            if (status === 'premium' && subscriptionData) {
+                // Show premium user section
+                premiumSection.style.display = 'block';
+                freeSection.style.display = 'none';
+                
+                // Update user info
+                document.getElementById('user-email-display').textContent = subscriptionData.email;
+                document.getElementById('next-billing-display').textContent = `Next billing: ${subscriptionData.nextBilling}`;
+                
+                // Hide all other sections
+                document.getElementById('payment-section').style.display = 'none';
+                document.getElementById('subscription-status').style.display = 'none';
+                document.getElementById('license-info').style.display = 'none';
+            } else {
+                // Show free user section
+                premiumSection.style.display = 'none';
+                freeSection.style.display = 'block';
+                
+                // Hide all other sections
+                document.getElementById('payment-section').style.display = 'none';
+                document.getElementById('subscription-status').style.display = 'none';
+                document.getElementById('license-info').style.display = 'none';
+            }
+        }
+
+        // Get Premium Button (for free users)
+        const getPremiumBtn = document.getElementById('get-premium-btn');
+        getPremiumBtn.addEventListener('click', async () => {
+            console.log('🎯 GET PREMIUM BUTTON CLICKED!');
+            try {
+                getPremiumBtn.disabled = true;
+                getPremiumBtn.textContent = 'Processing...';
+                
+                const result = await ipcRenderer.invoke('create-checkout-session');
+                
+                if (result.success) {
+                    console.log('✅ Checkout session created successfully');
+                } else {
+                    console.error('❌ Error creating checkout session:', result.error);
+                    getPremiumBtn.textContent = 'Try Again';
+                }
+            } catch (error) {
+                console.error('Error creating checkout session:', error);
+                getPremiumBtn.textContent = 'Try Again';
+            } finally {
+                getPremiumBtn.disabled = false;
+                if (getPremiumBtn.textContent === 'Processing...') {
+                    getPremiumBtn.textContent = 'Get Premium';
+                }
+            }
+        });
+
+        // Manage Subscription Button (for premium users)
+        const manageSubscriptionBtn = document.getElementById('manage-subscription-btn');
+        manageSubscriptionBtn.addEventListener('click', async () => {
+            try {
+                manageSubscriptionBtn.disabled = true;
+                manageSubscriptionBtn.textContent = 'Opening...';
+                
+                // Open Polar customer portal for subscription management
+                const result = await ipcRenderer.invoke('cancel-subscription');
+                
+                if (result.success) {
+                    console.log('✅ Opened Polar customer portal');
+                    // Note: We don't update UI here since user needs to manage subscription on Polar
+                } else {
+                    console.error('❌ Error opening Polar portal:', result.error);
+                }
+            } catch (error) {
+                console.error('Error opening Polar portal:', error);
+            } finally {
+                manageSubscriptionBtn.disabled = false;
+                manageSubscriptionBtn.textContent = 'Manage Subscription';
+            }
+        });
+
+
+
+                // Initialize
+                checkSubscriptionStatus();
+
+                // Listen for subscription status changes
+                ipcRenderer.on('subscription-status-changed', (event, data) => {
+                    console.log('🔄 Subscription status changed:', data);
+                    updateUI(data.status);
+                });
+
+    </script>
+</body>
+</html>

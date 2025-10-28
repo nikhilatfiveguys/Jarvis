@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis 5.0 - Upgrade to Pro</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0a0a0a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+            margin: 0;
+            padding: 0;
+            -webkit-app-region: drag;
+        }
+
+        .paywall-container {
+            background: transparent;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            position: relative;
+            z-index: 1;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px auto;
+            display: block;
+            object-fit: contain;
+        }
+
+        h1 {
+            font-size: 24px;
+            color: #ffffff;
+            margin-bottom: 6px;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 25px;
+        }
+
+        .features {
+            text-align: left;
+            margin-bottom: 30px;
+        }
+
+        .feature {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .feature-icon {
+            width: 16px;
+            height: 16px;
+            margin-right: 12px;
+            color: #4ade80;
+        }
+
+        .pricing {
+            margin-bottom: 25px;
+        }
+
+        .price {
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+
+        .price-period {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 12px;
+        }
+
+        .trial-info {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 11px;
+            margin-top: 8px;
+        }
+
+        .buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .upgrade-btn {
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            padding: 13px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            -webkit-app-region: no-drag;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .upgrade-btn:hover {
+            background: rgba(0, 0, 0, 0.6);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .trial-btn {
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            padding: 13px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            -webkit-app-region: no-drag;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .trial-btn:hover {
+            background: rgba(0, 0, 0, 0.6);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .skip-btn {
+            background: transparent;
+            color: rgba(255, 255, 255, 0.5);
+            border: none;
+            padding: 8px 16px;
+            font-size: 12px;
+            cursor: pointer;
+            text-decoration: underline;
+            -webkit-app-region: no-drag;
+        }
+
+        .skip-btn:hover {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .loading {
+            display: none;
+            color: #4ade80;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .error {
+            display: none;
+            color: #ef4444;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        .loading.active, .error.active {
+            display: block;
+        }
+
+
+    </style>
+</head>
+<body>
+        <div class="paywall-container">
+        
+        <img src="JarvisLogo.png" alt="Jarvis Logo" class="logo">
+        <h1>Upgrade to Pro</h1>
+        <p class="subtitle">Unlock the full potential of Jarvis 5.0</p>
+
+        <div class="features">
+            <div class="feature">
+                <svg class="feature-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Unlimited AI conversations
+            </div>
+            <div class="feature">
+                <svg class="feature-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Advanced screenshot analysis
+            </div>
+            <div class="feature">
+                <svg class="feature-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Voice activation & commands
+            </div>
+            <div class="feature">
+                <svg class="feature-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                App control & automation
+            </div>
+            <div class="feature">
+                <svg class="feature-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Cloud sync & backup
+            </div>
+        </div>
+
+        <div class="pricing">
+            <div class="price">$5.00<span class="price-period">/month</span></div>
+        </div>
+
+        <div class="buttons">
+            <button class="upgrade-btn" id="upgrade-btn">Get</button>
+            <button class="skip-btn" id="skip-btn">Continue with Limited Features</button>
+        </div>
+
+        <div class="loading" id="loading">Processing...</div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <script src="polar-config.js"></script>
+    <script src="paywall.js"></script>
+</body>
+</html>
