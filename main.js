@@ -52,6 +52,18 @@ class JarvisApp {
             }
         });
 
+        // Add global error handlers to prevent crashes
+        process.on('uncaughtException', (error) => {
+            console.error('Uncaught Exception:', error);
+            // Don't crash the app, just log the error
+            // On Windows/school computers, this might prevent the app from closing
+        });
+        
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+            // Don't crash the app, just log the error
+        });
+
         this.setupApp();
     }
 
