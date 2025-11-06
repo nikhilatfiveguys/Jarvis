@@ -65,10 +65,16 @@ class PolarSuccessHandler {
                 const customerEmail = await this.polarIntegration.getCustomerEmailFromCheckout(checkoutId);
                 console.log('Customer email from Polar API:', customerEmail);
 
-                // Process the checkout success
+                // Process the checkout success (but don't store yet)
                 const result = await this.polarIntegration.handleCheckoutSuccess(checkoutId, customerEmail);
             
-            if (result.success) {
+            if (result.success && result.subscriptionData) {
+                // Store subscription data using mainApp's method (uses correct Electron path)
+                if (this.mainApp && this.mainApp.storeSubscriptionData) {
+                    await this.mainApp.storeSubscriptionData(result.subscriptionData);
+                    console.log('✅ Subscription data stored via mainApp');
+                }
+                
                 // Notify main app about successful subscription
                 if (this.mainApp && this.mainApp.mainWindow) {
                     this.mainApp.mainWindow.webContents.send('subscription-activated', {

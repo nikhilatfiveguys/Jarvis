@@ -10,6 +10,10 @@
     <!-- True floating overlay - no container -->
     <div id="jarvis-overlay" class="overlay">
         <!-- Sleek minimal HUD -->
+        <!-- Attachments bar (appears when files are attached) -->
+        <div id="attachments-bar" class="attachments-bar hidden"></div>
+
+        <!-- Main HUD -->
         <div class="minimal-hud">
             <!-- Drag handle (six dots) -->
             <div id="drag-handle" class="drag-handle">
@@ -46,8 +50,11 @@
         
         <!-- Settings menu -->
         <div id="settings-menu" class="settings-menu hidden">
+            <div class="settings-item" id="add-file-btn">
+                <span class="settings-text">Add File</span>
+            </div>
             <div class="settings-item" id="account-info-btn">
-                <span class="settings-text">Settings</span>
+                <span class="settings-text">Account</span>
             </div>
             <div class="settings-item" id="clear-chat-btn">
                 <span class="settings-text">Clear Chat History</span>
@@ -80,6 +87,9 @@
             <div class="activation-text">Jarvis Activated</div>
         </div>
     </div>
+
+    <!-- Hidden file input for Add File action -->
+    <input id="file-input" type="file" multiple class="hidden" accept="*/*" />
 
     <!-- Account Info Modal -->
     <div id="account-modal" class="account-modal hidden">

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jarvis Settings</title>
+    <title>Account</title>
     <style>
         * {
             margin: 0;
@@ -270,10 +270,6 @@
                     <span class="shortcut-desc">Toggle Jarvis overlay on/off</span>
                 </div>
                 <div class="shortcut-item">
-                    <span class="shortcut-key">Command + S</span>
-                    <span class="shortcut-desc">Start/stop voice recording</span>
-                </div>
-                <div class="shortcut-item">
                     <span class="shortcut-key">Double-click 6 dots</span>
                     <span class="shortcut-desc">Move Jarvis to top of screen</span>
                 </div>
@@ -402,9 +398,10 @@
                 checkSubscriptionStatus();
 
                 // Listen for subscription status changes
-                ipcRenderer.on('subscription-status-changed', (event, data) => {
+                ipcRenderer.on('subscription-status-changed', async (event, data) => {
                     console.log('🔄 Subscription status changed:', data);
-                    updateUI(data.status);
+                    // Re-check subscription status to get latest data
+                    await checkSubscriptionStatus();
                 });
 
     </script>

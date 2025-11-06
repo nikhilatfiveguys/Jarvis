@@ -31,6 +31,57 @@ body {
     will-change: transform, left, top;
 }
 
+/* Attachments bar */
+.attachments-bar {
+    position: absolute;
+    top: -18px;
+    left: 0;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 2px 4px;
+    backdrop-filter: blur(10px);
+}
+
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    background: rgba(60,60,70,0.85);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 4px;
+    position: relative;
+    cursor: pointer;
+}
+
+.attachment-remove {
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    color: #fff;
+    width: 100%;
+    height: 100%;
+    line-height: 14px; /* match chip height for vertical centering */
+    font-size: 12px;   /* bigger X */
+    padding: 0;
+    border-radius: 4px;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.attachment-remove:hover {
+    background: rgba(255,255,255,0.12);
+}
+
+.attachment-remove:hover { color: #fff; }
+
 /* Minimal sleek HUD */
 .minimal-hud {
     display: flex;
@@ -128,6 +179,8 @@ body {
     gap: 1px;
     width: 8px;
     height: 12px;
+    align-items: center;
+    justify-items: center;
 }
 
 .dot {
@@ -258,23 +311,27 @@ body {
 /* Humanize button */
 .humanize-btn {
     position: absolute;
-    bottom: -25px;
-    left: 0;
+    bottom: -35px;
+    left: calc(50% + 50px);
+    transform: translateX(-50%);
     background: rgba(60, 60, 70, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
+    border-radius: 20px;
     color: #fff;
     font-size: 10px;
     padding: 4px 8px;
     cursor: pointer;
     z-index: 2000;
     transition: all 0.2s ease;
-    backdrop-filter: blur(6px);
+    backdrop-filter: blur(15px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    white-space: nowrap;
 }
 
 .humanize-btn:hover {
     background: rgba(80, 80, 90, 0.9);
     border-color: rgba(255, 255, 255, 0.3);
+    transform: translateX(-50%) scale(1.05);
 }
 
 .humanize-btn.hidden {
@@ -306,11 +363,11 @@ body {
     margin-right: auto;
 }
 
-/* Positioned state: centered when output is shown */
+/* Positioned state: positioned next to humanize button when output is shown */
 .answer-this-btn:not(.answer-this-default) {
     position: absolute;
     bottom: -35px;
-    left: 50%;
+    left: calc(50% - 50px);
     transform: translateX(-50%);
 }
 
@@ -534,6 +591,26 @@ body {
     }
 }
 
+/* Loading notification animation */
+.drag-output.loading-notification {
+    animation: loadingPulse 2s infinite ease-in-out;
+    border-color: rgba(102, 126, 234, 0.4);
+    box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
+}
+
+@keyframes loadingPulse {
+    0%, 100% {
+        border-color: rgba(102, 126, 234, 0.4);
+        box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
+        opacity: 1;
+    }
+    50% {
+        border-color: rgba(102, 126, 234, 0.7);
+        box-shadow: 0 0 25px rgba(102, 126, 234, 0.5);
+        opacity: 0.95;
+    }
+}
+
 /* File Drop Zone */
 .drop-zone {
     position: absolute;
@@ -634,12 +711,14 @@ body {
     gap: 2px;
     width: 12px;
     height: 10px;
+    justify-content: center;
+    align-items: center;
 }
 
 .menu-icon span {
     width: 100%;
     height: 1px;
-    background: currentColor;
+    background-color: rgba(255, 255, 255, 0.7);
     border-radius: 0.5px;
     transition: all 0.2s ease;
 }
@@ -871,61 +950,7 @@ body {
     margin-bottom: 8px;
 }
 
-.sign-in-section, .sign-out-section {
-    margin-top: 8px;
-}
-
-.google-signin-btn, .google-signout-btn {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.8);
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    justify-content: center;
-}
-
-.google-signin-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.9);
-    transform: translateY(-1px);
-}
-
-.google-signout-btn {
-    background: rgba(220, 38, 38, 0.1);
-    border: 1px solid rgba(220, 38, 38, 0.3);
-    color: rgba(255, 107, 107, 0.9);
-}
-
-.google-signout-btn:hover {
-    background: rgba(220, 38, 38, 0.15);
-    color: rgba(255, 107, 107, 1);
-    transform: translateY(-1px);
-}
-
-.google-icon {
-    background: linear-gradient(135deg, #4285f4 0%, #34a853 100%);
-    color: white;
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: bold;
-}
-
-.logout-icon {
-    font-size: 14px;
-}
+/* Google sign-in styles removed */
 
 .status-indicator {
     display: inline-block;

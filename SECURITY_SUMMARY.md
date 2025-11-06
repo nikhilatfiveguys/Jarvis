@@ -58,11 +58,6 @@ npm run prod
 You need to set these in your `.env` file:
 
 ```bash
-# Google OAuth (from Google Cloud Console)
-GOOGLE_CLIENT_ID=your_google_client_id
-GOOGLE_CLIENT_SECRET=your_google_client_secret
-GOOGLE_REDIRECT_URI=http://localhost:8080/auth/callback
-
 # Polar Subscription (from Polar Dashboard)
 POLAR_ORGANIZATION_ID=your_organization_id
 POLAR_API_KEY=your_polar_api_key
@@ -152,9 +147,6 @@ npm run validate
 
 ### **3. Test Everything**
 ```bash
-# Test authentication
-npm run test-auth
-
 # Test the app
 npm run dev
 ```
@@ -170,9 +162,6 @@ cat PRODUCTION_DEPLOYMENT.md
 ```bash
 # Check configuration
 npm run validate
-
-# Test authentication components
-npm run test-auth
 
 # Run in development
 npm run dev

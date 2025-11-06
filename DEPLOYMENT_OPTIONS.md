@@ -85,23 +85,20 @@ Your app now supports all three approaches:
 #### **For Regular Users (Option 1):**
 1. Download your app
 2. Run it - it works immediately with your API keys
-3. Sign in with Google
-4. Purchase subscription if needed
-5. Use all features
+3. Purchase subscription if needed
+4. Use all features
 
 #### **For Advanced Users (Option 2):**
 1. Download your app
 2. Create `.env` file with their API keys
 3. Run the app - it uses their keys
-4. Sign in with Google
-5. Use all features
+4. Use all features
 
 #### **For Hybrid Users (Option 3):**
 1. Download your app
 2. Optionally create `.env` file with their keys
 3. Run the app - uses their keys if provided, yours if not
-4. Sign in with Google
-5. Use all features
+4. Use all features
 
 ## 💰 Cost Management
 
@@ -129,11 +126,6 @@ nano config/production-config.js
 2. **Add your actual API keys:**
 ```javascript
 const PRODUCTION_CONFIG = {
-    google: {
-        clientId: 'your_actual_google_client_id',
-        clientSecret: 'your_actual_google_client_secret',
-        redirectUri: 'http://localhost:8080/auth/callback'
-    },
     polar: {
         organizationId: 'your_actual_organization_id',
         apiKey: 'your_actual_polar_api_key',
@@ -167,8 +159,6 @@ npm run build
 2. Create `.env` file:
 ```bash
 # Create .env file in app directory
-GOOGLE_CLIENT_ID=their_google_client_id
-GOOGLE_CLIENT_SECRET=their_google_client_secret
 POLAR_ORGANIZATION_ID=their_organization_id
 POLAR_API_KEY=their_polar_api_key
 OPENAI_API_KEY=their_openai_api_key
@@ -187,7 +177,7 @@ npm start
 ### **Test with environment variables:**
 ```bash
 # This will use environment variables if set
-GOOGLE_CLIENT_ID=test npm start
+npm start
 ```
 
 ### **Validate configuration:**

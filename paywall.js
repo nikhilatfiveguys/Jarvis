@@ -31,7 +31,9 @@ class PaywallManager {
                 this.showAlreadySubscribed();
                 
                 // Auto-proceed to app since user is already subscribed
+                // But still check for onboarding
                 setTimeout(() => {
+                    console.log('Auto-proceeding from paywall (has subscription)');
                     this.proceedToApp();
                 }, 1500);
             } else {

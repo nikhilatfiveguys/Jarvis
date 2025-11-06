@@ -56,7 +56,9 @@ class SecureConfig {
             polar: {
                 accessToken: process.env.POLAR_ACCESS_TOKEN || '',
                 successUrl: process.env.POLAR_SUCCESS_URL || '',
-                productId: process.env.POLAR_PRODUCT_ID || ''
+                productId: process.env.POLAR_PRODUCT_ID || '',
+                webhookSecret: process.env.POLAR_WEBHOOK_SECRET || '',
+                organizationId: process.env.POLAR_ORGANIZATION_ID || ''
             },
             openai: {
                 apiKey: process.env.OPENAI_API_KEY || ''
@@ -78,10 +80,17 @@ class SecureConfig {
         try {
             const productionConfig = require('./production-config');
             return {
-                polar: productionConfig.polar,
-            openai: productionConfig.openai,
-            exa: productionConfig.exa,
-            claude: productionConfig.claude || { apiKey: '' },
+                polar: {
+                    accessToken: productionConfig.polar.accessToken,
+                    successUrl: productionConfig.polar.successUrl,
+                    productId: productionConfig.polar.productId,
+                    webhookSecret: productionConfig.polar.webhookSecret || '',
+                    organizationId: productionConfig.polar.organizationId || '',
+                    webhookUrl: productionConfig.polar.webhookUrl || ''
+                },
+                openai: productionConfig.openai,
+                exa: productionConfig.exa,
+                claude: productionConfig.claude || { apiKey: '' },
                 app: {
                     environment: 'production',
                     isProduction: true

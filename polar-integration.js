@@ -191,7 +191,7 @@ class PolarIntegration {
                 };
             }
 
-            // Store subscription data locally
+            // Prepare subscription data (but don't store here - let mainApp handle it)
             const subscriptionData = {
                 email: customerEmail, // Use actual customer email from checkout
                 nextBilling: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 days from now
@@ -202,11 +202,11 @@ class PolarIntegration {
                 createdAt: new Date().toISOString()
             };
 
-            // Store the subscription data
-            await this.storeSubscriptionData(subscriptionData);
+            // Note: Don't store here - polar-success-handler will use mainApp.storeSubscriptionData()
+            // which uses the correct Electron app.getPath('userData') path
             
             console.log('✅ Checkout completed successfully:', checkoutId);
-            console.log('✅ Subscription data stored:', subscriptionData);
+            console.log('✅ Subscription data prepared:', subscriptionData);
             
             return {
                 success: true,
@@ -278,12 +278,22 @@ class PolarIntegration {
     verifyWebhookSignature(payload, signature) {
         try {
             const crypto = require('crypto');
+            const polarConfig = this.secureConfig.getPolarConfig();
+            
+            if (!polarConfig.webhookSecret) {
+                console.error('Webhook secret not configured');
+                return false;
+            }
+            
+            // Polar sends signature as "sha256=<hash>" or just the hash
+            const signatureHash = signature.replace('sha256=', '');
+            
             const expectedSignature = crypto
-                .createHmac('sha256', config.polar.webhookSecret)
+                .createHmac('sha256', polarConfig.webhookSecret)
                 .update(payload)
                 .digest('hex');
             
-            return signature === expectedSignature;
+            return signatureHash === expectedSignature;
         } catch (error) {
             console.error('Error verifying webhook signature:', error);
             return false;
@@ -324,26 +334,47 @@ class PolarIntegration {
      */
     async handleCheckoutCompleted(data) {
         console.log('Checkout completed:', data.id);
-        // Store subscription data locally
+        
+        // Try to get customer email from checkout
+        let customerEmail = null;
+        try {
+            customerEmail = await this.getCustomerEmailFromCheckout(data.id);
+        } catch (error) {
+            console.error('Error getting customer email from checkout:', error);
+        }
+        
+        // Prepare subscription data
         const subscriptionData = {
+            email: customerEmail || 'unknown@example.com', // Will be updated if we can get email
             checkoutId: data.id,
             customerId: data.customerId,
             productId: data.productId,
             status: 'active',
+            nextBilling: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            features: ['unlimited_messages', 'screenshot_analysis', 'voice_activation'],
             createdAt: new Date().toISOString()
         };
         
-        // Save to local storage
-        const fs = require('fs');
-        const path = require('path');
-        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 5.0');
-        
-        if (!fs.existsSync(userDataPath)) {
-            fs.mkdirSync(userDataPath, { recursive: true });
+        // Store via mainApp if available (uses correct Electron path)
+        if (this.mainApp && this.mainApp.storeSubscriptionData) {
+            await this.mainApp.storeSubscriptionData(subscriptionData);
+            console.log('✅ Webhook subscription data stored via mainApp');
+        } else {
+            // Fallback: use direct file write (shouldn't happen in normal flow)
+            console.warn('⚠️ mainApp not available, using fallback storage');
+            const fs = require('fs');
+            const path = require('path');
+            const { app } = require('electron');
+            const userDataPath = app ? app.getPath('userData') : 
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+            
+            if (!fs.existsSync(userDataPath)) {
+                fs.mkdirSync(userDataPath, { recursive: true });
+            }
+            
+            const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
+            fs.writeFileSync(subscriptionFile, JSON.stringify(subscriptionData, null, 2));
         }
-        
-        const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
-        fs.writeFileSync(subscriptionFile, JSON.stringify(subscriptionData, null, 2));
         
         return { success: true };
     }
@@ -370,19 +401,30 @@ class PolarIntegration {
     async handleSubscriptionCanceled(data) {
         console.log('⚠️ Subscription canceled via webhook:', data.id);
         
-        // Remove subscription data
+        // Remove subscription data using correct Electron path
         const fs = require('fs');
         const path = require('path');
-        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 5.0');
+        
+        // Use Electron's app.getPath if available, otherwise fallback
+        let userDataPath;
+        try {
+            const { app } = require('electron');
+            userDataPath = app ? app.getPath('userData') : 
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+        } catch (error) {
+            // Fallback if Electron not available
+            userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+        }
+        
         const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
         
         if (fs.existsSync(subscriptionFile)) {
             fs.unlinkSync(subscriptionFile);
-            console.log('✅ Subscription file removed');
+            console.log('✅ Subscription file removed from:', subscriptionFile);
             
             // Notify main app about cancellation
             if (this.mainApp) {
-                if (this.mainApp.mainWindow) {
+                if (this.mainApp.mainWindow && !this.mainApp.mainWindow.isDestroyed()) {
                     this.mainApp.mainWindow.webContents.send('subscription-cancelled');
                 }
                 
@@ -391,11 +433,13 @@ class PolarIntegration {
                     this.mainApp.mainWindow.webContents.send('show-paywall');
                 }
                 
-                // Also notify any open settings windows
+                // Also notify any open account windows to refresh
                 if (this.mainApp.accountWindow && !this.mainApp.accountWindow.isDestroyed()) {
                     this.mainApp.accountWindow.webContents.send('subscription-status-changed', { status: 'free' });
                 }
             }
+        } else {
+            console.log('⚠️ Subscription file not found at:', subscriptionFile);
         }
         
         return { success: true };

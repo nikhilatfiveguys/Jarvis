@@ -30,11 +30,6 @@ nano .env
 # Application
 NODE_ENV=production
 
-# Google OAuth (from Google Cloud Console)
-GOOGLE_CLIENT_ID=your_actual_client_id
-GOOGLE_CLIENT_SECRET=your_actual_client_secret
-GOOGLE_REDIRECT_URI=https://yourdomain.com/auth/callback
-
 # Polar Subscription (from Polar Dashboard)
 POLAR_ORGANIZATION_ID=your_organization_id
 POLAR_API_KEY=your_polar_api_key
@@ -142,9 +137,6 @@ sudo nano /opt/jarvis/.env.production
 Add your production credentials:
 ```bash
 NODE_ENV=production
-GOOGLE_CLIENT_ID=your_production_client_id
-GOOGLE_CLIENT_SECRET=your_production_client_secret
-GOOGLE_REDIRECT_URI=https://yourdomain.com/auth/callback
 POLAR_ORGANIZATION_ID=your_organization_id
 POLAR_API_KEY=your_polar_api_key
 POLAR_WEBHOOK_SECRET=your_webhook_secret
@@ -267,12 +259,12 @@ try {
 "
 ```
 
-### 2. Test OAuth Flow
+### 2. Test Subscription Flow
 
 1. Start your app in production mode
-2. Try the Google sign-in flow
-3. Verify user data is stored correctly
-4. Test subscription checking
+2. Complete a test checkout via Polar
+3. Verify subscription data stored correctly
+4. Test subscription validation and cancellation webhook
 
 ### 3. Test Webhook Integration
 
@@ -322,9 +314,9 @@ For macOS and Windows, you can add code signing:
    - Check your `.env` file exists and has correct values
    - Verify environment variables are loaded
 
-2. **OAuth redirect URI mismatch**
-   - Update Google Console with correct redirect URI
-   - Check `GOOGLE_REDIRECT_URI` environment variable
+2. **Subscription validation issues**
+   - Verify Polar API credentials and organization ID
+   - Check webhook delivery and secrets
 
 3. **Polar API errors**
    - Verify `POLAR_API_KEY` is correct
@@ -338,7 +330,7 @@ For macOS and Windows, you can add code signing:
 
 ```bash
 # Check environment variables
-printenv | grep -E "(GOOGLE|POLAR|OPENAI|EXA)"
+printenv | grep -E "(POLAR|OPENAI|EXA)"
 
 # Test API connectivity
 curl -H "Authorization: Bearer $POLAR_API_KEY" \
@@ -353,10 +345,9 @@ tail -f /var/log/jarvis.log
 Before releasing to public:
 
 - [ ] All environment variables configured
-- [ ] Google OAuth redirect URIs updated for production
 - [ ] Polar webhooks configured and tested
 - [ ] Application builds successfully
-- [ ] OAuth flow works end-to-end
+- [ ] Subscription flow works end-to-end
 - [ ] Subscription linking works
 - [ ] Webhook events are received
 - [ ] Error handling is robust

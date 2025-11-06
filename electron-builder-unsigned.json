@@ -105,7 +105,25 @@
     ]
   },
   "dmg": {
-    "sign": false
+    "sign": false,
+    "background": "build/dmg-background.png",
+    "contents": [
+      {
+        "x": 130,
+        "y": 240,
+        "type": "file"
+      },
+      {
+        "x": 410,
+        "y": 240,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
   },
   "win": null,
   "linux": null
