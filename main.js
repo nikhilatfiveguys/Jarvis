@@ -278,17 +278,39 @@ class JarvisApp {
     }
 
     showFeaturesOnboarding() {
-        // Close current onboarding and show features screen
-        if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-            const oldWindow = this.onboardingWindow;
-            this.onboardingWindow = null;
-            oldWindow.close();
+        try {
+            // Close current onboarding and show features screen
+            if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                const oldWindow = this.onboardingWindow;
+                this.onboardingWindow = null;
+                oldWindow.close();
+            }
+            
+            // Small delay to ensure old window is closed
+            setTimeout(() => {
+                try {
+                    this.createOnboardingWindow('features');
+                } catch (error) {
+                    console.error('Failed to create features onboarding window:', error);
+                    // If features window fails, skip it and go directly to main window
+                    this.markOnboardingComplete();
+                    this.proceedToMainWindow().catch(err => {
+                        console.error('Failed to proceed to main window:', err);
+                    });
+                }
+            }, 100);
+        } catch (error) {
+            console.error('Error in showFeaturesOnboarding:', error);
+            // Fallback: Skip features and go directly to main window
+            try {
+                this.markOnboardingComplete();
+                this.proceedToMainWindow().catch(err => {
+                    console.error('Failed to proceed to main window:', err);
+                });
+            } catch (fallbackError) {
+                console.error('Fallback also failed:', fallbackError);
+            }
         }
-        
-        // Small delay to ensure old window is closed
-        setTimeout(() => {
-            this.createOnboardingWindow('features');
-        }, 100);
     }
 
     openScreenRecordingSettings() {
@@ -308,11 +330,31 @@ class JarvisApp {
             });
         } else if (process.platform === 'win32') {
             // Windows: Open Privacy settings for screen recording
-            // Windows 10/11: ms-settings:privacy-webcam or ms-settings:privacy-microphone
-            shell.openExternal('ms-settings:privacy-webcam').catch(() => {
-                // Fallback: Open general privacy settings
-                shell.openExternal('ms-settings:privacy').catch((err) => {
-                    console.error('Failed to open Windows Privacy settings:', err);
+            // Try multiple methods to ensure it works
+            console.log('Attempting to open Windows Privacy settings...');
+            
+            // Method 1: Try screen capture privacy (Windows 10/11)
+            shell.openExternal('ms-settings:privacy-screen').catch(() => {
+                console.log('Method 1 failed, trying method 2...');
+                // Method 2: Try camera privacy (often includes screen capture)
+                shell.openExternal('ms-settings:privacy-webcam').catch(() => {
+                    console.log('Method 2 failed, trying method 3...');
+                    // Method 3: Open general privacy settings
+                    shell.openExternal('ms-settings:privacy').catch(() => {
+                        console.log('Method 3 failed, trying method 4...');
+                        // Method 4: Use start command as fallback
+                        exec('start ms-settings:privacy', (error) => {
+                            if (error) {
+                                console.error('All methods failed to open Windows Privacy settings:', error);
+                                // Last resort: Try opening Settings app directly
+                                exec('start ms-settings:', (err) => {
+                                    if (err) {
+                                        console.error('Failed to open Windows Settings:', err);
+                                    }
+                                });
+                            }
+                        });
+                    });
                 });
             });
         }
@@ -493,13 +535,38 @@ class JarvisApp {
 
         // Handle onboarding events
         ipcMain.on('open-screen-recording-settings', () => {
-            this.openScreenRecordingSettings();
+            try {
+                console.log('Opening screen recording settings for platform:', process.platform);
+                this.openScreenRecordingSettings();
+            } catch (error) {
+                console.error('Failed to open screen recording settings:', error);
+                // Try to show error to user if onboarding window exists
+                if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                    this.onboardingWindow.webContents.send('settings-error', 'Failed to open settings. Please manually go to Windows Settings > Privacy > Camera.');
+                }
+            }
         });
 
         ipcMain.on('onboarding-complete', async () => {
-            // Permissions screen completed - now show features screen
-            // Don't mark onboarding as complete yet, wait for features screen
-            this.showFeaturesOnboarding();
+            try {
+                console.log('Onboarding complete - showing features screen');
+                // Permissions screen completed - now show features screen
+                // Don't mark onboarding as complete yet, wait for features screen
+                this.showFeaturesOnboarding();
+            } catch (error) {
+                console.error('Error during onboarding completion:', error);
+                // If features onboarding fails, try to proceed directly to main window
+                try {
+                    this.markOnboardingComplete();
+                    await this.proceedToMainWindow();
+                } catch (fallbackError) {
+                    console.error('Failed to proceed to main window:', fallbackError);
+                    // Show error to user
+                    if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                        this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
+                    }
+                }
+            }
         });
 
         ipcMain.on('onboarding-features-complete', async () => {
