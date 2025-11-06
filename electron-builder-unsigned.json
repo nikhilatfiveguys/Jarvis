@@ -125,6 +125,29 @@
       "height": 380
     }
   },
-  "win": null,
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64",
+          "ia32"
+        ]
+      }
+    ],
+    "icon": "icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Jarvis 5.0",
+    "installerIcon": "icon.ico",
+    "uninstallerIcon": "icon.ico",
+    "installerHeaderIcon": "icon.ico",
+    "deleteAppDataOnUninstall": false
+  },
+  "publish": null,
   "linux": null
 }
