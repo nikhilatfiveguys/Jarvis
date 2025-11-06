@@ -294,6 +294,15 @@ class JarvisApp {
                     }
                 });
             });
+        } else if (process.platform === 'win32') {
+            // Windows: Open Privacy settings for screen recording
+            // Windows 10/11: ms-settings:privacy-webcam or ms-settings:privacy-microphone
+            shell.openExternal('ms-settings:privacy-webcam').catch(() => {
+                // Fallback: Open general privacy settings
+                shell.openExternal('ms-settings:privacy').catch((err) => {
+                    console.error('Failed to open Windows Privacy settings:', err);
+                });
+            });
         }
     }
 
@@ -572,9 +581,16 @@ class JarvisApp {
             return;
         }
         
-        // Get primary display info
-        const primaryDisplay = screen.getPrimaryDisplay();
-        const { width, height } = primaryDisplay.bounds;
+        // Get primary display info with error handling
+        let width = 1920;
+        let height = 1080;
+        try {
+            const primaryDisplay = screen.getPrimaryDisplay();
+            width = primaryDisplay.bounds.width;
+            height = primaryDisplay.bounds.height;
+        } catch (error) {
+            console.error('Failed to get screen dimensions, using defaults:', error);
+        }
 
         // Create a true overlay window
         this.mainWindow = new BrowserWindow({
@@ -635,9 +651,26 @@ class JarvisApp {
         // Hide Dock for overlay utility feel (macOS)
         if (process.platform === 'darwin' && app.dock) { try { app.dock.hide(); } catch (_) {} }
 
+        // Add error handlers to prevent crashes
+        this.mainWindow.webContents.on('crashed', (event, killed) => {
+            console.error('Window crashed:', killed);
+            // Try to reload the window
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.reload();
+            }
+        });
+
+        this.mainWindow.on('unresponsive', () => {
+            console.warn('Window became unresponsive');
+        });
+
         // Load the HTML file
         this.mainWindow.loadFile('index.html').catch(err => {
             console.error('Failed to load index.html:', err);
+            // Show error to user instead of crashing
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('app-error', 'Failed to load application. Please try restarting.');
+            }
         });
 
         // Setup IPC handlers for main window
@@ -782,15 +815,28 @@ class JarvisApp {
                     });
                 } catch (capturerError) {
                     console.error('DesktopCapturer error:', capturerError);
-                    throw new Error('Failed to access screen capture. Please check screen recording permissions in System Preferences > Security & Privacy > Privacy > Screen Recording.');
+                    const platformMessage = process.platform === 'darwin' 
+                        ? 'Please check screen recording permissions in System Preferences > Security & Privacy > Privacy > Screen Recording.'
+                        : process.platform === 'win32'
+                        ? 'Please check screen recording permissions in Windows Settings > Privacy > Camera/Microphone.'
+                        : 'Please check screen recording permissions in your system settings.';
+                    throw new Error(`Failed to access screen capture. ${platformMessage}`);
                 }
                 
                 if (!sources || sources.length === 0) {
-                    throw new Error('No screen sources available. Please check screen recording permissions.');
+                    const platformMessage = process.platform === 'darwin' 
+                        ? 'Please check screen recording permissions in System Preferences.'
+                        : process.platform === 'win32'
+                        ? 'Please check screen recording permissions in Windows Settings.'
+                        : 'Please check screen recording permissions.';
+                    throw new Error(`No screen sources available. ${platformMessage}`);
                 }
                 
                 // Get the first screen source
                 const source = sources[0];
+                if (!source || !source.thumbnail) {
+                    throw new Error('Screen source is invalid.');
+                }
                 const dataUrl = source.thumbnail.toDataURL();
                 return dataUrl;
                 
