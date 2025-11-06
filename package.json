@@ -175,7 +175,7 @@
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "identity": "Developer ID Application: Aaron Soni (DMH3RU9FQQ)",
+      "identity": "Aaron Soni (DMH3RU9FQQ)",
       "icon": "icon.icns",
       "target": [
         {
