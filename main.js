@@ -1386,24 +1386,44 @@ class JarvisApp {
 
     // Helper method to proceed directly to main window (skipping paywall)
     async proceedToMainWindow() {
-        // Check if onboarding is needed
-        const onboardingNeeded = !this.isOnboardingComplete();
-        console.log('Onboarding needed?', onboardingNeeded);
-        
-        if (onboardingNeeded) {
-            console.log('Creating onboarding window (skipping paywall)');
-            this.createOnboardingWindow();
-            return;
-        }
-        
-        // Only create window if it doesn't exist
-        if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-            this.createWindow();
-            this.setupIpcHandlers();
-            // Hide Dock icon on macOS
-            if (process.platform === 'darwin' && app.dock) {
-                app.dock.hide();
+        try {
+            // Check if onboarding is needed
+            const onboardingNeeded = !this.isOnboardingComplete();
+            console.log('Onboarding needed?', onboardingNeeded);
+            
+            if (onboardingNeeded) {
+                console.log('Creating onboarding window (skipping paywall)');
+                this.createOnboardingWindow();
+                return;
             }
+            
+            // Only create window if it doesn't exist
+            if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+                console.log('Creating main window...');
+                try {
+                    this.createWindow();
+                    this.setupIpcHandlers();
+                    // Hide Dock icon on macOS
+                    if (process.platform === 'darwin' && app.dock) {
+                        app.dock.hide();
+                    }
+                    console.log('Main window created successfully');
+                } catch (windowError) {
+                    console.error('Failed to create main window:', windowError);
+                    // Try to show error to user if onboarding window still exists
+                    if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                        this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
+                    }
+                    throw windowError;
+                }
+            }
+        } catch (error) {
+            console.error('Error in proceedToMainWindow:', error);
+            // Don't crash - log and try to show error
+            if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
+            }
+            throw error;
         }
     }
 
