@@ -402,8 +402,17 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         if (this.isElectron && window.require) {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.on('api-keys', (event, keys) => {
-                console.log('Received API keys from main process');
-                if (keys.openai) this.apiKey = keys.openai;
+                console.log('Received API keys from main process:', {
+                    openai: keys.openai ? `${keys.openai.substring(0, 20)}...` : 'missing',
+                    perplexity: keys.perplexity ? `${keys.perplexity.substring(0, 20)}...` : 'missing',
+                    claude: keys.claude ? `${keys.claude.substring(0, 20)}...` : 'missing'
+                });
+                if (keys.openai) {
+                    this.apiKey = keys.openai;
+                    console.log('OpenAI API key set, length:', this.apiKey.length);
+                } else {
+                    console.warn('OpenAI API key not received from main process');
+                }
                 if (keys.perplexity) this.perplexityApiKey = keys.perplexity;
                 if (keys.claude) this.claudeApiKey = keys.claude;
                 
