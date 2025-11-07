@@ -17,7 +17,7 @@ const PRODUCTION_CONFIG = {
         apiKey: process.env.EXA_API_KEY || 'f95a33de-d38c-42f2-a710-3cda56202fc5'
     },
     claude: {
-        apiKey: process.env.CLAUDE_API_KEY || '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'
+        apiKey: process.env.CLAUDE_API_KEY || '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'
     },
     perplexity: {
         apiKey: process.env.PPLX_API_KEY || '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'
