@@ -17,6 +17,7 @@ class JarvisApp {
         this.isOverlayVisible = true;
         this.fullscreenMaintenanceInterval = null;
         this.fullscreenEnforcementInterval = null;
+        this.isTransitioningOnboarding = false; // Track onboarding transitions
         this.licenseManager = new LicenseManager(new PolarClient(POLAR_CONFIG));
         // Load secure configuration first
         const SecureConfig = require('./config/secure-config');
@@ -104,6 +105,15 @@ class JarvisApp {
 
         // Handle window closed
         app.on('window-all-closed', () => {
+            // Don't quit if we're transitioning between onboarding screens
+            if (this.isTransitioningOnboarding) {
+                console.log('Preventing quit during onboarding transition');
+                return;
+            }
+            // Don't quit if we have a main window (it might be hidden)
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                return;
+            }
             if (process.platform !== 'darwin') {
                 app.quit();
             }
@@ -279,28 +289,52 @@ class JarvisApp {
 
     showFeaturesOnboarding() {
         try {
-            // Close current onboarding and show features screen
-            if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                const oldWindow = this.onboardingWindow;
-                this.onboardingWindow = null;
-                oldWindow.close();
-            }
+            // Set flag to prevent app from quitting during transition
+            this.isTransitioningOnboarding = true;
             
-            // Small delay to ensure old window is closed
-            setTimeout(() => {
-                try {
-                    this.createOnboardingWindow('features');
-                } catch (error) {
-                    console.error('Failed to create features onboarding window:', error);
-                    // If features window fails, skip it and go directly to main window
-                    this.markOnboardingComplete();
-                    this.proceedToMainWindow().catch(err => {
-                        console.error('Failed to proceed to main window:', err);
-                    });
+            // Create new window FIRST, then close old one
+            let newWindowCreated = false;
+            try {
+                // Create the features window first
+                const oldWindow = this.onboardingWindow;
+                this.createOnboardingWindow('features');
+                newWindowCreated = true;
+                
+                // Close old window after new one is created
+                if (oldWindow && !oldWindow.isDestroyed()) {
+                    // Wait a bit for new window to be ready
+                    setTimeout(() => {
+                        if (oldWindow && !oldWindow.isDestroyed()) {
+                            oldWindow.close();
+                        }
+                        // Clear transition flag after a delay
+                        setTimeout(() => {
+                            this.isTransitioningOnboarding = false;
+                        }, 500);
+                    }, 200);
+                } else {
+                    this.isTransitioningOnboarding = false;
                 }
-            }, 100);
+            } catch (error) {
+                console.error('Failed to create features onboarding window:', error);
+                this.isTransitioningOnboarding = false;
+                
+                // If features window fails, skip it and go directly to main window
+                if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                    // Keep the current window open
+                    return;
+                }
+                
+                // If no window exists, try to proceed to main window
+                this.markOnboardingComplete();
+                this.proceedToMainWindow().catch(err => {
+                    console.error('Failed to proceed to main window:', err);
+                });
+            }
         } catch (error) {
             console.error('Error in showFeaturesOnboarding:', error);
+            this.isTransitioningOnboarding = false;
+            
             // Fallback: Skip features and go directly to main window
             try {
                 this.markOnboardingComplete();
@@ -550,11 +584,16 @@ class JarvisApp {
         ipcMain.on('onboarding-complete', async () => {
             try {
                 console.log('Onboarding complete - showing features screen');
+                // Set transition flag
+                this.isTransitioningOnboarding = true;
+                
                 // Permissions screen completed - now show features screen
                 // Don't mark onboarding as complete yet, wait for features screen
                 this.showFeaturesOnboarding();
             } catch (error) {
                 console.error('Error during onboarding completion:', error);
+                this.isTransitioningOnboarding = false;
+                
                 // If features onboarding fails, try to proceed directly to main window
                 try {
                     this.markOnboardingComplete();
