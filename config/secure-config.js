@@ -69,6 +69,9 @@ class SecureConfig {
             claude: {
                 apiKey: process.env.CLAUDE_API_KEY || ''
             },
+            perplexity: {
+                apiKey: process.env.PPLX_API_KEY || ''
+            },
             app: {
                 environment: process.env.NODE_ENV || 'development',
                 isProduction: process.env.NODE_ENV === 'production'
@@ -91,6 +94,7 @@ class SecureConfig {
                 openai: productionConfig.openai,
                 exa: productionConfig.exa,
                 claude: productionConfig.claude || { apiKey: '' },
+                perplexity: productionConfig.perplexity || { apiKey: '' },
                 app: {
                     environment: 'production',
                     isProduction: true
@@ -118,6 +122,10 @@ class SecureConfig {
 
     getClaudeConfig() {
         return this.config.claude;
+    }
+
+    getPerplexityConfig() {
+        return this.config.perplexity;
     }
 
     isProduction() {

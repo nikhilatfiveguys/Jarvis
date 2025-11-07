@@ -395,6 +395,39 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
             }
         ];
         
+        // Update tools based on available API keys
+        this.updateAvailableTools();
+        
+        // Listen for API keys from main process
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            ipcRenderer.on('api-keys', (event, keys) => {
+                console.log('Received API keys from main process');
+                if (keys.openai) this.apiKey = keys.openai;
+                if (keys.perplexity) this.perplexityApiKey = keys.perplexity;
+                if (keys.claude) this.claudeApiKey = keys.claude;
+                
+                // Update tools based on available API keys
+                this.updateAvailableTools();
+            });
+        }
+    }
+    
+    updateAvailableTools() {
+        // Reset tools to base set
+        this.tools = [
+            {
+                type: "function",
+                name: "getscreenshot",
+                description: "Takes a screenshot of the user's screen and returns it for analysis. Use this when the user asks about what's on their screen, wants you to analyze an image, or needs help with something visual.",
+                parameters: {
+                    type: "object",
+                    properties: {},
+                    required: []
+                }
+            }
+        ];
+        
         // Add web search tool if API key is available
         if (this.perplexityApiKey) {
             this.tools.push({

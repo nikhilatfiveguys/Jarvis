@@ -855,6 +855,20 @@ class JarvisApp {
         // Setup IPC handlers for main window
         this.setupIpcHandlers();
 
+        // Send API keys to renderer when window is ready
+        this.mainWindow.webContents.once('did-finish-load', () => {
+            const openaiConfig = this.secureConfig.getOpenAIConfig();
+            const claudeConfig = this.secureConfig.getClaudeConfig();
+            const perplexityConfig = this.secureConfig.getPerplexityConfig();
+            
+            // Send API keys to renderer process
+            this.mainWindow.webContents.send('api-keys', {
+                openai: openaiConfig.apiKey || '',
+                perplexity: perplexityConfig.apiKey || '',
+                claude: claudeConfig.apiKey || ''
+            });
+        });
+
         // Window is ready; show overlay immediately
         this.mainWindow.once('ready-to-show', () => {
             try { this.mainWindow.setIgnoreMouseEvents(false); } catch (_) {}

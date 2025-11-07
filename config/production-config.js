@@ -15,6 +15,12 @@ const PRODUCTION_CONFIG = {
     },
     exa: {
         apiKey: process.env.EXA_API_KEY || 'f95a33de-d38c-42f2-a710-3cda56202fc5'
+    },
+    claude: {
+        apiKey: process.env.CLAUDE_API_KEY || ''
+    },
+    perplexity: {
+        apiKey: process.env.PPLX_API_KEY || ''
     }
 };
 
