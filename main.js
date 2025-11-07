@@ -877,6 +877,13 @@ class JarvisApp {
             const claudeConfig = this.secureConfig.getClaudeConfig();
             const perplexityConfig = this.secureConfig.getPerplexityConfig();
             
+            // Debug: Log API keys being sent
+            console.log('Sending API keys to renderer:', {
+                openai: openaiConfig.apiKey ? `${openaiConfig.apiKey.substring(0, 20)}... (length: ${openaiConfig.apiKey.length})` : 'MISSING',
+                perplexity: perplexityConfig.apiKey ? `${perplexityConfig.apiKey.substring(0, 20)}...` : 'MISSING',
+                claude: claudeConfig.apiKey ? `${claudeConfig.apiKey.substring(0, 20)}...` : 'MISSING'
+            });
+            
             // Send API keys to renderer process
             this.mainWindow.webContents.send('api-keys', {
                 openai: openaiConfig.apiKey || '',
