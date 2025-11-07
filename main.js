@@ -1899,6 +1899,13 @@ class JarvisApp {
                 return;
             }
             
+            // On Windows, continuously reinforce skipTaskbar to keep it as background task
+            if (process.platform === 'win32') {
+                try {
+                    this.mainWindow.setSkipTaskbar(true);
+                } catch (_) {}
+            }
+            
             // Aggressively enforce fullscreen visibility
             try {
                 // Set visible on all workspaces with fullscreen support
