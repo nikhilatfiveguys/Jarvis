@@ -1508,6 +1508,24 @@ class JarvisApp {
                         app.dock.hide();
                     }
                     console.log('Main window created successfully');
+                    
+                    // On Windows, explicitly show the window after creation
+                    if (process.platform === 'win32' && this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        console.log('Windows: Explicitly showing main window');
+                        // Wait a bit for window to be ready, then show it
+                        setTimeout(() => {
+                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                console.log('Showing overlay on Windows');
+                                this.showOverlay();
+                                // Also try direct show as fallback
+                                if (!this.mainWindow.isVisible()) {
+                                    console.log('Window not visible, forcing show');
+                                    this.mainWindow.show();
+                                    this.mainWindow.focus();
+                                }
+                            }
+                        }, 500);
+                    }
                 } catch (windowError) {
                     console.error('Failed to create main window:', windowError);
                     // Try to show error to user if onboarding window still exists
@@ -1515,6 +1533,16 @@ class JarvisApp {
                         this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
                     }
                     throw windowError;
+                }
+            } else {
+                // Window already exists, make sure it's shown
+                console.log('Main window already exists, showing it');
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.showOverlay();
+                    if (!this.mainWindow.isVisible()) {
+                        this.mainWindow.show();
+                        this.mainWindow.focus();
+                    }
                 }
             }
         } catch (error) {
@@ -1747,7 +1775,12 @@ class JarvisApp {
     }
 
     showOverlay() {
-        if (!this.mainWindow) return;
+        if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+            console.log('Cannot show overlay: main window does not exist or is destroyed');
+            return;
+        }
+        
+        console.log('showOverlay called');
         
         // Set visibility properties BEFORE showing
         try {
