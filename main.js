@@ -609,6 +609,9 @@ class JarvisApp {
         });
 
         ipcMain.on('onboarding-features-complete', async () => {
+            // Clear transition flag since we're moving to main window
+            this.isTransitioningOnboarding = false;
+            
             // Mark onboarding as complete (both screens done)
             this.markOnboardingComplete();
             
