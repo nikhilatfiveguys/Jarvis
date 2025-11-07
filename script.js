@@ -583,22 +583,27 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         if (this.dragOutput) {
             this.dragOutput.addEventListener('dragstart', (e) => this.handleDragStart(e));
             this.dragOutput.addEventListener('dragend', (e) => this.handleDragEnd(e));
-            // Track drag to enable click-through when outside overlay
+            // Track drag to keep window interactive during drag (especially important on Windows)
             this.dragOutput.addEventListener('drag', (e) => {
                 if (this.isDraggingOutput && this.isElectron) {
                     const { ipcRenderer } = require('electron');
-                    // Check if mouse is outside overlay bounds
-                    const overlayRect = this.overlay.getBoundingClientRect();
-                    const mouseX = e.clientX;
-                    const mouseY = e.clientY;
-                    
-                    // If mouse is outside overlay, enable drag-through mode
-                    if (mouseX < overlayRect.left || mouseX > overlayRect.right || 
-                        mouseY < overlayRect.top || mouseY > overlayRect.bottom) {
-                        ipcRenderer.invoke('enable-drag-through');
-                    } else {
-                        // Mouse is still over overlay, keep interactive
+                    // On Windows, keep window fully interactive during drag to allow dropping to other windows
+                    // On other platforms, we can enable drag-through when outside overlay
+                    if (process.platform === 'win32') {
+                        // Windows: Always keep interactive during drag to allow cross-window drag
                         ipcRenderer.invoke('make-interactive');
+                    } else {
+                        // macOS/Linux: Enable drag-through when outside overlay
+                        const overlayRect = this.overlay.getBoundingClientRect();
+                        const mouseX = e.clientX;
+                        const mouseY = e.clientY;
+                        
+                        if (mouseX < overlayRect.left || mouseX > overlayRect.right || 
+                            mouseY < overlayRect.top || mouseY > overlayRect.bottom) {
+                            ipcRenderer.invoke('enable-drag-through');
+                        } else {
+                            ipcRenderer.invoke('make-interactive');
+                        }
                     }
                 }
             });
@@ -2653,9 +2658,10 @@ User Question: ${question}`;
         // Mark that we're dragging the output
         this.isDraggingOutput = true;
         
-        // Ensure window is interactive initially for drag to start
+        // Ensure window is interactive for drag to start (critical on Windows for cross-window drag)
         if (this.isElectron) {
             const { ipcRenderer } = require('electron');
+            // Make window fully interactive to allow drag to other windows
             ipcRenderer.invoke('make-interactive');
         }
         
@@ -2675,6 +2681,8 @@ User Question: ${question}`;
         this.dragOutput.style.opacity = '1';
         
         // Check if mouse is still over overlay after drag ends
+        // On Windows, use a longer delay to ensure drag operation completes fully
+        const delay = (this.isElectron && typeof process !== 'undefined' && process.platform === 'win32') ? 200 : 50;
         setTimeout(() => {
             if (!this.isDraggingOutput && !this.isResizing && this.isElectron) {
                 const { ipcRenderer } = require('electron');
@@ -2690,7 +2698,7 @@ User Question: ${question}`;
                     ipcRenderer.invoke('make-interactive');
                 }
             }
-        }, 50);
+        }, delay);
     }
     
     handleResizeStart(e) {

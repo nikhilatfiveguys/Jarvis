@@ -11,7 +11,7 @@ const PRODUCTION_CONFIG = {
         webhookUrl: process.env.POLAR_WEBHOOK_URL || 'https://yesjarvis.com/webhook/polar'
     },
     openai: {
-        apiKey: process.env.OPENAI_API_KEY || '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'
+        apiKey: process.env.OPENAI_API_KEY || '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'
     },
     exa: {
         apiKey: process.env.EXA_API_KEY || 'f95a33de-d38c-42f2-a710-3cda56202fc5'
