@@ -605,6 +605,43 @@ class JarvisApp {
         ipcMain.on('onboarding-complete', async () => {
             try {
                 console.log('Onboarding complete - showing features screen');
+                console.log('Platform:', process.platform);
+                
+                // On Windows, skip features and go directly to main window
+                if (process.platform === 'win32') {
+                    console.log('Windows: Skipping features, going directly to main window');
+                    this.isTransitioningOnboarding = true;
+                    
+                    // Mark onboarding complete
+                    this.markOnboardingComplete();
+                    
+                    // Keep onboarding window open while creating main window
+                    const onboardingWindow = this.onboardingWindow;
+                    
+                    try {
+                        await this.proceedToMainWindow();
+                        console.log('Main window created successfully');
+                        
+                        // Close onboarding window after main window is ready
+                        setTimeout(() => {
+                            if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+                                console.log('Closing onboarding window');
+                                onboardingWindow.close();
+                            }
+                            this.isTransitioningOnboarding = false;
+                        }, 1000);
+                    } catch (windowError) {
+                        console.error('Failed to create main window:', windowError);
+                        this.isTransitioningOnboarding = false;
+                        // Keep onboarding window open and show error
+                        if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+                            onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
+                        }
+                    }
+                    return;
+                }
+                
+                // For macOS, show features screen
                 // Set transition flag
                 this.isTransitioningOnboarding = true;
                 
