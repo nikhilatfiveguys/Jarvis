@@ -892,6 +892,11 @@ class JarvisApp {
 
         // Window is ready; show overlay immediately
         this.mainWindow.once('ready-to-show', () => {
+            // On Windows, ensure it stays hidden from taskbar
+            if (process.platform === 'win32') {
+                this.mainWindow.setSkipTaskbar(true);
+            }
+            
             try { this.mainWindow.setIgnoreMouseEvents(false); } catch (_) {}
             
             // Set up fullscreen visibility BEFORE showing
@@ -916,6 +921,11 @@ class JarvisApp {
                         this.mainWindow.setAlwaysOnTop(true);
                     }
                 }
+            }
+            
+            // On Windows, reinforce skipTaskbar before showing
+            if (process.platform === 'win32') {
+                this.mainWindow.setSkipTaskbar(true);
             }
             
             // Now show the overlay (this will also call forceFullscreenVisibility)
