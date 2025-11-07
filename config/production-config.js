@@ -11,16 +11,16 @@ const PRODUCTION_CONFIG = {
         webhookUrl: process.env.POLAR_WEBHOOK_URL || 'https://yesjarvis.com/webhook/polar'
     },
     openai: {
-        apiKey: process.env.OPENAI_API_KEY || ''
+        apiKey: process.env.OPENAI_API_KEY || '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'
     },
     exa: {
         apiKey: process.env.EXA_API_KEY || 'f95a33de-d38c-42f2-a710-3cda56202fc5'
     },
     claude: {
-        apiKey: process.env.CLAUDE_API_KEY || ''
+        apiKey: process.env.CLAUDE_API_KEY || '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'
     },
     perplexity: {
-        apiKey: process.env.PPLX_API_KEY || ''
+        apiKey: process.env.PPLX_API_KEY || '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'
     }
 };
 
