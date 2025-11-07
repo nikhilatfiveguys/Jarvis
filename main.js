@@ -289,27 +289,45 @@ class JarvisApp {
 
     showFeaturesOnboarding() {
         try {
+            console.log('showFeaturesOnboarding called');
             // Set flag to prevent app from quitting during transition
             this.isTransitioningOnboarding = true;
+            console.log('Transition flag set to true');
             
-            // Create new window FIRST, then close old one
+            // On Windows, skip features screen and go directly to main window
+            // This prevents window transition issues
+            if (process.platform === 'win32') {
+                console.log('Windows detected - skipping features screen, going directly to main window');
+                this.isTransitioningOnboarding = false;
+                this.markOnboardingComplete();
+                this.proceedToMainWindow().catch(err => {
+                    console.error('Failed to proceed to main window:', err);
+                });
+                return;
+            }
+            
+            // For macOS, create new window FIRST, then close old one
             let newWindowCreated = false;
             try {
+                console.log('Creating features onboarding window...');
                 // Create the features window first
                 const oldWindow = this.onboardingWindow;
                 this.createOnboardingWindow('features');
                 newWindowCreated = true;
+                console.log('Features window created successfully');
                 
                 // Close old window after new one is created
                 if (oldWindow && !oldWindow.isDestroyed()) {
                     // Wait a bit for new window to be ready
                     setTimeout(() => {
+                        console.log('Closing old onboarding window');
                         if (oldWindow && !oldWindow.isDestroyed()) {
                             oldWindow.close();
                         }
                         // Clear transition flag after a delay
                         setTimeout(() => {
                             this.isTransitioningOnboarding = false;
+                            console.log('Transition flag cleared');
                         }, 500);
                     }, 200);
                 } else {
@@ -322,10 +340,12 @@ class JarvisApp {
                 // If features window fails, skip it and go directly to main window
                 if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
                     // Keep the current window open
+                    console.log('Keeping current window open');
                     return;
                 }
                 
                 // If no window exists, try to proceed to main window
+                console.log('No window exists, proceeding to main window');
                 this.markOnboardingComplete();
                 this.proceedToMainWindow().catch(err => {
                     console.error('Failed to proceed to main window:', err);
@@ -337,6 +357,7 @@ class JarvisApp {
             
             // Fallback: Skip features and go directly to main window
             try {
+                console.log('Fallback: Skipping features, going to main window');
                 this.markOnboardingComplete();
                 this.proceedToMainWindow().catch(err => {
                     console.error('Failed to proceed to main window:', err);
