@@ -889,7 +889,9 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
             }
         } catch (error) {
             console.error('Message processing error:', error);
-            this.showNotification("Sorry, I'm having trouble processing that request right now.");
+            const errorMessage = error.message || 'Unknown error';
+            console.error('Full error details:', error);
+            this.showNotification(`Error: ${errorMessage}. Please check the console for details.`);
         }
     }
 
@@ -930,6 +932,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             };
             
             console.log('API Request payload:', JSON.stringify(requestPayload, null, 2));
+            console.log('API Key present:', !!this.apiKey, 'Length:', this.apiKey ? this.apiKey.length : 0);
+
+            // Check if API key is available
+            if (!this.apiKey || this.apiKey.trim() === '') {
+                throw new Error('OpenAI API key is not set. Please check your configuration.');
+            }
 
             this.showLoadingNotification();
             
@@ -943,7 +951,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             });
             
             if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
+                const errorText = await response.text();
+                console.error('API Error Response:', response.status, errorText);
+                throw new Error(`API error: ${response.status} - ${errorText.substring(0, 200)}`);
             }
             
             let data = await response.json();
