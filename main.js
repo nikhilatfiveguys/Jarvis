@@ -49,6 +49,10 @@ class JarvisApp {
             if (this.mainWindow) {
                 if (this.mainWindow.isMinimized()) this.mainWindow.restore();
                 this.mainWindow.show();
+                // On Windows, keep hidden from taskbar
+                if (process.platform === 'win32') {
+                    this.mainWindow.setSkipTaskbar(true);
+                }
                 this.mainWindow.focus();
             }
         });
@@ -855,6 +859,18 @@ class JarvisApp {
         // Setup IPC handlers for main window
         this.setupIpcHandlers();
 
+        // On Windows, ensure window stays hidden from taskbar (background task)
+        if (process.platform === 'win32') {
+            // Reinforce skipTaskbar setting
+            this.mainWindow.setSkipTaskbar(true);
+            
+            // Set app user model ID to keep it as background process
+            app.setAppUserModelId('com.aaronsoni.jarvis.background');
+            
+            // Prevent window from appearing in Alt+Tab
+            this.mainWindow.setVisibleOnAllWorkspaces(true);
+        }
+
         // Send API keys to renderer when window is ready
         this.mainWindow.webContents.once('did-finish-load', () => {
             const openaiConfig = this.secureConfig.getOpenAIConfig();
@@ -867,6 +883,11 @@ class JarvisApp {
                 perplexity: perplexityConfig.apiKey || '',
                 claude: claudeConfig.apiKey || ''
             });
+            
+            // On Windows, reinforce skipTaskbar after load
+            if (process.platform === 'win32') {
+                this.mainWindow.setSkipTaskbar(true);
+            }
         });
 
         // Window is ready; show overlay immediately
@@ -963,7 +984,14 @@ class JarvisApp {
         ipcMain.handle('make-interactive', () => {
             if (this.mainWindow) {
                 this.mainWindow.setIgnoreMouseEvents(false);
-                try { this.mainWindow.setFocusable(true); this.mainWindow.focus(); } catch (_) {}
+                try { 
+                    this.mainWindow.setFocusable(true); 
+                    // On Windows, keep hidden from taskbar even when focused
+                    if (process.platform === 'win32') {
+                        this.mainWindow.setSkipTaskbar(true);
+                    }
+                    this.mainWindow.focus(); 
+                } catch (_) {}
             }
         });
 
@@ -1796,6 +1824,11 @@ class JarvisApp {
         
         console.log('showOverlay called');
         
+        // On Windows, ensure it stays hidden from taskbar
+        if (process.platform === 'win32') {
+            this.mainWindow.setSkipTaskbar(true);
+        }
+        
         // Set visibility properties BEFORE showing
         try {
             this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -1823,6 +1856,14 @@ class JarvisApp {
         // Show the window
         this.mainWindow.show();
         this.mainWindow.moveTop();
+        
+        // On Windows, ensure it stays hidden from taskbar
+        if (process.platform === 'win32') {
+            this.mainWindow.setSkipTaskbar(true);
+            // Don't let it appear in Alt+Tab
+            this.mainWindow.setVisibleOnAllWorkspaces(true);
+        }
+        
         this.isOverlayVisible = true;
         
         // Use the robust fullscreen visibility method
