@@ -855,6 +855,21 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
 
     async processMessage(message) {
         try {
+            // Wait for API key if not yet received (max 5 seconds)
+            if (!this.apiKey || this.apiKey.trim() === '') {
+                console.log('API key not yet received, waiting...');
+                let waited = 0;
+                while ((!this.apiKey || this.apiKey.trim() === '') && waited < 5000) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    waited += 100;
+                }
+                
+                if (!this.apiKey || this.apiKey.trim() === '') {
+                    throw new Error('API key not received from main process. Please restart the app.');
+                }
+                console.log('API key received after waiting', waited, 'ms');
+            }
+            
             // Check message limit for free users
             if (!this.hasPremiumAccess() && this.hasReachedMessageLimit()) {
                 this.showMessageLimitReached();
