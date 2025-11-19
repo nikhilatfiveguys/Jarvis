@@ -8,6 +8,7 @@
     "build": "electron-builder",
     "build-signed": "./build-signed.sh",
     "build-unsigned": "electron-builder --config electron-builder-unsigned.json",
+    "build:win:unsigned": "electron-builder --config electron-builder-unsigned.json --win",
     "validate": "node validate-config.js",
     "test-auth": "node test-auth.js",
     "test-user": "node test-user-experience.js",

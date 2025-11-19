@@ -113,6 +113,18 @@
   "dmg": {
     "sign": false
   },
-  "win": null,
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64", "ia32"]
+      }
+    ],
+    "icon": "icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
   "linux": null
 }
