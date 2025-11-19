@@ -1,103 +1,76 @@
-# 🔗 Webhook Setup Guide for Jarvis 5.0
+# Polar Webhook Setup Guide for Supabase Sync
 
-## 📋 What You Need
+This guide will help you set up Polar webhooks to automatically sync subscriptions to Supabase.
 
-To configure webhooks, you need the following information from Polar:
+## How It Works
 
-### 1. **Webhook Secret** (Required)
-- Location: Polar Dashboard → Settings → Webhooks
-- This is a secret key used to verify webhook requests are from Polar
-- Format: Usually a long random string
+1. **User subscribes** → Polar processes payment
+2. **Polar sends webhook** → Your app receives the event
+3. **App syncs to Supabase** → Subscription data is stored in Supabase
+4. **App checks subscription** → Queries Supabase (fast and reliable)
 
-### 2. **Public Webhook URL** (Required)
-- **Problem**: Your webhook handler runs on `localhost:3002`, but Polar needs a public URL
-- **Solution Options**:
-  - **Option A (Development)**: Use ngrok to create a public tunnel
-  - **Option B (Production)**: Deploy to a server with a public domain
+## Setting Up the Webhook in Polar
 
-## 🚀 Setup Instructions
+### Step 1: Get Your Webhook URL
 
-### Step 1: Get Your Webhook Secret from Polar
+Your app runs a webhook server on **port 3002** by default. You have two options:
 
-1. Go to [Polar Dashboard](https://polar.sh/dashboard)
-2. Navigate to **Settings** → **Webhooks**
-3. If you don't have a webhook yet, create one (see Step 3)
-4. Copy the **Webhook Secret** (it will be shown when you create/edit a webhook)
+#### Option A: Local Development (using ngrok or similar)
 
-### Step 2: Set Up Public URL
-
-#### **Option A: Development (Using ngrok)**
-
-1. **Install ngrok**:
-   ```bash
-   # macOS
-   brew install ngrok
-   
-   # Or download from https://ngrok.com/download
-   ```
-
-2. **Start your Jarvis app** (webhook handler runs on port 3002)
-
-3. **Create public tunnel**:
+1. Install ngrok: `npm install -g ngrok` or download from [ngrok.com](https://ngrok.com)
+2. Start your app: `npm start`
+3. In a new terminal, expose port 3002:
    ```bash
    ngrok http 3002
    ```
+4. Copy the HTTPS URL (e.g., `https://abc123.ngrok.io`)
+5. Your webhook URL will be: `https://abc123.ngrok.io/webhook`
 
-4. **Copy the HTTPS URL** (e.g., `https://abc123.ngrok.io`)
+#### Option B: Production (deploy to a server)
 
-5. **Your webhook URL will be**: `https://abc123.ngrok.io/webhook`
-
-#### **Option B: Production (Deploy to Server)**
-
-1. Deploy your app to a server (Heroku, Railway, Render, etc.)
-2. Ensure port 3002 is accessible
-3. Your webhook URL will be: `https://yourdomain.com/webhook`
-
-### Step 3: Configure Webhook in Polar Dashboard
-
-1. Go to [Polar Dashboard](https://polar.sh/dashboard)
-2. Navigate to **Settings** → **Webhooks**
-3. Click **"Create Webhook"** or edit existing webhook
-4. Set:
-   - **URL**: Your public webhook URL (from Step 2)
-     - Development: `https://abc123.ngrok.io/webhook`
-     - Production: `https://yourdomain.com/webhook`
-   - **Events to listen to**:
-     - ✅ `checkout.completed`
-     - ✅ `subscription.created`
-     - ✅ `subscription.updated`
-     - ✅ `subscription.canceled`
-     - ✅ `payment.succeeded`
-     - ✅ `payment.failed`
-5. **Save** the webhook
-6. **Copy the Webhook Secret** (shown after saving)
-
-### Step 4: Configure Webhook Secret in Jarvis
-
-#### **Method 1: Environment Variable (Recommended)**
-
-Create or update your `.env` file:
-
-```bash
-POLAR_WEBHOOK_SECRET=your_webhook_secret_here
-POLAR_WEBHOOK_URL=https://your-public-url.com/webhook
+Deploy your app to a server with a public URL, then your webhook URL will be:
+```
+https://your-domain.com/webhook
 ```
 
-#### **Method 2: Production Config**
+### Step 2: Configure Webhook in Polar Dashboard
 
-Edit `config/production-config.js`:
+1. Go to your Polar dashboard: https://polar.sh/dashboard
+2. Navigate to **Settings** → **Webhooks**
+3. Click **"Add Webhook"** or **"Create Webhook"**
+4. Enter your webhook URL:
+   - For local: `https://your-ngrok-url.ngrok.io/webhook`
+   - For production: `https://your-domain.com/webhook`
+5. Select the events you want to listen to:
+   - ✅ `checkout.completed` - When a checkout is completed
+   - ✅ `subscription.created` - When a subscription is created
+   - ✅ `subscription.updated` - When a subscription is updated
+   - ✅ `subscription.canceled` - When a subscription is canceled
+6. Click **"Save"** or **"Create"**
+
+### Step 3: Get Webhook Secret (Optional but Recommended)
+
+1. In Polar dashboard, after creating the webhook, you'll see a **Webhook Secret**
+2. Copy this secret
+3. Add it to your `config/production-config.js`:
 
 ```javascript
 polar: {
-    // ... other config ...
-    webhookSecret: 'your_webhook_secret_here',
-    webhookUrl: 'https://your-public-url.com/webhook'
+    accessToken: 'polar_oat_...',
+    successUrl: '...',
+    productId: '...',
+    webhookSecret: 'your_webhook_secret_here'  // Add this
 }
 ```
 
-### Step 5: Restart Your App
+Or set as environment variable:
+```bash
+POLAR_WEBHOOK_SECRET=your_webhook_secret_here
+```
 
-After configuring the webhook secret, restart your Jarvis app:
+## Testing the Webhook
+
+### 1. Start Your App
 
 ```bash
 npm start
@@ -108,88 +81,119 @@ You should see:
 Polar webhook handler running on port 3002
 ```
 
-## ✅ Testing the Webhook
+### 2. Test with Polar
 
-### Test Webhook Delivery
-
-1. In Polar Dashboard → Webhooks, click on your webhook
-2. Click **"Send Test Event"**
+1. Create a test subscription in Polar dashboard
+2. Or use Polar's webhook testing tool (if available)
 3. Check your app logs - you should see:
    ```
-   Received webhook event: checkout.completed
-   Webhook processed successfully
+   Received webhook event: subscription.created
+   ✅ Subscription created synced to Supabase
    ```
 
-### Test with Real Subscription
+### 3. Verify in Supabase
 
-1. Create a test subscription through your app
-2. Check logs for webhook events
-3. Verify subscription status updates automatically
+1. Go to your Supabase dashboard
+2. Navigate to **Table Editor** → **subscriptions**
+3. You should see the new subscription record
 
-## 🔍 Troubleshooting
+## Webhook Events Handled
+
+The webhook handler automatically syncs these events to Supabase:
+
+| Event | Action |
+|-------|--------|
+| `checkout.completed` | Creates subscription in Supabase |
+| `subscription.created` | Creates/updates subscription in Supabase |
+| `subscription.updated` | Updates subscription status in Supabase |
+| `subscription.canceled` | Marks subscription as canceled in Supabase |
+
+## Troubleshooting
 
 ### Webhook Not Receiving Events
 
-1. **Check webhook URL is accessible**:
-   ```bash
-   curl https://your-webhook-url.com/webhook
-   ```
-   Should return 404 (not 404 is fine, means server is reachable)
+1. **Check if webhook server is running:**
+   - Look for "Polar webhook handler running on port 3002" in logs
+   - If not, the webhook handler might not be starting
 
-2. **Check webhook secret matches**:
-   - Verify `POLAR_WEBHOOK_SECRET` matches Polar dashboard
-   - Check logs for "Invalid webhook signature" errors
+2. **Check webhook URL:**
+   - Make sure the URL in Polar dashboard matches your actual webhook URL
+   - For local development, make sure ngrok is running
 
-3. **Check Polar Dashboard**:
-   - Go to Webhooks → Your webhook → Events
-   - See if events are being sent and if they're failing
+3. **Check firewall/network:**
+   - Make sure port 3002 is accessible
+   - For local dev, ngrok should handle this
 
-4. **Check app logs**:
-   - Look for "Polar webhook handler running on port 3002"
-   - Look for "Received webhook event" messages
+### Webhook Receiving but Not Syncing to Supabase
 
-### Webhook Secret Not Found Error
+1. **Check Supabase credentials:**
+   - Verify your Supabase URL and keys in `config/production-config.js`
+   - Test Supabase connection manually
 
-- Make sure `POLAR_WEBHOOK_SECRET` is set in `.env` or `production-config.js`
-- Restart the app after adding the secret
+2. **Check logs:**
+   - Look for error messages like "❌ Error syncing to Supabase"
+   - Check Supabase logs in dashboard
 
-### ngrok URL Changes
+3. **Check table permissions:**
+   - Make sure RLS policies allow inserts/updates
+   - Service role key should bypass RLS
 
-- ngrok free tier gives you a new URL each time
-- Update the webhook URL in Polar dashboard when ngrok restarts
-- Or use ngrok's static domain (paid feature)
+### Signature Verification Failing
 
-## 📝 Current Webhook Events Handled
+1. **Check webhook secret:**
+   - Make sure `POLAR_WEBHOOK_SECRET` is set correctly
+   - The secret in Polar dashboard must match your config
 
-Your webhook handler processes these events:
+2. **Check signature header:**
+   - Polar should send `polar-signature` header
+   - If missing, check Polar webhook settings
 
-- `checkout.completed` - When payment is successful
-- `subscription.created` - When subscription is created
-- `subscription.updated` - When subscription is updated
-- `subscription.canceled` - When subscription is canceled
-- `payment.succeeded` - When payment succeeds
-- `payment.failed` - When payment fails
+## Manual Testing
 
-## 🎯 Summary
+You can manually test the webhook sync by creating a subscription directly in Supabase:
 
-**What you need to provide:**
+```sql
+INSERT INTO subscriptions (email, status, polar_subscription_id, current_period_end)
+VALUES (
+    'test@example.com',
+    'active',
+    'test_sub_123',
+    NOW() + INTERVAL '30 days'
+);
+```
 
-1. ✅ **Webhook Secret** from Polar Dashboard
-2. ✅ **Public Webhook URL** (ngrok for dev, real domain for production)
+Then check if the app recognizes it:
+- Restart the app
+- Check subscription status for `test@example.com`
+- Should show as premium
 
-**What I've fixed:**
+## Production Deployment
 
-1. ✅ Added webhook secret to config system
-2. ✅ Fixed webhook signature verification
-3. ✅ Webhook handler is already running on port 3002
-4. ✅ All webhook events are properly handled
+For production, you'll need:
 
-**Next steps:**
+1. **Deploy your app** to a server (Heroku, AWS, DigitalOcean, etc.)
+2. **Set up a public URL** for your webhook endpoint
+3. **Update Polar webhook URL** to your production URL
+4. **Set environment variables** for all secrets
+5. **Enable HTTPS** (required by Polar webhooks)
 
-1. Get webhook secret from Polar
-2. Set up public URL (ngrok or deploy)
-3. Configure webhook in Polar dashboard
-4. Add webhook secret to your config
-5. Test!
+## Security Notes
+
+- ✅ Webhook signatures are verified automatically
+- ✅ Service role key is kept secret (never expose in client code)
+- ✅ RLS policies protect your Supabase data
+- ⚠️ Always use HTTPS for webhook URLs in production
+- ⚠️ Never commit secrets to version control
+
+## Next Steps
+
+After setting up the webhook:
+
+1. ✅ Test with a real subscription
+2. ✅ Verify data appears in Supabase
+3. ✅ Test subscription cancellation
+4. ✅ Monitor webhook logs for any issues
+
+Your subscription system is now fully automated! 🎉
 
 

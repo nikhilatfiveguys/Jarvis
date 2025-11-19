@@ -1,6 +1,6 @@
 const { getActiveUrl } = require('./getActiveUrl');
 
-async function summarizeWebsite(providedUrl = null, fullMessage = null) {
+async function summarizeWebsite(providedUrl = null, fullMessage = null, apiProxyUrl = null, supabaseAnonKey = null) {
     try {
         let url = providedUrl;
         if (!url) {
@@ -10,12 +10,6 @@ async function summarizeWebsite(providedUrl = null, fullMessage = null) {
             return 'Unknown (no URL provided and no active browser URL found)';
         }
 
-        // Hardcoded API key
-        const apiKey = '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';
-        if (!apiKey) {
-            return 'Unknown (missing PPLX_API_KEY - please set environment variable)';
-        }
-
         const systemPrompt = 'You are a concise summarizer. By default, provide brief summaries unless asked for more detail. Use HTML formatting: <b>text</b> for bold, <ul><li>item</li></ul> for lists. Keep responses short and to the point.';
 
         // Use the full message if provided, otherwise use default prompt
@@ -23,20 +17,51 @@ async function summarizeWebsite(providedUrl = null, fullMessage = null) {
 
         console.log('Calling Perplexity API with URL:', url);
         console.log('User prompt:', userPrompt);
-        const res = await fetch('https://api.perplexity.ai/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: 'sonar',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ]
-            })
-        });
+        
+        let res;
+        // Use Edge Function proxy if available, otherwise fallback to direct API call
+        if (apiProxyUrl && supabaseAnonKey) {
+            // Use Supabase Edge Function proxy (secure - no API keys in app)
+            console.log('🔒 Using Supabase Edge Function proxy for Perplexity (summarizeWebsite)');
+            res = await fetch(apiProxyUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${supabaseAnonKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider: 'perplexity',
+                    payload: {
+                        model: 'sonar',
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: userPrompt }
+                        ]
+                    }
+                })
+            });
+        } else {
+            // Fallback: Try environment variable (for development)
+            const apiKey = process.env.PPLX_API_KEY;
+            if (!apiKey) {
+                return 'Unknown (missing PPLX_API_KEY - please set environment variable or configure Edge Function proxy)';
+            }
+            console.log('⚠️ Using direct Perplexity API call (API key from env)');
+            res = await fetch('https://api.perplexity.ai/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: 'sonar',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ]
+                })
+            });
+        }
 
         console.log('Perplexity API response status:', res.status);
         

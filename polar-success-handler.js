@@ -59,11 +59,62 @@ class PolarSuccessHandler {
                     return;
                 }
 
-                console.log('Processing successful checkout:', checkoutId);
+                console.log('Processing checkout callback:', checkoutId);
+
+                // CRITICAL: Verify that checkout was actually paid before granting access
+                const verification = await this.polarIntegration.verifyCheckoutPayment(checkoutId);
+                
+                if (!verification.isPaid) {
+                    console.error('❌ Checkout not paid - refusing to grant premium access:', verification.error);
+                    console.error('❌ Checkout details:', JSON.stringify(verification.checkout, null, 2));
+                    const errorPage = this.getErrorPage(`Payment not completed: ${verification.error || 'Checkout status invalid'}`);
+                    res.writeHead(400, { 'Content-Type': 'text/html' });
+                    res.end(errorPage);
+                    return;
+                }
+
+                // Additional verification: Check if subscription actually exists in Polar
+                // This prevents granting access if checkout is complete but subscription wasn't created
+                try {
+                    const checkout = verification.checkout;
+                    if (checkout.customer_id) {
+                        const subscriptions = await this.polarIntegration.polar.subscriptions.list({
+                            customerId: checkout.customer_id,
+                            limit: 1
+                        });
+                        
+                        const hasActiveSubscription = subscriptions.items?.some(sub => 
+                            sub.status === 'active' || sub.status === 'trialing'
+                        );
+                        
+                        if (!hasActiveSubscription) {
+                            console.warn('⚠️ Checkout complete but no active subscription found in Polar');
+                            console.warn('⚠️ Waiting for webhook to create subscription - not granting access yet');
+                            const errorPage = this.getErrorPage('Payment processing. Please wait a moment and refresh, or contact support if this persists.');
+                            res.writeHead(202, { 'Content-Type': 'text/html' }); // 202 Accepted - processing
+                            res.end(errorPage);
+                            return;
+                        }
+                    }
+                } catch (subCheckError) {
+                    console.error('❌ Error checking subscription:', subCheckError);
+                    // Don't fail completely - webhook might create it
+                    console.warn('⚠️ Continuing anyway - subscription might be created via webhook');
+                }
+
+                console.log('✅ Checkout verified as paid, proceeding with subscription activation');
 
                 // Get customer email from Polar API using checkout ID
                 const customerEmail = await this.polarIntegration.getCustomerEmailFromCheckout(checkoutId);
                 console.log('Customer email from Polar API:', customerEmail);
+
+                if (!customerEmail) {
+                    console.error('❌ No customer email found for checkout');
+                    const errorPage = this.getErrorPage('Could not retrieve customer email. Please contact support.');
+                    res.writeHead(400, { 'Content-Type': 'text/html' });
+                    res.end(errorPage);
+                    return;
+                }
 
                 // Process the checkout success (but don't store yet)
                 const result = await this.polarIntegration.handleCheckoutSuccess(checkoutId, customerEmail);
@@ -75,8 +126,35 @@ class PolarSuccessHandler {
                     console.log('✅ Subscription data stored via mainApp');
                 }
                 
+                // Also sync to Supabase immediately (don't wait for webhook)
+                if (this.mainApp && this.mainApp.supabaseIntegration && customerEmail) {
+                    try {
+                        const supabaseData = {
+                            email: customerEmail,
+                            status: 'active',
+                            polar_subscription_id: result.subscriptionData.subscriptionId || checkoutId,
+                            polar_customer_id: result.subscriptionData.customerId,
+                            current_period_start: new Date().toISOString(),
+                            current_period_end: result.subscriptionData.nextBilling ? new Date(result.subscriptionData.nextBilling).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                        };
+                        
+                        const supabaseResult = await this.mainApp.supabaseIntegration.createOrUpdateSubscription(supabaseData);
+                        if (supabaseResult.success) {
+                            console.log('✅ Subscription synced to Supabase immediately after checkout');
+                        } else {
+                            console.error('❌ Failed to sync to Supabase:', supabaseResult.error);
+                        }
+                    } catch (error) {
+                        console.error('❌ Error syncing to Supabase:', error);
+                    }
+                }
+                
+                // Wait a moment for Supabase to be ready, then notify main app
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
                 // Notify main app about successful subscription
                 if (this.mainApp && this.mainApp.mainWindow) {
+                    console.log('📢 Sending subscription-activated event to overlay');
                     this.mainApp.mainWindow.webContents.send('subscription-activated', {
                         email: customerEmail,
                         message: 'Your Jarvis Premium subscription is now active!'

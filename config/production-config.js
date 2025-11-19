@@ -6,7 +6,9 @@ const PRODUCTION_CONFIG = {
         url: process.env.SUPABASE_URL || 'https://nbmnbgouiammxpkbyaxj.supabase.co',
         anonKey: process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE',
         serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjUyMTA4NywiZXhwIjoyMDc4MDk3MDg3fQ.aDJLfyGc36beHZTELnITiphSE9FY_1ou_wW4tcuVFyY',
-        checkoutUrl: process.env.STRIPE_CHECKOUT_URL || 'https://polar.sh'
+        checkoutUrl: process.env.STRIPE_CHECKOUT_URL || 'https://polar.sh',
+        // Edge Function URL for API proxying (API keys stored securely in Supabase Secrets)
+        apiProxyUrl: process.env.SUPABASE_API_PROXY_URL || 'https://nbmnbgouiammxpkbyaxj.supabase.co/functions/v1/jarvis-api-proxy'
     },
     // Polar config for payment processing
     polar: {

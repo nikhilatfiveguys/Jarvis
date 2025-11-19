@@ -13,7 +13,7 @@ exports.default = async function notarizing(context) {
     appBundleId: 'com.aaronsoni.jarvis',
     appPath: `${appOutDir}/${appName}.app`,
     appleId: process.env.APPLE_ID || 'aaronsoni06@gmail.com',
-    appleIdPassword: process.env.APPLE_ID_PASSWORD || 'zhlh-ktaa-vtjl-wtel',
+    appleIdPassword: process.env.APPLE_ID_PASSWORD || 'lijb-fdhv-oqmj-cwwp',
     teamId: process.env.APPLE_TEAM_ID || 'DMH3RU9FQQ',
   });
 };

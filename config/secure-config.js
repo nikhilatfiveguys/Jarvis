@@ -1,33 +1,52 @@
-// Secure configuration management for Jarvis 5.0
+// Secure configuration management for Jarvis 6.0
 const fs = require('fs');
 const path = require('path');
 
 class SecureConfig {
     constructor() {
+        // Load .env file if it exists (works cross-platform)
+        this.loadEnvFile();
         this.config = this.loadConfig();
     }
 
     loadConfig() {
-        // Always use hardcoded production configuration
-        console.log('Using hardcoded production configuration');
+        // Load production configuration (reads from process.env which is populated by .env file)
+        console.log('Loading production configuration');
         return this.loadProductionConfig();
     }
 
-    loadEnvFile(filePath) {
-        const envFile = fs.readFileSync(filePath, 'utf8');
-        const lines = envFile.split('\n');
-        
-        lines.forEach(line => {
-            const trimmedLine = line.trim();
-            if (trimmedLine && !trimmedLine.startsWith('#')) {
-                const [key, ...valueParts] = trimmedLine.split('=');
-                const value = valueParts.join('=').replace(/^["']|["']$/g, '');
-                if (key && value) {
-                    process.env[key] = value;
-                }
-            }
-        });
+    loadEnvFile() {
+        // Try to load .env file from project root (works on both macOS and Windows)
+        const envPath = path.join(__dirname, '..', '.env');
+        if (fs.existsSync(envPath)) {
+            console.log('Loading .env file from:', envPath);
+            this.loadEnvFileContents(envPath);
+        } else {
+            console.log('No .env file found. Using environment variables or defaults.');
+        }
     }
+
+    loadEnvFileContents(filePath) {
+        try {
+            const envFile = fs.readFileSync(filePath, 'utf8');
+            const lines = envFile.split('\n');
+            
+            lines.forEach(line => {
+                const trimmedLine = line.trim();
+                if (trimmedLine && !trimmedLine.startsWith('#')) {
+                    const [key, ...valueParts] = trimmedLine.split('=');
+                    const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+                    if (key && value && value !== 'your-perplexity-api-key-here' && value !== 'your-openai-api-key-here') {
+                        process.env[key] = value;
+                    }
+                }
+            });
+            console.log('✅ .env file loaded successfully');
+        } catch (error) {
+            console.warn('⚠️ Failed to load .env file:', error.message);
+        }
+    }
+
 
     loadFromEnvironment() {
         // Hardcoded API keys - always return production config
@@ -79,6 +98,10 @@ class SecureConfig {
 
     getPerplexityConfig() {
         return this.config.perplexity || { apiKey: '' };
+    }
+
+    getSupabaseApiProxyUrl() {
+        return this.config.supabase?.apiProxyUrl || '';
     }
 
     isProduction() {

@@ -1,0 +1,8 @@
+# Supabase Edge Functions Configuration
+# This makes the polar-webhook function publicly accessible without JWT verification
+# Security is handled via Polar webhook signature verification instead
+
+[functions.polar-webhook]
+verify_jwt = false
+
+

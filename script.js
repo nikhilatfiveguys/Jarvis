@@ -57,10 +57,13 @@ class JarvisOverlay {
                         this.apiKey = apiKeys.openai;
                         this.perplexityApiKey = apiKeys.perplexity;
                         this.claudeApiKey = apiKeys.claude;
+                        this.apiProxyUrl = apiKeys.apiProxyUrl;
+                        this.supabaseAnonKey = apiKeys.supabaseAnonKey;
                         console.log('✅ API keys loaded from main process');
                         console.log('OpenAI key present:', !!this.apiKey);
                         console.log('Perplexity key present:', !!this.perplexityApiKey);
                         console.log('Claude key present:', !!this.claudeApiKey);
+                        console.log('API Proxy URL:', this.apiProxyUrl || 'NOT CONFIGURED (using direct API calls)');
                         // Rebuild tools array now that API keys are loaded
                         this.rebuildToolsArray();
                         return;
@@ -561,6 +564,8 @@ class JarvisOverlay {
         this.apiKey = null;
         this.perplexityApiKey = null;
         this.claudeApiKey = null;
+        this.apiProxyUrl = null;
+        this.supabaseAnonKey = null;
         this.naturalWriteApiKey = 'nw_6f9427e5026add995264a567970f5b0ce09f39be867f8921';
         // Initialize tools array (will be rebuilt after API keys are loaded)
         this.tools = [];
@@ -1135,14 +1140,35 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
             this.showLoadingNotification();
             
-            let response = await fetch('https://api.openai.com/v1/responses', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestPayload)
-            });
+            // Use Edge Function proxy if available, otherwise direct API call
+            let response;
+            if (this.apiProxyUrl && this.supabaseAnonKey) {
+                // Use Supabase Edge Function proxy (secure - no API keys in app)
+                console.log('🔒 Using Supabase Edge Function proxy for OpenAI');
+                response = await fetch(this.apiProxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        provider: 'openai',
+                        endpoint: 'responses',
+                        payload: requestPayload
+                    })
+                });
+            } else {
+                // Fallback to direct API call (requires API key)
+                console.log('⚠️ Using direct OpenAI API call (API key required)');
+                response = await fetch('https://api.openai.com/v1/responses', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestPayload)
+                });
+            }
             
             if (!response.ok) {
                 throw new Error(`API error: ${response.status}`);
@@ -1386,26 +1412,58 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             // Start loading notification with search context (don't stop it here - let it continue until final answer)
             this.showLoadingNotification(null, 'search');
             
-            const perplexityResponse = await fetch('https://api.perplexity.ai/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.perplexityApiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: 'sonar',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: 'Be precise and concise. Provide the most relevant and up-to-date information.'
-                        },
-                        {
-                            role: 'user',
-                            content: query
+            // Use Edge Function proxy if available, otherwise direct API call
+            let perplexityResponse;
+            if (this.apiProxyUrl && this.supabaseAnonKey) {
+                // Use Supabase Edge Function proxy (secure - no API keys in app)
+                console.log('🔒 Using Supabase Edge Function proxy for Perplexity');
+                perplexityResponse = await fetch(this.apiProxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        provider: 'perplexity',
+                        payload: {
+                            model: 'sonar',
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: 'Be precise and concise. Provide the most relevant and up-to-date information.'
+                                },
+                                {
+                                    role: 'user',
+                                    content: query
+                                }
+                            ]
                         }
-                    ]
-                })
-            });
+                    })
+                });
+            } else {
+                // Fallback to direct API call (requires API key)
+                console.log('⚠️ Using direct Perplexity API call (API key required)');
+                perplexityResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.perplexityApiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'sonar',
+                        messages: [
+                            {
+                                role: 'system',
+                                content: 'Be precise and concise. Provide the most relevant and up-to-date information.'
+                            },
+                            {
+                                role: 'user',
+                                content: query
+                            }
+                        ]
+                    })
+                });
+            }
             
             if (!perplexityResponse.ok) {
                 const errorData = await perplexityResponse.json().catch(() => ({}));
@@ -1524,34 +1582,77 @@ ${currentQuestion}`;
             
             // Try with full model name first
             try {
-                claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-                    method: 'POST',
-                    headers: {
-                        'x-api-key': this.claudeApiKey,
-                        'anthropic-version': '2023-06-01',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestBody)
-                });
-                
-                // If bad request, try alternative model names
-                if (claudeResponse.status === 400) {
-                    const altModels = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
-                    for (const altModel of altModels) {
-                        console.log(`Trying alternative model: ${altModel}`);
-                        requestBody.model = altModel;
-                        claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-                            method: 'POST',
-                            headers: {
-                                'x-api-key': this.claudeApiKey,
-                                'anthropic-version': '2023-06-01',
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify(requestBody)
-                        });
-                        if (claudeResponse.ok) {
-                            console.log(`Success with model: ${altModel}`);
-                            break;
+                // Use Edge Function proxy if available, otherwise direct API call
+                if (this.apiProxyUrl && this.supabaseAnonKey) {
+                    // Use Supabase Edge Function proxy (secure - no API keys in app)
+                    console.log('🔒 Using Supabase Edge Function proxy for Claude');
+                    claudeResponse = await fetch(this.apiProxyUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            provider: 'claude',
+                            payload: requestBody
+                        })
+                    });
+                    
+                    // If bad request, try alternative model names
+                    if (claudeResponse.status === 400) {
+                        const altModels = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
+                        for (const altModel of altModels) {
+                            console.log(`Trying alternative model: ${altModel}`);
+                            requestBody.model = altModel;
+                            claudeResponse = await fetch(this.apiProxyUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    provider: 'claude',
+                                    payload: requestBody
+                                })
+                            });
+                            if (claudeResponse.ok) {
+                                console.log(`Success with model: ${altModel}`);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to direct API call (requires API key)
+                    console.log('⚠️ Using direct Claude API call (API key required)');
+                    claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': this.claudeApiKey,
+                            'anthropic-version': '2023-06-01',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+                    
+                    // If bad request, try alternative model names
+                    if (claudeResponse.status === 400) {
+                        const altModels = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
+                        for (const altModel of altModels) {
+                            console.log(`Trying alternative model: ${altModel}`);
+                            requestBody.model = altModel;
+                            claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+                                method: 'POST',
+                                headers: {
+                                    'x-api-key': this.claudeApiKey,
+                                    'anthropic-version': '2023-06-01',
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify(requestBody)
+                            });
+                            if (claudeResponse.ok) {
+                                console.log(`Success with model: ${altModel}`);
+                                break;
+                            }
                         }
                     }
                 }

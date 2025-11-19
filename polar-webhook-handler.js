@@ -15,8 +15,7 @@ class PolarWebhookHandler {
      */
     start() {
         this.server = http.createServer((req, res) => {
-            // Handle both /webhook and /webhook/polar paths for compatibility
-            if (req.method === 'POST' && (req.url === '/webhook' || req.url === '/webhook/polar')) {
+            if (req.method === 'POST' && req.url === '/webhook') {
                 this.handleWebhook(req, res);
             } else {
                 res.writeHead(404);
