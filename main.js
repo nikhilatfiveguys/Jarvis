@@ -19,6 +19,7 @@ class JarvisApp {
         this.isOverlayVisible = true;
         this.fullscreenMaintenanceInterval = null;
         this.fullscreenEnforcementInterval = null;
+        this.isTransitioningOnboarding = false; // Track onboarding window transitions
         this.licenseManager = new LicenseManager(new PolarClient(POLAR_CONFIG));
         // Load secure configuration first
         const SecureConfig = require('./config/secure-config');
@@ -119,6 +120,10 @@ class JarvisApp {
 
         // Handle window closed
         app.on('window-all-closed', () => {
+            // Don't quit if we're transitioning between onboarding windows or if main window exists
+            if (this.isTransitioningOnboarding || this.mainWindow) {
+                return;
+            }
             if (process.platform !== 'darwin') {
                 app.quit();
             }
@@ -238,7 +243,7 @@ class JarvisApp {
 
         console.log('Creating onboarding window, step:', step);
 
-        this.onboardingWindow = new BrowserWindow({
+        const windowOptions = {
             width: 520,
             height: 750,
             center: true,
@@ -247,14 +252,20 @@ class JarvisApp {
             transparent: true,
             backgroundColor: '#00000000',
             hasShadow: true,
-            titleBarStyle: 'hidden',
             alwaysOnTop: true,
             show: true,
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false
             }
-        });
+        };
+        
+        // titleBarStyle is macOS-only, don't set it on Windows
+        if (process.platform === 'darwin') {
+            windowOptions.titleBarStyle = 'hidden';
+        }
+        
+        this.onboardingWindow = new BrowserWindow(windowOptions);
 
         // Load the appropriate onboarding screen
         if (step === 'features') {
@@ -267,7 +278,10 @@ class JarvisApp {
         
         this.onboardingWindow.on('closed', () => {
             console.log('Onboarding window closed');
-            this.onboardingWindow = null;
+            // Only clear reference if we're not transitioning (transition handler will manage it)
+            if (!this.isTransitioningOnboarding) {
+                this.onboardingWindow = null;
+            }
             // Don't quit if we have a main window or if we're transitioning
             // The onboarding completion handler will manage window transitions
         });
@@ -293,6 +307,9 @@ class JarvisApp {
     }
 
     showFeaturesOnboarding() {
+        // Set flag to prevent app quit during transition
+        this.isTransitioningOnboarding = true;
+        
         // Close current onboarding and show features screen
         if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
             const oldWindow = this.onboardingWindow;
@@ -303,6 +320,10 @@ class JarvisApp {
         // Small delay to ensure old window is closed
         setTimeout(() => {
             this.createOnboardingWindow('features');
+            // Clear transition flag after new window is created
+            setTimeout(() => {
+                this.isTransitioningOnboarding = false;
+            }, 200);
         }, 100);
     }
 
@@ -320,6 +341,11 @@ class JarvisApp {
                         });
                     }
                 });
+            });
+        } else if (process.platform === 'win32') {
+            // Open Windows Settings to Privacy > Microphone/Camera
+            shell.openExternal('ms-settings:privacy-microphone').catch((err) => {
+                console.error('Failed to open Windows privacy settings:', err);
             });
         }
     }
