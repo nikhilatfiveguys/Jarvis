@@ -4,6 +4,8 @@ const path = require('path');
 const { exec } = require('child_process');
 const { POLAR_CONFIG, PolarClient, LicenseManager } = require('./polar-config');
 // const VoiceRecorder = require('./voice-recorder'); // Voice recording temporarily disabled
+const SupabaseIntegration = require('./supabase-integration');
+// Legacy Polar support (deprecated - kept for backward compatibility)
 const PolarIntegration = require('./polar-integration');
 const PolarSuccessHandler = require('./polar-success-handler');
 const PolarWebhookHandler = require('./polar-webhook-handler');
@@ -17,15 +19,19 @@ class JarvisApp {
         this.isOverlayVisible = true;
         this.fullscreenMaintenanceInterval = null;
         this.fullscreenEnforcementInterval = null;
-        this.isTransitioningOnboarding = false; // Track onboarding transitions
         this.licenseManager = new LicenseManager(new PolarClient(POLAR_CONFIG));
         // Load secure configuration first
         const SecureConfig = require('./config/secure-config');
         this.secureConfig = new SecureConfig();
         
         // Now create Polar integration with proper config
+        // Use Supabase for subscription management
+        this.supabaseIntegration = new SupabaseIntegration(this.secureConfig);
+        this.supabaseIntegration.setMainAppInstance(this); // Allow webhooks to notify main app
+        
+        // Legacy Polar support (deprecated - kept for backward compatibility)
         this.polarIntegration = new PolarIntegration(this.secureConfig);
-        this.polarIntegration.setMainAppInstance(this); // Allow webhooks to notify main app
+        this.polarIntegration.setMainAppInstance(this);
         this.polarSuccessHandler = new PolarSuccessHandler(this.polarIntegration, this);
         this.polarWebhookHandler = new PolarWebhookHandler(this.secureConfig, this.polarIntegration, this);
         
@@ -49,34 +55,55 @@ class JarvisApp {
             if (this.mainWindow) {
                 if (this.mainWindow.isMinimized()) this.mainWindow.restore();
                 this.mainWindow.show();
-                // On Windows, keep hidden from taskbar
-                if (process.platform === 'win32') {
-                    this.mainWindow.setSkipTaskbar(true);
-                }
                 this.mainWindow.focus();
             }
-        });
-
-        // Add global error handlers to prevent crashes
-        process.on('uncaughtException', (error) => {
-            console.error('Uncaught Exception:', error);
-            // Don't crash the app, just log the error
-            // On Windows/school computers, this might prevent the app from closing
-        });
-        
-        process.on('unhandledRejection', (reason, promise) => {
-            console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-            // Don't crash the app, just log the error
         });
 
         this.setupApp();
     }
 
-    setupApp() {
+    async setupApp() {
         // Handle app ready
         app.whenReady().then(async () => {
             this.setupAuthHandlers();
             // this.setupVoiceRecording(); // Voice recording temporarily disabled
+            
+            // Check if user has active subscription before showing paywall
+            const userEmail = this.getUserEmail();
+            let shouldShowPaywall = true;
+            
+            if (userEmail) {
+                try {
+                    const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(userEmail);
+                    if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
+                        // User has active subscription, skip paywall
+                            shouldShowPaywall = false;
+                        console.log('✅ Active subscription found, skipping paywall');
+                        }
+                    } catch (error) {
+                    console.error('Error checking subscription on startup:', error);
+                    // On error, show paywall to be safe
+                }
+            }
+            
+            // Setup IPC handlers (needed for all flows)
+            this.setupIpcHandlers();
+            
+            if (shouldShowPaywall) {
+                // Go directly to paywall (no sign-in required)
+                this.createPaywallWindow();
+            } else {
+                // User is subscribed, go directly to main window
+                // Check if onboarding is needed
+                if (!this.isOnboardingComplete()) {
+                    this.createOnboardingWindow();
+                } else {
+                    this.createWindow();
+                    if (process.platform === 'darwin' && app.dock) {
+                        app.dock.hide();
+                    }
+                }
+            }
             
             // Start Polar success handler
             this.polarSuccessHandler.start();
@@ -87,37 +114,11 @@ class JarvisApp {
             // Start periodic subscription validation
             this.startSubscriptionValidation();
             
-            // Check subscription status before showing paywall
-            try {
-                const subscriptionResult = await this.checkSubscriptionStatus();
-                
-                if (subscriptionResult.hasActiveSubscription) {
-                    console.log('✅ User has active subscription, skipping paywall');
-                    // Skip paywall and go directly to main window
-                    await this.proceedToMainWindow();
-                } else {
-                    console.log('ℹ️ No active subscription, showing paywall');
-                    // Show paywall for non-subscribed users
-                    this.createPaywallWindow();
-                }
-            } catch (error) {
-                console.error('Error checking subscription status on startup:', error);
-                // On error, show paywall as fallback
-                this.createPaywallWindow();
-            }
+            // Don't validate on startup - rely on webhooks for cancellation updates
         });
 
         // Handle window closed
         app.on('window-all-closed', () => {
-            // Don't quit if we're transitioning between onboarding screens
-            if (this.isTransitioningOnboarding) {
-                console.log('Preventing quit during onboarding transition');
-                return;
-            }
-            // Don't quit if we have a main window (it might be hidden)
-            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                return;
-            }
             if (process.platform !== 'darwin') {
                 app.quit();
             }
@@ -179,7 +180,7 @@ class JarvisApp {
         
         // Setup IPC handlers for paywall
         this.setupIpcHandlers();
-        
+
         this.paywallWindow.on('closed', () => {
             this.paywallWindow = null;
             // If user closes paywall without completing, quit app
@@ -262,7 +263,7 @@ class JarvisApp {
         } else {
             this.onboardingWindow.loadFile('onboarding.html');
             console.log('Loading permissions onboarding');
-        }
+                }
         
         this.onboardingWindow.on('closed', () => {
             console.log('Onboarding window closed');
@@ -292,84 +293,17 @@ class JarvisApp {
     }
 
     showFeaturesOnboarding() {
-        try {
-            console.log('showFeaturesOnboarding called');
-            // Set flag to prevent app from quitting during transition
-            this.isTransitioningOnboarding = true;
-            console.log('Transition flag set to true');
-            
-            // On Windows, skip features screen and go directly to main window
-            // This prevents window transition issues
-            if (process.platform === 'win32') {
-                console.log('Windows detected - skipping features screen, going directly to main window');
-                this.isTransitioningOnboarding = false;
-                this.markOnboardingComplete();
-                this.proceedToMainWindow().catch(err => {
-                    console.error('Failed to proceed to main window:', err);
-                });
-                return;
-            }
-            
-            // For macOS, create new window FIRST, then close old one
-            let newWindowCreated = false;
-            try {
-                console.log('Creating features onboarding window...');
-                // Create the features window first
-                const oldWindow = this.onboardingWindow;
-                this.createOnboardingWindow('features');
-                newWindowCreated = true;
-                console.log('Features window created successfully');
-                
-                // Close old window after new one is created
-                if (oldWindow && !oldWindow.isDestroyed()) {
-                    // Wait a bit for new window to be ready
-                    setTimeout(() => {
-                        console.log('Closing old onboarding window');
-                        if (oldWindow && !oldWindow.isDestroyed()) {
-                            oldWindow.close();
-                        }
-                        // Clear transition flag after a delay
-                        setTimeout(() => {
-                            this.isTransitioningOnboarding = false;
-                            console.log('Transition flag cleared');
-                        }, 500);
-                    }, 200);
-                } else {
-                    this.isTransitioningOnboarding = false;
-                }
-            } catch (error) {
-                console.error('Failed to create features onboarding window:', error);
-                this.isTransitioningOnboarding = false;
-                
-                // If features window fails, skip it and go directly to main window
-                if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                    // Keep the current window open
-                    console.log('Keeping current window open');
-                    return;
-                }
-                
-                // If no window exists, try to proceed to main window
-                console.log('No window exists, proceeding to main window');
-                this.markOnboardingComplete();
-                this.proceedToMainWindow().catch(err => {
-                    console.error('Failed to proceed to main window:', err);
-                });
-            }
-        } catch (error) {
-            console.error('Error in showFeaturesOnboarding:', error);
-            this.isTransitioningOnboarding = false;
-            
-            // Fallback: Skip features and go directly to main window
-            try {
-                console.log('Fallback: Skipping features, going to main window');
-                this.markOnboardingComplete();
-                this.proceedToMainWindow().catch(err => {
-                    console.error('Failed to proceed to main window:', err);
-                });
-            } catch (fallbackError) {
-                console.error('Fallback also failed:', fallbackError);
-            }
+        // Close current onboarding and show features screen
+        if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+            const oldWindow = this.onboardingWindow;
+            this.onboardingWindow = null;
+            oldWindow.close();
         }
+        
+        // Small delay to ensure old window is closed
+        setTimeout(() => {
+            this.createOnboardingWindow('features');
+        }, 100);
     }
 
     openScreenRecordingSettings() {
@@ -385,35 +319,6 @@ class JarvisApp {
                             console.error('Failed to open Screen Recording settings:', err);
                         });
                     }
-                });
-            });
-        } else if (process.platform === 'win32') {
-            // Windows: Open Privacy settings for screen recording
-            // Try multiple methods to ensure it works
-            console.log('Attempting to open Windows Privacy settings...');
-            
-            // Method 1: Try screen capture privacy (Windows 10/11)
-            shell.openExternal('ms-settings:privacy-screen').catch(() => {
-                console.log('Method 1 failed, trying method 2...');
-                // Method 2: Try camera privacy (often includes screen capture)
-                shell.openExternal('ms-settings:privacy-webcam').catch(() => {
-                    console.log('Method 2 failed, trying method 3...');
-                    // Method 3: Open general privacy settings
-                    shell.openExternal('ms-settings:privacy').catch(() => {
-                        console.log('Method 3 failed, trying method 4...');
-                        // Method 4: Use start command as fallback
-                        exec('start ms-settings:privacy', (error) => {
-                            if (error) {
-                                console.error('All methods failed to open Windows Privacy settings:', error);
-                                // Last resort: Try opening Settings app directly
-                                exec('start ms-settings:', (err) => {
-                                    if (err) {
-                                        console.error('Failed to open Windows Settings:', err);
-                                    }
-                                });
-                            }
-                        });
-                    });
                 });
             });
         }
@@ -544,8 +449,46 @@ class JarvisApp {
                 this.paywallWindow = null;
             }
             
-            // Proceed to main window
-            await this.proceedToMainWindow();
+            // Check if onboarding is needed
+            const onboardingNeeded = !this.isOnboardingComplete();
+            console.log('Onboarding needed?', onboardingNeeded);
+            if (onboardingNeeded) {
+                console.log('Creating onboarding window from paywall-complete');
+                this.createOnboardingWindow();
+                return;
+            }
+            
+            // Only create window if it doesn't exist
+            if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+                // Check if user has active subscription before proceeding
+                try {
+                    const subscriptionResult = await this.checkSubscriptionStatus();
+                    
+                    if (subscriptionResult.hasActiveSubscription) {
+                        this.createWindow();
+                        this.setupIpcHandlers();
+                        // Hide Dock icon on macOS
+                        if (process.platform === 'darwin' && app.dock) {
+                            app.dock.hide();
+                        }
+                    } else {
+                        // Proceed to main app with free tier (limited features)
+                        this.createWindow();
+                        this.setupIpcHandlers();
+                        if (process.platform === 'darwin' && app.dock) {
+                            app.dock.hide();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error checking subscription status:', error);
+                    // On error, proceed to main app
+                    this.createWindow();
+                    this.setupIpcHandlers();
+                    if (process.platform === 'darwin' && app.dock) {
+                        app.dock.hide();
+                    }
+                }
+            }
         });
 
         ipcMain.on('trial-started', async () => {
@@ -578,8 +521,20 @@ class JarvisApp {
                 this.paywallWindow = null;
             }
             
-            // Proceed to main window
-            await this.proceedToMainWindow();
+            // Check if onboarding is needed
+            if (!this.isOnboardingComplete()) {
+                this.createOnboardingWindow();
+                return;
+            }
+            
+            // Only create window if it doesn't exist
+            if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+                this.createWindow();
+                this.setupIpcHandlers();
+                if (process.platform === 'darwin' && app.dock) {
+                    app.dock.hide();
+                }
+            }
         });
 
         ipcMain.on('paywall-closed', () => {
@@ -594,86 +549,16 @@ class JarvisApp {
 
         // Handle onboarding events
         ipcMain.on('open-screen-recording-settings', () => {
-            try {
-                console.log('Opening screen recording settings for platform:', process.platform);
-                this.openScreenRecordingSettings();
-            } catch (error) {
-                console.error('Failed to open screen recording settings:', error);
-                // Try to show error to user if onboarding window exists
-                if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                    this.onboardingWindow.webContents.send('settings-error', 'Failed to open settings. Please manually go to Windows Settings > Privacy > Camera.');
-                }
-            }
+            this.openScreenRecordingSettings();
         });
 
         ipcMain.on('onboarding-complete', async () => {
-            try {
-                console.log('Onboarding complete - showing features screen');
-                console.log('Platform:', process.platform);
-                
-                // On Windows, skip features and go directly to main window
-                if (process.platform === 'win32') {
-                    console.log('Windows: Skipping features, going directly to main window');
-                    this.isTransitioningOnboarding = true;
-                    
-                    // Mark onboarding complete
-                    this.markOnboardingComplete();
-                    
-                    // Keep onboarding window open while creating main window
-                    const onboardingWindow = this.onboardingWindow;
-                    
-                    try {
-                        await this.proceedToMainWindow();
-                        console.log('Main window created successfully');
-                        
-                        // Close onboarding window after main window is ready
-                        setTimeout(() => {
-                            if (onboardingWindow && !onboardingWindow.isDestroyed()) {
-                                console.log('Closing onboarding window');
-                                onboardingWindow.close();
-                            }
-                            this.isTransitioningOnboarding = false;
-                        }, 1000);
-                    } catch (windowError) {
-                        console.error('Failed to create main window:', windowError);
-                        this.isTransitioningOnboarding = false;
-                        // Keep onboarding window open and show error
-                        if (onboardingWindow && !onboardingWindow.isDestroyed()) {
-                            onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
-                        }
-                    }
-                    return;
-                }
-                
-                // For macOS, show features screen
-                // Set transition flag
-                this.isTransitioningOnboarding = true;
-                
-                // Permissions screen completed - now show features screen
-                // Don't mark onboarding as complete yet, wait for features screen
-                this.showFeaturesOnboarding();
-            } catch (error) {
-                console.error('Error during onboarding completion:', error);
-                this.isTransitioningOnboarding = false;
-                
-                // If features onboarding fails, try to proceed directly to main window
-                try {
-                    this.markOnboardingComplete();
-                    await this.proceedToMainWindow();
-                } catch (fallbackError) {
-                    console.error('Failed to proceed to main window:', fallbackError);
-                    // Show error to user
-                    if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                        this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
-                    }
-                }
-            }
+            // Permissions screen completed - now show features screen
+            // Don't mark onboarding as complete yet, wait for features screen
+            this.showFeaturesOnboarding();
         });
 
         ipcMain.on('onboarding-features-complete', async () => {
-            // Clear transition flag since we're moving to main window
-            this.isTransitioningOnboarding = false;
-            
             // Mark onboarding as complete (both screens done)
             this.markOnboardingComplete();
             
@@ -764,16 +649,9 @@ class JarvisApp {
             return;
         }
         
-        // Get primary display info with error handling
-        let width = 1920;
-        let height = 1080;
-        try {
-            const primaryDisplay = screen.getPrimaryDisplay();
-            width = primaryDisplay.bounds.width;
-            height = primaryDisplay.bounds.height;
-        } catch (error) {
-            console.error('Failed to get screen dimensions, using defaults:', error);
-        }
+        // Get primary display info
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width, height } = primaryDisplay.bounds;
 
         // Create a true overlay window
         this.mainWindow = new BrowserWindow({
@@ -834,78 +712,17 @@ class JarvisApp {
         // Hide Dock for overlay utility feel (macOS)
         if (process.platform === 'darwin' && app.dock) { try { app.dock.hide(); } catch (_) {} }
 
-        // Add error handlers to prevent crashes
-        this.mainWindow.webContents.on('crashed', (event, killed) => {
-            console.error('Window crashed:', killed);
-            // Try to reload the window
-            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                this.mainWindow.reload();
-            }
-        });
-
-        this.mainWindow.on('unresponsive', () => {
-            console.warn('Window became unresponsive');
-        });
-
         // Load the HTML file
         this.mainWindow.loadFile('index.html').catch(err => {
             console.error('Failed to load index.html:', err);
-            // Show error to user instead of crashing
-            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                this.mainWindow.webContents.send('app-error', 'Failed to load application. Please try restarting.');
-            }
         });
 
         // Setup IPC handlers for main window
         this.setupIpcHandlers();
 
-        // On Windows, ensure window stays hidden from taskbar (background task)
-        if (process.platform === 'win32') {
-            // Reinforce skipTaskbar setting
-            this.mainWindow.setSkipTaskbar(true);
-            
-            // Set app user model ID to keep it as background process
-            app.setAppUserModelId('com.aaronsoni.jarvis.background');
-            
-            // Prevent window from appearing in Alt+Tab
-            this.mainWindow.setVisibleOnAllWorkspaces(true);
-        }
-
-        // Send API keys to renderer when window is ready
-        this.mainWindow.webContents.once('did-finish-load', () => {
-            const openaiConfig = this.secureConfig.getOpenAIConfig();
-            const claudeConfig = this.secureConfig.getClaudeConfig();
-            const perplexityConfig = this.secureConfig.getPerplexityConfig();
-            
-            // Debug: Log API keys being sent
-            console.log('Sending API keys to renderer:', {
-                openai: openaiConfig.apiKey ? `${openaiConfig.apiKey.substring(0, 20)}... (length: ${openaiConfig.apiKey.length})` : 'MISSING',
-                perplexity: perplexityConfig.apiKey ? `${perplexityConfig.apiKey.substring(0, 20)}...` : 'MISSING',
-                claude: claudeConfig.apiKey ? `${claudeConfig.apiKey.substring(0, 20)}...` : 'MISSING'
-            });
-            
-            // Send API keys to renderer process
-            this.mainWindow.webContents.send('api-keys', {
-                openai: openaiConfig.apiKey || '',
-                perplexity: perplexityConfig.apiKey || '',
-                claude: claudeConfig.apiKey || ''
-            });
-            
-            // On Windows, reinforce skipTaskbar after load
-            if (process.platform === 'win32') {
-                this.mainWindow.setSkipTaskbar(true);
-            }
-        });
-
         // Window is ready; show overlay immediately
         this.mainWindow.once('ready-to-show', () => {
-            // On Windows, ensure it stays hidden from taskbar
-            if (process.platform === 'win32') {
-                this.mainWindow.setSkipTaskbar(true);
-            }
-            
-            try { this.mainWindow.setIgnoreMouseEvents(false); } catch (_) {}
-            
+            // Ensure window is fully initialized before showing
             // Set up fullscreen visibility BEFORE showing
             try {
                 this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -930,24 +747,29 @@ class JarvisApp {
                 }
             }
             
-            // On Windows, reinforce skipTaskbar before showing
-            if (process.platform === 'win32') {
-                this.mainWindow.setSkipTaskbar(true);
-            }
+            // Enable mouse events BEFORE showing to prevent glitching
+            try { 
+                this.mainWindow.setIgnoreMouseEvents(false); 
+            } catch (_) {}
             
-            // Now show the overlay (this will also call forceFullscreenVisibility)
-            this.showOverlay();
-            
-            // Reinforce fullscreen visibility multiple times to ensure it sticks
-            const reinforce = () => {
-                if (this.mainWindow && !this.mainWindow.isDestroyed() && this.isOverlayVisible) {
-                    this.forceFullscreenVisibility();
+            // Small delay to ensure all properties are set before showing
+            setTimeout(() => {
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    // Now show the overlay (this will also call forceFullscreenVisibility)
+                    this.showOverlay();
+                    
+                    // Reinforce fullscreen visibility multiple times to ensure it sticks
+                    const reinforce = () => {
+                        if (this.mainWindow && !this.mainWindow.isDestroyed() && this.isOverlayVisible) {
+                            this.forceFullscreenVisibility();
+                        }
+                    };
+                    
+                    setTimeout(reinforce, 100);
+                    setTimeout(reinforce, 300);
+                    setTimeout(reinforce, 600);
                 }
-            };
-            
-            setTimeout(reinforce, 100);
-            setTimeout(reinforce, 300);
-            setTimeout(reinforce, 600);
+            }, 50); // Small delay to ensure window is ready
         });
 
         // Minimal: no repeated reassertions; rely on initial setup and showOverlay()
@@ -1001,14 +823,7 @@ class JarvisApp {
         ipcMain.handle('make-interactive', () => {
             if (this.mainWindow) {
                 this.mainWindow.setIgnoreMouseEvents(false);
-                try { 
-                    this.mainWindow.setFocusable(true); 
-                    // On Windows, keep hidden from taskbar even when focused
-                    if (process.platform === 'win32') {
-                        this.mainWindow.setSkipTaskbar(true);
-                    }
-                    this.mainWindow.focus(); 
-                } catch (_) {}
+                try { this.mainWindow.setFocusable(true); this.mainWindow.focus(); } catch (_) {}
             }
         });
 
@@ -1053,28 +868,15 @@ class JarvisApp {
                     });
                 } catch (capturerError) {
                     console.error('DesktopCapturer error:', capturerError);
-                    const platformMessage = process.platform === 'darwin' 
-                        ? 'Please check screen recording permissions in System Preferences > Security & Privacy > Privacy > Screen Recording.'
-                        : process.platform === 'win32'
-                        ? 'Please check screen recording permissions in Windows Settings > Privacy > Camera/Microphone.'
-                        : 'Please check screen recording permissions in your system settings.';
-                    throw new Error(`Failed to access screen capture. ${platformMessage}`);
+                    throw new Error('Failed to access screen capture. Please check screen recording permissions in System Preferences > Security & Privacy > Privacy > Screen Recording.');
                 }
                 
                 if (!sources || sources.length === 0) {
-                    const platformMessage = process.platform === 'darwin' 
-                        ? 'Please check screen recording permissions in System Preferences.'
-                        : process.platform === 'win32'
-                        ? 'Please check screen recording permissions in Windows Settings.'
-                        : 'Please check screen recording permissions.';
-                    throw new Error(`No screen sources available. ${platformMessage}`);
+                    throw new Error('No screen sources available. Please check screen recording permissions.');
                 }
                 
                 // Get the first screen source
                 const source = sources[0];
-                if (!source || !source.thumbnail) {
-                    throw new Error('Screen source is invalid.');
-                }
                 const dataUrl = source.thumbnail.toDataURL();
                 return dataUrl;
                 
@@ -1220,26 +1022,55 @@ class JarvisApp {
             }
         });
 
+        // Handle getting API keys for renderer process
+        ipcMain.handle('get-api-keys', () => {
+            try {
+                const openaiConfig = this.secureConfig.getOpenAIConfig();
+                const exaConfig = this.secureConfig.getExaConfig();
+                const claudeConfig = this.secureConfig.getClaudeConfig();
+                const perplexityConfig = this.secureConfig.getPerplexityConfig();
+                
+                const perplexityKey = perplexityConfig?.apiKey || process.env.PPLX_API_KEY || '';
+                const claudeKey = claudeConfig?.apiKey || process.env.CLAUDE_API_KEY || '';
+                
+                console.log('🔑 Perplexity API key from config:', perplexityConfig?.apiKey ? `${perplexityConfig.apiKey.substring(0, 10)}...` : 'NOT FOUND');
+                console.log('🔑 Perplexity API key from env:', process.env.PPLX_API_KEY ? `${process.env.PPLX_API_KEY.substring(0, 10)}...` : 'NOT FOUND');
+                console.log('🔑 Final Perplexity key present:', !!perplexityKey && perplexityKey.trim() !== '');
+                
+                console.log('🔑 Claude API key from config:', claudeConfig?.apiKey ? `${claudeConfig.apiKey.substring(0, 10)}...` : 'NOT FOUND');
+                console.log('🔑 Claude API key from env:', process.env.CLAUDE_API_KEY ? `${process.env.CLAUDE_API_KEY.substring(0, 10)}...` : 'NOT FOUND');
+                console.log('🔑 Final Claude key present:', !!claudeKey && claudeKey.trim() !== '');
+                
+                return {
+                    openai: openaiConfig?.apiKey || this.openaiApiKey || '',
+                    exa: exaConfig?.apiKey || this.exaApiKey || '',
+                    perplexity: perplexityKey,
+                    claude: claudeKey
+                };
+            } catch (error) {
+                console.error('Error getting API keys:', error);
+                const perplexityKey = process.env.PPLX_API_KEY || '';
+                const claudeKey = process.env.CLAUDE_API_KEY || '';
+                console.log('🔑 Fallback Perplexity key present:', !!perplexityKey && perplexityKey.trim() !== '');
+                console.log('🔑 Fallback Claude key present:', !!claudeKey && claudeKey.trim() !== '');
+                return {
+                    openai: this.openaiApiKey || '',
+                    exa: this.exaApiKey || '',
+                    perplexity: perplexityKey,
+                    claude: claudeKey
+                };
+            }
+        });
 
         // Handle manual subscription check (Simple API Call)
         ipcMain.handle('check-subscription-manual', async (event, userEmail) => {
             try {
-                // Real API call to Polar using new integration
-                const customer = await this.polarIntegration.getCustomerByEmail(userEmail);
+                // Use Supabase to check subscription
+                const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(userEmail);
                 
-                if (!customer) {
-                    return {
-                        hasActiveSubscription: false,
-                        error: 'Customer not found'
-                    };
-                }
-                
-                const subscriptionResult = await this.polarIntegration.getSubscriptionStatus(customer.id);
-                
-                if (subscriptionResult.success && subscriptionResult.hasActiveSubscription) {
+                if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
                     const subscriptionData = {
                         email: userEmail,
-                        customerId: customer.id,
                         subscriptionId: subscriptionResult.subscription.id,
                         status: subscriptionResult.subscription.status,
                         nextBilling: subscriptionResult.subscription.currentPeriodEnd,
@@ -1264,6 +1095,112 @@ class JarvisApp {
                 return {
                     hasActiveSubscription: false,
                     error: error.message
+                };
+            }
+        });
+
+        // Handle sign-in user
+        ipcMain.handle('sign-in-user', async (_event, email) => {
+            try {
+                if (!email || !email.includes('@')) {
+                    return {
+                        success: false,
+                        error: 'Invalid email address'
+                    };
+                }
+
+                console.log('🔐 Signing in user:', email);
+
+                // Check subscription in Supabase
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        error: 'Subscription service not available'
+                    };
+                }
+
+                const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(email);
+
+                if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
+                    // User has active subscription - store email and subscription data
+                    const subscriptionData = {
+                        email: email,
+                        subscriptionId: subscriptionResult.subscription.id,
+                        status: subscriptionResult.subscription.status,
+                        nextBilling: subscriptionResult.subscription.currentPeriodEnd,
+                        features: ['unlimited_messages', 'screenshot_analysis', 'voice_activation'],
+                        createdAt: new Date().toISOString()
+                    };
+
+                    // Store subscription data locally
+                    await this.storeSubscriptionData(subscriptionData);
+
+                    console.log('✅ User signed in successfully with active subscription');
+                    return {
+                        success: true,
+                        hasSubscription: true,
+                        subscriptionData: subscriptionData
+                    };
+                } else {
+                    // No active subscription found
+                    console.log('ℹ️ No active subscription found for email:', email);
+                    return {
+                        success: true,
+                        hasSubscription: false,
+                        error: 'No active subscription found for this email'
+                    };
+                }
+            } catch (error) {
+                console.error('Error signing in user:', error);
+                return {
+                    success: false,
+                    error: error.message || 'Failed to sign in'
+                };
+            }
+        });
+
+        // Handle sign-out user
+        ipcMain.handle('sign-out-user', async () => {
+            try {
+                console.log('🔐 Signing out user...');
+
+                const fs = require('fs');
+                const path = require('path');
+                const userDataPath = app.getPath('userData');
+                
+                // Remove user email file
+                const userFile = path.join(userDataPath, 'jarvis_user.json');
+                if (fs.existsSync(userFile)) {
+                    fs.unlinkSync(userFile);
+                    console.log('✅ Removed user email file');
+                }
+
+                // Remove subscription status file
+                const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
+                if (fs.existsSync(subscriptionFile)) {
+                    fs.unlinkSync(subscriptionFile);
+                    console.log('✅ Removed subscription status file');
+                }
+
+                // Notify main window if it exists
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('user-signed-out');
+                }
+
+                // Notify account window if it exists
+                if (this.accountWindow && !this.accountWindow.isDestroyed()) {
+                    this.accountWindow.webContents.send('subscription-status-changed', { status: 'free' });
+                }
+
+                console.log('✅ User signed out successfully');
+                return {
+                    success: true
+                };
+            } catch (error) {
+                console.error('Error signing out user:', error);
+                return {
+                    success: false,
+                    error: error.message || 'Failed to sign out'
                 };
             }
         });
@@ -1375,28 +1312,28 @@ class JarvisApp {
         // Handle immediate subscription check for premium features
         ipcMain.handle('check-subscription-before-premium-action', async () => {
             try {
-                const fs = require('fs');
-                const path = require('path');
+                // Get user email
+                const userEmail = this.getUserEmail();
                 
-                const userDataPath = app.getPath('userData');
-                const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
-                
-                if (!fs.existsSync(subscriptionFile)) {
+                if (!userEmail) {
                     return { hasActiveSubscription: false, shouldShowPaywall: true };
                 }
                 
-                const localData = JSON.parse(fs.readFileSync(subscriptionFile, 'utf8'));
+                // Check Supabase for subscription (includes expiration date check)
+                const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(userEmail);
                 
-                // Perform immediate validation
-                const isValid = await this.validateSubscriptionWithPolar(localData);
-                
-                if (!isValid) {
-                    // Remove local subscription data
-                    fs.unlinkSync(subscriptionFile);
-                    
-                    return { hasActiveSubscription: false, shouldShowPaywall: true };
-                } else {
+                if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
                     return { hasActiveSubscription: true, shouldShowPaywall: false };
+                } else {
+                    // No active subscription - remove local file if it exists
+                    const fs = require('fs');
+                    const path = require('path');
+                    const userDataPath = app.getPath('userData');
+                    const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
+                    if (fs.existsSync(subscriptionFile)) {
+                        fs.unlinkSync(subscriptionFile);
+                    }
+                    return { hasActiveSubscription: false, shouldShowPaywall: true };
                 }
             } catch (error) {
                 console.error('Error checking subscription before premium action:', error);
@@ -1411,6 +1348,18 @@ class JarvisApp {
                 const path = require('path');
                 
                 const userDataPath = app.getPath('userData');
+                
+                // TEMPORARY: Force free mode for testing
+                const testModeFile = path.join(userDataPath, 'TEST_MODE_FREE_USER');
+                if (fs.existsSync(testModeFile)) {
+                    console.log('🧪 TEST MODE: Skipping subscription validation');
+                    return { 
+                        hasActiveSubscription: false, 
+                        subscriptionData: null,
+                        status: 'free'
+                    };
+                }
+                
                 const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
                 
                 if (!fs.existsSync(subscriptionFile)) {
@@ -1454,9 +1403,16 @@ class JarvisApp {
         // Handle creating checkout session
         ipcMain.handle('create-checkout-session', async () => {
             try {
+                // Get user email (optional - user can enter it during checkout)
+                const userEmail = this.getUserEmail();
+                
+                // Get product ID from config
                 const polarConfig = this.secureConfig.getPolarConfig();
-                const productId = polarConfig.productId;
-                const checkoutResult = await this.polarIntegration.createCheckoutSession(productId);
+                const productId = polarConfig?.productId || 'd6f0145b-067a-4c7b-8e48-7f3c78e8a489';
+                
+                // Use Polar integration to create checkout session
+                // Email is optional - user can enter it on Polar's checkout page
+                const checkoutResult = await this.polarIntegration.createCheckoutSession(productId, userEmail || null);
                 
                 if (!checkoutResult.success) {
                     throw new Error(checkoutResult.error || 'Failed to create checkout session');
@@ -1477,21 +1433,50 @@ class JarvisApp {
         ipcMain.removeHandler('check-subscription-status');
         ipcMain.handle('check-subscription-status', async () => {
             try {
-                const fs = require('fs');
-                const path = require('path');
+                // Get user email
+                const userEmail = this.getUserEmail();
                 
-                // Use the same path as storeSubscriptionData - user's data directory
-                const userDataPath = app.getPath('userData');
-                const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
+                if (!userEmail) {
+                    console.log('No user email found, returning free status');
+                    return {
+                        status: 'free',
+                        hasActiveSubscription: false,
+                        subscriptionData: null
+                    };
+                }
                 
-                if (fs.existsSync(subscriptionFile)) {
-                    const subscriptionData = JSON.parse(fs.readFileSync(subscriptionFile, 'utf8'));
+                // Check Supabase for subscription (this includes expiration date check)
+                const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(userEmail);
+                
+                if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
+                    const subscriptionData = {
+                        email: userEmail,
+                        subscriptionId: subscriptionResult.subscription.id,
+                        status: subscriptionResult.subscription.status,
+                        nextBilling: subscriptionResult.subscription.currentPeriodEnd,
+                        features: ['unlimited_messages', 'screenshot_analysis', 'voice_activation'],
+                        createdAt: new Date().toISOString()
+                    };
+                    
+                    // Store locally for faster access (but Supabase is source of truth)
+                    await this.storeSubscriptionData(subscriptionData);
+                    
                     return {
                         status: 'premium',
                         hasActiveSubscription: true,
                         subscriptionData: subscriptionData
                     };
                 } else {
+                    // No active subscription in Supabase - remove local file if it exists
+                    const fs = require('fs');
+                    const path = require('path');
+                    const userDataPath = app.getPath('userData');
+                    const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
+                    if (fs.existsSync(subscriptionFile)) {
+                        fs.unlinkSync(subscriptionFile);
+                        console.log('Removed local subscription file - no active subscription in Supabase');
+                    }
+                    
                     return {
                         status: 'free',
                         hasActiveSubscription: false,
@@ -1543,77 +1528,6 @@ class JarvisApp {
         }
     }
 
-    // Helper method to proceed directly to main window (skipping paywall)
-    async proceedToMainWindow() {
-        try {
-            // Check if onboarding is needed
-            const onboardingNeeded = !this.isOnboardingComplete();
-            console.log('Onboarding needed?', onboardingNeeded);
-            
-            if (onboardingNeeded) {
-                console.log('Creating onboarding window (skipping paywall)');
-                this.createOnboardingWindow();
-                return;
-            }
-            
-            // Only create window if it doesn't exist
-            if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-                console.log('Creating main window...');
-                try {
-                    this.createWindow();
-                    this.setupIpcHandlers();
-                    // Hide Dock icon on macOS
-                    if (process.platform === 'darwin' && app.dock) {
-                        app.dock.hide();
-                    }
-                    console.log('Main window created successfully');
-                    
-                    // On Windows, explicitly show the window after creation
-                    if (process.platform === 'win32' && this.mainWindow && !this.mainWindow.isDestroyed()) {
-                        console.log('Windows: Explicitly showing main window');
-                        // Wait a bit for window to be ready, then show it
-                        setTimeout(() => {
-                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                console.log('Showing overlay on Windows');
-                                this.showOverlay();
-                                // Also try direct show as fallback
-                                if (!this.mainWindow.isVisible()) {
-                                    console.log('Window not visible, forcing show');
-                                    this.mainWindow.show();
-                                    this.mainWindow.focus();
-                                }
-                            }
-                        }, 500);
-                    }
-                } catch (windowError) {
-                    console.error('Failed to create main window:', windowError);
-                    // Try to show error to user if onboarding window still exists
-                    if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                        this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
-                    }
-                    throw windowError;
-                }
-            } else {
-                // Window already exists, make sure it's shown
-                console.log('Main window already exists, showing it');
-                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                    this.showOverlay();
-                    if (!this.mainWindow.isVisible()) {
-                        this.mainWindow.show();
-                        this.mainWindow.focus();
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Error in proceedToMainWindow:', error);
-            // Don't crash - log and try to show error
-            if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                this.onboardingWindow.webContents.send('onboarding-error', 'Failed to start application. Please try restarting.');
-            }
-            throw error;
-        }
-    }
-
     // Validate subscription with Polar API
     async validateSubscriptionWithPolar(localData) {
         try {
@@ -1627,34 +1541,14 @@ class JarvisApp {
             const maxRetries = 3; // Increased retries
             let lastError = null;
             
-            while (retryCount <= maxRetries) {
-                try {
-                    customer = await this.polarIntegration.getCustomerByEmail(localData.email);
-                    break;
-                } catch (error) {
-                    lastError = error;
-                    retryCount++;
-                    if (retryCount > maxRetries) {
-                        console.error('❌ Customer lookup failed after all retries');
-                        break; // Don't throw, just break and handle below
-                    }
-                    const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-            }
-            
-            if (!customer) {
-                return false;
-            }
-
-            // Add retry logic for subscription check
-            let hasActiveSubscriptions = false;
+            // Use Supabase to check subscription
+            let subscriptionResult = null;
             retryCount = 0;
             lastError = null;
             
             while (retryCount <= maxRetries) {
                 try {
-                    hasActiveSubscriptions = await this.polarIntegration.getSubscriptionStatusByCustomerId(customer.id);
+                    subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(localData.email);
                     break;
                 } catch (error) {
                     lastError = error;
@@ -1673,7 +1567,7 @@ class JarvisApp {
                 return true;
             }
             
-            if (hasActiveSubscriptions) {
+            if (subscriptionResult && subscriptionResult.hasSubscription) {
                 return true;
             } else {
                 return false;
@@ -1834,17 +1728,7 @@ class JarvisApp {
     }
 
     showOverlay() {
-        if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-            console.log('Cannot show overlay: main window does not exist or is destroyed');
-            return;
-        }
-        
-        console.log('showOverlay called');
-        
-        // On Windows, ensure it stays hidden from taskbar
-        if (process.platform === 'win32') {
-            this.mainWindow.setSkipTaskbar(true);
-        }
+        if (!this.mainWindow) return;
         
         // Set visibility properties BEFORE showing
         try {
@@ -1870,17 +1754,14 @@ class JarvisApp {
             }
         }
         
+        // Ensure mouse events are enabled before showing to prevent glitching
+        try {
+            this.mainWindow.setIgnoreMouseEvents(false);
+        } catch (_) {}
+        
         // Show the window
         this.mainWindow.show();
         this.mainWindow.moveTop();
-        
-        // On Windows, ensure it stays hidden from taskbar
-        if (process.platform === 'win32') {
-            this.mainWindow.setSkipTaskbar(true);
-            // Don't let it appear in Alt+Tab
-            this.mainWindow.setVisibleOnAllWorkspaces(true);
-        }
-        
         this.isOverlayVisible = true;
         
         // Use the robust fullscreen visibility method
@@ -1904,13 +1785,6 @@ class JarvisApp {
                     this.fullscreenEnforcementInterval = null;
                 }
                 return;
-            }
-            
-            // On Windows, continuously reinforce skipTaskbar to keep it as background task
-            if (process.platform === 'win32') {
-                try {
-                    this.mainWindow.setSkipTaskbar(true);
-                } catch (_) {}
             }
             
             // Aggressively enforce fullscreen visibility
@@ -2122,8 +1996,27 @@ class JarvisApp {
                 fs.mkdirSync(userDataPath, { recursive: true });
             }
             
+            // Store subscription status
             const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
-            fs.writeFileSync(subscriptionFile, JSON.stringify(subscriptionData, null, 2));
+            const dataToStore = {
+                ...subscriptionData,
+                createdAt: new Date().toISOString()
+            };
+            fs.writeFileSync(subscriptionFile, JSON.stringify(dataToStore, null, 2));
+            console.log('✅ Subscription data stored:', subscriptionFile);
+            
+            // CRITICAL: Also store email in jarvis_user.json so getUserEmail() can find it
+            if (subscriptionData.email) {
+                const userFile = path.join(userDataPath, 'jarvis_user.json');
+                const userData = {
+                    email: subscriptionData.email,
+                    updatedAt: new Date().toISOString()
+                };
+                fs.writeFileSync(userFile, JSON.stringify(userData, null, 2));
+                console.log('✅ User email stored:', userFile, 'Email:', subscriptionData.email);
+            } else {
+                console.warn('⚠️ No email in subscriptionData, cannot store user email');
+            }
         } catch (error) {
             console.error('Error storing subscription data:', error);
         }
@@ -2131,43 +2024,27 @@ class JarvisApp {
 
     async checkUserSubscriptionViaAPI(userEmail) {
         try {
+            // Use Supabase to check subscription
+            const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(userEmail);
             
-            const polarClient = new PolarClient(POLAR_CONFIG);
-            
-            // Get customer by email
-            const customers = await polarClient.getCustomerByEmail(userEmail);
-            
-            if (customers && customers.length > 0) {
-                const customer = customers[0];
+            if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
+                const subscriptionData = {
+                    email: userEmail,
+                    nextBilling: subscriptionResult.subscription.currentPeriodEnd,
+                    features: ['unlimited_messages', 'screenshot_analysis', 'voice_activation'],
+                    status: subscriptionResult.subscription.status,
+                    subscriptionId: subscriptionResult.subscription.id
+                };
                 
-                // Get their subscriptions
-                const subscriptions = await polarClient.getSubscriptionStatus(customer.id);
+                // Store the subscription data
+                await this.storeSubscriptionData(subscriptionData);
                 
-                if (subscriptions && subscriptions.length > 0) {
-                    const activeSubscription = subscriptions.find(sub => 
-                        sub.status === 'active' || sub.status === 'trialing'
-                    );
-                    
-                    if (activeSubscription) {
-                        
-                        const subscriptionData = {
-                            email: userEmail,
-                            nextBilling: activeSubscription.currentPeriodEnd,
-                            features: ['unlimited_messages', 'screenshot_analysis', 'voice_activation'],
-                            status: activeSubscription.status,
-                            subscriptionId: activeSubscription.id
-                        };
-                        
-                        // Store the subscription data
-                        await this.storeSubscriptionData(subscriptionData);
-                        
-                        return {
-                            hasSubscription: true,
-                            subscriptionData: subscriptionData
-                        };
-                    }
-                }
+                return {
+                    hasSubscription: true,
+                    subscriptionData: subscriptionData
+                };
             }
+            
             return { hasSubscription: false };
             
         } catch (error) {

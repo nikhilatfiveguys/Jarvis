@@ -58,7 +58,7 @@ class PolarClient {
                 success_url: successUrl,
                 cancel_url: cancelUrl,
                 metadata: {
-                    app: 'jarvis-5.0',
+                    app: 'jarvis-6.0',
                     user_email: customerEmail
                 }
             })

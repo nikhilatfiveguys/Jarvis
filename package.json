@@ -1,14 +1,11 @@
 {
-  "name": "jarvis-5.0",
+  "name": "jarvis-6.0",
   "version": "1.0.0",
   "description": "AI-powered overlay assistant with voice activation and screen analysis",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "prebuild": "node build/createDMGBackground.js && (cd build && (rsvg-convert -w 540 -h 380 dmg-background.svg -o dmg-background.png 2>/dev/null || (qlmanage -t -s 540 -o . dmg-background.svg 2>/dev/null && mv dmg-background.svg.png dmg-background.png 2>/dev/null || echo '⚠️  Background PNG not created - DMG will work but may not have arrow')) || true)",
     "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:win:unsigned": "electron-builder --win --config electron-builder-unsigned.json",
     "build-signed": "./build-signed.sh",
     "build-unsigned": "electron-builder --config electron-builder-unsigned.json",
     "validate": "node validate-config.js",
@@ -49,6 +46,7 @@
   },
   "dependencies": {
     "@polar-sh/sdk": "^0.39.1",
+    "@supabase/supabase-js": "^2.80.0",
     "axios": "^1.12.2",
     "crypto-js": "^4.2.0",
     "electron-store": "^11.0.2",
@@ -60,7 +58,7 @@
   },
   "build": {
     "appId": "com.aaronsoni.jarvis",
-    "productName": "Jarvis 5.0",
+    "productName": "Jarvis 6.0",
     "icon": "icon.icns",
     "directories": {
       "output": "dist"
@@ -72,12 +70,15 @@
       "styles.css",
       "paywall.html",
       "paywall.js",
+      "onboarding.html",
+      "onboarding-features.html",
       "account-window.html",
       "voice-recorder.js",
       "polar-config.js",
       "polar-integration.js",
       "polar-success-handler.js",
       "polar-webhook-handler.js",
+      "supabase-integration.js",
       "webhook-handler.js",
       "summarizeWebsite.js",
       "icon.icns",
@@ -124,10 +125,18 @@
       "node_modules/wav/**/*",
       "node_modules/whisper-node/**/*",
       "node_modules/@polar-sh/**/*",
+      "node_modules/@supabase/**/*",
+      "node_modules/tslib/**/*",
       "node_modules/zod/**/*",
       "node_modules/crypto-js/**/*"
     ],
     "asarUnpack": [
+      "onboarding.html",
+      "onboarding-features.html",
+      "paywall.html",
+      "account-window.html",
+      "index.html",
+      "JarvisLogo.png",
       "node_modules/axios/**/*",
       "node_modules/form-data/**/*",
       "node_modules/combined-stream/**/*",
@@ -166,8 +175,9 @@
       "node_modules/follow-redirects/**/*",
       "node_modules/node-record-lpcm16/**/*",
       "node_modules/wav/**/*",
-      "node_modules/whisper-node/**/*",
       "node_modules/@polar-sh/**/*",
+      "node_modules/@supabase/**/*",
+      "node_modules/tslib/**/*",
       "node_modules/zod/**/*",
       "node_modules/crypto-js/**/*"
     ],
@@ -175,7 +185,7 @@
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "identity": "Aaron Soni (DMH3RU9FQQ)",
+      "identity": null,
       "icon": "icon.icns",
       "target": [
         {
@@ -184,14 +194,12 @@
             "arm64",
             "x64"
           ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
         }
+      ],
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "signIgnore": [
+        ".jar$"
       ]
     },
     "dmg": {
@@ -200,12 +208,12 @@
       "contents": [
         {
           "x": 130,
-          "y": 240,
+          "y": 220,
           "type": "file"
         },
         {
           "x": 410,
-          "y": 240,
+          "y": 220,
           "type": "link",
           "path": "/Applications"
         }
@@ -215,7 +223,7 @@
         "height": 380
       }
     },
-    "afterPack": "build/afterPack.js",
+    "afterPack": "build/clean-before-sign.js",
     "win": {
       "target": [
         {
@@ -230,14 +238,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Jarvis 5.0",
-      "installerIcon": "icon.ico",
-      "uninstallerIcon": "icon.ico",
-      "installerHeaderIcon": "icon.ico",
-      "deleteAppDataOnUninstall": false
+      "allowToChangeInstallationDirectory": true
     },
     "linux": null
   },

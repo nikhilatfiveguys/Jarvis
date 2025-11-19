@@ -1,6 +1,6 @@
 {
   "appId": "com.aaronsoni.jarvis",
-  "productName": "Jarvis 5.0",
+  "productName": "Jarvis 6.0",
   "icon": "icon.icns",
   "directories": {
     "output": "dist"
@@ -45,7 +45,10 @@
   "node_modules/proxy-from-env/**/*",
   "node_modules/follow-redirects/**/*",
   "node_modules/@polar-sh/**/*",
+  "node_modules/@supabase/**/*",
   "node_modules/zod/**/*",
+  "node_modules/tslib/**/*",
+  "node_modules/crypto-js/**/*",
   "node_modules/node-record-lpcm16/**/*",
   "node_modules/wav/**/*",
   "node_modules/whisper-node/**/*"
@@ -88,7 +91,10 @@
   "node_modules/proxy-from-env/**/*",
   "node_modules/follow-redirects/**/*",
   "node_modules/@polar-sh/**/*",
+  "node_modules/@supabase/**/*",
   "node_modules/zod/**/*",
+  "node_modules/tslib/**/*",
+  "node_modules/crypto-js/**/*",
   "node_modules/node-record-lpcm16/**/*",
   "node_modules/wav/**/*",
   "node_modules/whisper-node/**/*"
@@ -105,49 +111,8 @@
     ]
   },
   "dmg": {
-    "sign": false,
-    "background": "build/dmg-background.png",
-    "contents": [
-      {
-        "x": 130,
-        "y": 240,
-        "type": "file"
-      },
-      {
-        "x": 410,
-        "y": 240,
-        "type": "link",
-        "path": "/Applications"
-      }
-    ],
-    "window": {
-      "width": 540,
-      "height": 380
-    }
+    "sign": false
   },
-  "win": {
-    "target": [
-      {
-        "target": "nsis",
-        "arch": [
-          "x64",
-          "ia32"
-        ]
-      }
-    ],
-    "icon": "icon.ico"
-  },
-  "nsis": {
-    "oneClick": false,
-    "allowToChangeInstallationDirectory": true,
-    "createDesktopShortcut": true,
-    "createStartMenuShortcut": true,
-    "shortcutName": "Jarvis 5.0",
-    "installerIcon": "icon.ico",
-    "uninstallerIcon": "icon.ico",
-    "installerHeaderIcon": "icon.ico",
-    "deleteAppDataOnUninstall": false
-  },
-  "publish": null,
+  "win": null,
   "linux": null
 }

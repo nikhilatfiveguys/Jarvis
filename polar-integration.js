@@ -27,28 +27,47 @@ class PolarIntegration {
      */
     async createCheckoutSession(productId, customerEmail = null) {
         try {
-            console.log('Creating Polar checkout session...');
+            console.log('Creating Polar checkout session...', { productId, customerEmail: customerEmail || 'not provided (user will enter during checkout)' });
             
             const polarConfig = this.secureConfig.getPolarConfig();
             
+            // Build checkout data - email is optional, user can enter it on checkout page
             const checkoutData = {
                 products: [productId],
                 successUrl: polarConfig.successUrl
             };
+            
+            // Only add email if provided (Polar allows checkout without pre-filled email)
+            if (customerEmail) {
+                checkoutData.customerEmail = customerEmail;
+                checkoutData.metadata = {
+                    app: 'jarvis-6.0',
+                    user_email: customerEmail
+                };
+            } else {
+                checkoutData.metadata = {
+                    app: 'jarvis-5.0'
+                };
+            }
 
             const checkout = await this.polar.checkouts.create(checkoutData);
             
-            console.log('Checkout session created:', checkout.id);
+            console.log('✅ Checkout session created:', checkout.id);
             return {
                 success: true,
                 checkoutUrl: checkout.url,
                 checkoutId: checkout.id
             };
         } catch (error) {
-            console.error('Error creating checkout session:', error);
+            console.error('❌ Error creating checkout session:', error);
+            // Provide a more helpful error message
+            let errorMessage = error.message;
+            if (error.message && error.message.includes('customerEmail')) {
+                errorMessage = 'Please enter your email address on the checkout page to continue.';
+            }
             return {
                 success: false,
-                error: error.message
+                error: errorMessage
             };
         }
     }
@@ -231,7 +250,7 @@ class PolarIntegration {
         const path = require('path');
         
         // Use user's data directory instead of app bundle directory
-        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 5.0');
+        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 6.0');
         
         // Ensure the directory exists
         if (!fs.existsSync(userDataPath)) {
@@ -273,27 +292,105 @@ class PolarIntegration {
     }
 
     /**
+     * Verify checkout was actually completed and paid
+     * Returns { isPaid: boolean, checkout: object, error: string }
+     */
+    async verifyCheckoutPayment(checkoutId) {
+        try {
+            console.log('Verifying checkout payment status:', checkoutId);
+            
+            // Get checkout details from Polar API
+            const checkout = await this.polar.checkouts.get({ id: checkoutId });
+            console.log('Checkout status:', checkout.status, 'Checkout:', JSON.stringify(checkout, null, 2));
+            
+            // Check if checkout is completed/paid
+            // Polar checkout statuses: 'open', 'complete', 'completed', 'succeeded', 'expired', 'canceled'
+            // Also check for payment status if available
+            const status = checkout.status?.toLowerCase() || '';
+            const isPaid = status === 'complete' || status === 'completed' || status === 'succeeded';
+            
+            // Additional check: verify payment was actually made
+            // Check if there's a payment or order associated
+            const hasPayment = !!(checkout.payment_id || checkout.order_id || checkout.subscription_id);
+            
+            if (!isPaid) {
+                console.warn('⚠️ Checkout not paid - status:', checkout.status);
+                console.warn('⚠️ Full checkout object:', JSON.stringify(checkout, null, 2));
+                return {
+                    isPaid: false,
+                    checkout: checkout,
+                    error: `Checkout status is "${checkout.status}", not completed`
+                };
+            }
+            
+            // Double-check: if status is complete but no payment/subscription, be suspicious
+            if (isPaid && !hasPayment) {
+                console.warn('⚠️ Checkout marked complete but no payment/subscription found');
+                console.warn('⚠️ This might be a test checkout or incomplete payment');
+                // Still allow it, but log warning - webhook might create subscription later
+            }
+            
+            // Also verify that a subscription was created from this checkout
+            // Check if checkout has a subscription_id or order_id
+            let subscriptionId = checkout.subscription_id || checkout.order_id;
+            
+            // If no subscription_id on checkout, try to find subscription via customer
+            if (!subscriptionId && checkout.customer_id) {
+                try {
+                    console.log('No subscription_id on checkout, checking customer subscriptions...');
+                    const subscriptions = await this.polar.subscriptions.list({
+                        customerId: checkout.customer_id,
+                        limit: 1
+                    });
+                    
+                    if (subscriptions.items && subscriptions.items.length > 0) {
+                        const sub = subscriptions.items[0];
+                        if (sub.status === 'active' || sub.status === 'trialing') {
+                            subscriptionId = sub.id;
+                            console.log('✅ Found active subscription for customer:', subscriptionId);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Could not verify subscription via customer:', error.message);
+                    // Continue anyway - webhook might create it later
+                }
+            }
+            
+            if (!subscriptionId) {
+                console.warn('⚠️ Checkout completed but no subscription/order found');
+                // Still allow if status is complete - subscription might be created via webhook
+                // But log a warning
+            }
+            
+            console.log('✅ Checkout verified as paid');
+            return {
+                isPaid: true,
+                checkout: checkout,
+                subscriptionId: subscriptionId,
+                orderId: checkout.order_id
+            };
+        } catch (error) {
+            console.error('❌ Error verifying checkout payment:', error);
+            return {
+                isPaid: false,
+                checkout: null,
+                error: error.message
+            };
+        }
+    }
+
+    /**
      * Verify webhook signature
      */
     verifyWebhookSignature(payload, signature) {
         try {
             const crypto = require('crypto');
-            const polarConfig = this.secureConfig.getPolarConfig();
-            
-            if (!polarConfig.webhookSecret) {
-                console.error('Webhook secret not configured');
-                return false;
-            }
-            
-            // Polar sends signature as "sha256=<hash>" or just the hash
-            const signatureHash = signature.replace('sha256=', '');
-            
             const expectedSignature = crypto
-                .createHmac('sha256', polarConfig.webhookSecret)
+                .createHmac('sha256', config.polar.webhookSecret)
                 .update(payload)
                 .digest('hex');
             
-            return signatureHash === expectedSignature;
+            return signature === expectedSignature;
         } catch (error) {
             console.error('Error verifying webhook signature:', error);
             return false;
@@ -355,10 +452,33 @@ class PolarIntegration {
             createdAt: new Date().toISOString()
         };
         
+        // Store in Supabase via mainApp's supabaseIntegration
+        if (this.mainApp && this.mainApp.supabaseIntegration) {
+            try {
+                const supabaseData = {
+                    email: customerEmail || subscriptionData.email,
+                    status: 'active',
+                    polar_subscription_id: data.subscriptionId || data.id,
+                    polar_customer_id: data.customerId,
+                    current_period_start: new Date().toISOString(),
+                    current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                };
+                
+                const result = await this.mainApp.supabaseIntegration.createOrUpdateSubscription(supabaseData);
+                if (result.success) {
+                    console.log('✅ Subscription synced to Supabase:', result.subscription.id);
+                } else {
+                    console.error('❌ Failed to sync to Supabase:', result.error);
+                }
+            } catch (error) {
+                console.error('❌ Error syncing to Supabase:', error);
+            }
+        }
+        
         // Store via mainApp if available (uses correct Electron path)
         if (this.mainApp && this.mainApp.storeSubscriptionData) {
             await this.mainApp.storeSubscriptionData(subscriptionData);
-            console.log('✅ Webhook subscription data stored via mainApp');
+            console.log('✅ Webhook subscription data stored locally');
         } else {
             // Fallback: use direct file write (shouldn't happen in normal flow)
             console.warn('⚠️ mainApp not available, using fallback storage');
@@ -366,7 +486,7 @@ class PolarIntegration {
             const path = require('path');
             const { app } = require('electron');
             const userDataPath = app ? app.getPath('userData') : 
-                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-6.0');
             
             if (!fs.existsSync(userDataPath)) {
                 fs.mkdirSync(userDataPath, { recursive: true });
@@ -384,6 +504,28 @@ class PolarIntegration {
      */
     async handleSubscriptionCreated(data) {
         console.log('Subscription created:', data.id);
+        
+        // Sync to Supabase
+        if (this.mainApp && this.mainApp.supabaseIntegration) {
+            try {
+                const subscriptionData = {
+                    email: data.customer?.email || data.metadata?.email,
+                    status: data.status === 'active' || data.status === 'trialing' ? 'active' : data.status,
+                    polar_subscription_id: data.id,
+                    polar_customer_id: data.customer?.id || data.customerId,
+                    current_period_start: data.current_period_start ? new Date(data.current_period_start * 1000).toISOString() : new Date().toISOString(),
+                    current_period_end: data.current_period_end ? new Date(data.current_period_end * 1000).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                };
+                
+                const result = await this.mainApp.supabaseIntegration.createOrUpdateSubscription(subscriptionData);
+                if (result.success) {
+                    console.log('✅ Subscription created synced to Supabase');
+                }
+            } catch (error) {
+                console.error('❌ Error syncing subscription created to Supabase:', error);
+            }
+        }
+        
         return { success: true };
     }
 
@@ -392,6 +534,28 @@ class PolarIntegration {
      */
     async handleSubscriptionUpdated(data) {
         console.log('Subscription updated:', data.id);
+        
+        // Sync to Supabase
+        if (this.mainApp && this.mainApp.supabaseIntegration) {
+            try {
+                const subscriptionData = {
+                    email: data.customer?.email || data.metadata?.email,
+                    status: data.status === 'active' || data.status === 'trialing' ? 'active' : data.status,
+                    polar_subscription_id: data.id,
+                    polar_customer_id: data.customer?.id || data.customerId,
+                    current_period_start: data.current_period_start ? new Date(data.current_period_start * 1000).toISOString() : new Date().toISOString(),
+                    current_period_end: data.current_period_end ? new Date(data.current_period_end * 1000).toISOString() : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                };
+                
+                const result = await this.mainApp.supabaseIntegration.createOrUpdateSubscription(subscriptionData);
+                if (result.success) {
+                    console.log('✅ Subscription updated synced to Supabase');
+                }
+            } catch (error) {
+                console.error('❌ Error syncing subscription updated to Supabase:', error);
+            }
+        }
+        
         return { success: true };
     }
 
@@ -400,6 +564,21 @@ class PolarIntegration {
      */
     async handleSubscriptionCanceled(data) {
         console.log('⚠️ Subscription canceled via webhook:', data.id);
+        
+        // Sync cancellation to Supabase
+        if (this.mainApp && this.mainApp.supabaseIntegration) {
+            try {
+                const email = data.customer?.email || data.metadata?.email;
+                if (email) {
+                    const result = await this.mainApp.supabaseIntegration.cancelSubscription(email);
+                    if (result.success) {
+                        console.log('✅ Subscription cancellation synced to Supabase');
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Error syncing cancellation to Supabase:', error);
+            }
+        }
         
         // Remove subscription data using correct Electron path
         const fs = require('fs');
@@ -410,7 +589,7 @@ class PolarIntegration {
         try {
             const { app } = require('electron');
             userDataPath = app ? app.getPath('userData') : 
-                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-6.0');
         } catch (error) {
             // Fallback if Electron not available
             userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');

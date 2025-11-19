@@ -8,31 +8,9 @@ class SecureConfig {
     }
 
     loadConfig() {
-        // Try to load from environment variables first (production)
-        if (process.env.NODE_ENV === 'production') {
-            return this.loadFromEnvironment();
-        }
-        
-        // For development, try to load from .env file
-        try {
-            const envPath = path.join(__dirname, '..', '.env');
-            if (fs.existsSync(envPath)) {
-                this.loadEnvFile(envPath);
-            }
-        } catch (error) {
-            console.warn('No .env file found, using default configuration');
-        }
-        
-        // Load from environment variables
-        const envConfig = this.loadFromEnvironment();
-        
-        // If no environment variables are set, use production config
-        if (!envConfig.polar.organizationId) {
-            console.log('No environment variables found, using production configuration');
-            return this.loadProductionConfig();
-        }
-        
-        return envConfig;
+        // Always use hardcoded production configuration
+        console.log('Using hardcoded production configuration');
+        return this.loadProductionConfig();
     }
 
     loadEnvFile(filePath) {
@@ -52,45 +30,16 @@ class SecureConfig {
     }
 
     loadFromEnvironment() {
-        return {
-            polar: {
-                accessToken: process.env.POLAR_ACCESS_TOKEN || '',
-                successUrl: process.env.POLAR_SUCCESS_URL || '',
-                productId: process.env.POLAR_PRODUCT_ID || '',
-                webhookSecret: process.env.POLAR_WEBHOOK_SECRET || '',
-                organizationId: process.env.POLAR_ORGANIZATION_ID || ''
-            },
-            openai: {
-                apiKey: process.env.OPENAI_API_KEY || ''
-            },
-            exa: {
-                apiKey: process.env.EXA_API_KEY || ''
-            },
-            claude: {
-                apiKey: process.env.CLAUDE_API_KEY || ''
-            },
-            perplexity: {
-                apiKey: process.env.PPLX_API_KEY || ''
-            },
-            app: {
-                environment: process.env.NODE_ENV || 'development',
-                isProduction: process.env.NODE_ENV === 'production'
-            }
-        };
+        // Hardcoded API keys - always return production config
+        return this.loadProductionConfig();
     }
 
     loadProductionConfig() {
         try {
             const productionConfig = require('./production-config');
             return {
-                polar: {
-                    accessToken: productionConfig.polar.accessToken,
-                    successUrl: productionConfig.polar.successUrl,
-                    productId: productionConfig.polar.productId,
-                    webhookSecret: productionConfig.polar.webhookSecret || '',
-                    organizationId: productionConfig.polar.organizationId || '',
-                    webhookUrl: productionConfig.polar.webhookUrl || ''
-                },
+                supabase: productionConfig.supabase,
+                polar: productionConfig.polar, // Legacy support
                 openai: productionConfig.openai,
                 exa: productionConfig.exa,
                 claude: productionConfig.claude || { apiKey: '' },
@@ -108,6 +57,10 @@ class SecureConfig {
 
     // Google OAuth removed - using simple payment system
 
+    getSupabaseConfig() {
+        return this.config.supabase;
+    }
+
     getPolarConfig() {
         return this.config.polar;
     }
@@ -121,11 +74,11 @@ class SecureConfig {
     }
 
     getClaudeConfig() {
-        return this.config.claude;
+        return this.config.claude || { apiKey: '' };
     }
 
     getPerplexityConfig() {
-        return this.config.perplexity;
+        return this.config.perplexity || { apiKey: '' };
     }
 
     isProduction() {
@@ -135,12 +88,13 @@ class SecureConfig {
     validateConfig() {
         const errors = [];
         
-        if (!this.config.polar.organizationId) {
-            errors.push('POLAR_ORGANIZATION_ID is required');
+        // Validate Supabase config
+        if (!this.config.supabase || !this.config.supabase.url) {
+            errors.push('SUPABASE_URL is required');
         }
         
-        if (!this.config.polar.apiKey) {
-            errors.push('POLAR_API_KEY is required');
+        if (!this.config.supabase || !this.config.supabase.anonKey) {
+            errors.push('SUPABASE_ANON_KEY is required');
         }
         
         if (!this.config.openai.apiKey) {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jarvis 5.0 - Setup</title>
+    <title>Jarvis 6.0 - Setup</title>
     <style>
         * {
             margin: 0;
@@ -25,8 +25,7 @@
         }
 
         .onboarding-container {
-            background: rgba(20, 20, 20, 0.95);
-            backdrop-filter: blur(20px);
+            background: rgba(20, 20, 20, 0.98);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 16px;
             padding: 40px;
@@ -115,8 +114,7 @@
         }
 
         .next-btn {
-            background: rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(20px);
+            background: rgba(0, 0, 0, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.2);
             border-radius: 8px;
             color: white;
@@ -124,7 +122,7 @@
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s ease-in-out;
+            transition: background 0.15s ease;
             -webkit-app-region: no-drag;
             width: 100%;
         }
@@ -155,7 +153,7 @@
 </head>
 <body>
     <div class="onboarding-container">
-        <img src="JarvisLogo.png" alt="Jarvis Logo" class="logo">
+        <img src="JarvisLogo.png" alt="Jarvis Logo" class="logo" loading="lazy" decoding="async">
         <h1>Enable Screen Recording</h1>
         <p class="description">Jarvis needs permission to record your screen and system audio to analyze what you're working on.</p>
 
@@ -181,14 +179,25 @@
     <script>
         const { ipcRenderer } = require('electron');
 
-        document.getElementById('open-settings-btn').addEventListener('click', () => {
-            ipcRenderer.send('open-screen-recording-settings');
-        });
+        // Fast initialization - minimal processing
+        function init() {
+            document.body.style.display = 'flex';
+            document.body.style.background = '#0a0a0a';
+            
+            document.getElementById('open-settings-btn').onclick = () => {
+                ipcRenderer.send('open-screen-recording-settings');
+            };
+            
+            document.getElementById('next-btn').onclick = () => {
+                ipcRenderer.send('onboarding-complete');
+            };
+        }
 
-        document.getElementById('next-btn').addEventListener('click', () => {
-            // Mark onboarding as complete
-            ipcRenderer.send('onboarding-complete');
-        });
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     </script>
 </body>
 </html>

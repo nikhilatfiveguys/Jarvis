@@ -101,6 +101,24 @@
             background: #444;
         }
 
+        .sign-out-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            margin-top: 12px;
+        }
+
+        .sign-out-btn:hover {
+            background: #dc2626;
+        }
+
 
         /* Free User Section */
         .free-user-section {
@@ -158,6 +176,27 @@
 
         .get-premium-btn:hover {
             background: #218838;
+        }
+
+        .sign-in-btn {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            margin-bottom: 12px;
+            pointer-events: auto !important;
+            z-index: 1000;
+            position: relative;
+        }
+
+        .sign-in-btn:hover {
+            background: #0056b3;
         }
 
         /* Keyboard Shortcuts Section */
@@ -218,6 +257,108 @@
             pointer-events: none;
         }
 
+        /* Sign-in Modal */
+        .sign-in-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .sign-in-modal.active {
+            display: flex;
+        }
+
+        .sign-in-modal-content {
+            background: #2a2a2a;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 400px;
+            width: 90%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .sign-in-modal-content h2 {
+            color: #fff;
+            margin-bottom: 20px;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .sign-in-modal-content input {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        .sign-in-modal-content input:focus {
+            outline: none;
+            border-color: #007AFF;
+        }
+
+        .sign-in-modal-content input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .sign-in-modal-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .sign-in-modal-btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s ease;
+        }
+
+        .sign-in-modal-btn.primary {
+            background: #007AFF;
+            color: white;
+        }
+
+        .sign-in-modal-btn.primary:hover {
+            background: #0056b3;
+        }
+
+        .sign-in-modal-btn.secondary {
+            background: #444;
+            color: white;
+        }
+
+        .sign-in-modal-btn.secondary:hover {
+            background: #555;
+        }
+
+        .sign-in-modal-error {
+            color: #ef4444;
+            font-size: 12px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .sign-in-modal-error.active {
+            display: block;
+        }
+
         @media (max-width: 480px) {
             .license-container {
                 padding: 24px;
@@ -245,6 +386,7 @@
                 <div class="next-billing" id="next-billing-display">Next billing: November 22, 2025</div>
             </div>
             <button id="manage-subscription-btn" class="manage-subscription-btn">Manage Subscription</button>
+            <button id="sign-out-btn" class="sign-out-btn">Sign Out</button>
         </div>
 
                 <!-- Free User Section (shown when not subscribed) -->
@@ -258,6 +400,7 @@
                             <li>✓ Advanced features</li>
                         </ul>
                     </div>
+                    <button id="sign-in-btn" class="sign-in-btn" onclick="window.handleSignIn && window.handleSignIn(); return false;">Sign In</button>
                     <button id="get-premium-btn" class="get-premium-btn">Get Premium</button>
                 </div>
 
@@ -274,7 +417,7 @@
                     <span class="shortcut-desc">Move Jarvis to top of screen</span>
                 </div>
                 <div class="shortcut-item">
-                    <span class="shortcut-key">Answer This button</span>
+                    <span class="shortcut-key">Answer Screen button</span>
                     <span class="shortcut-desc">Answer question on your screen</span>
                 </div>
             </div>
@@ -288,10 +431,282 @@
         <div id="payment-section" class="payment-section" style="display: none;"></div>
         <div id="license-info" class="license-info" style="display: none;"></div>
         <div class="features-list" style="display: none;"></div>
+
+        <!-- Sign-in Modal -->
+        <div id="sign-in-modal" class="sign-in-modal">
+            <div class="sign-in-modal-content">
+                <h2>Sign In</h2>
+                <input type="email" id="sign-in-email-input" placeholder="Enter your email address" autocomplete="email">
+                <div id="sign-in-modal-error" class="sign-in-modal-error"></div>
+                <div class="sign-in-modal-buttons">
+                    <button class="sign-in-modal-btn secondary" id="sign-in-modal-cancel">Cancel</button>
+                    <button class="sign-in-modal-btn primary" id="sign-in-modal-submit">Sign In</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         const { ipcRenderer } = require('electron');
+
+        // Show sign-in modal
+        function showSignInModal() {
+            const modal = document.getElementById('sign-in-modal');
+            const emailInput = document.getElementById('sign-in-email-input');
+            const errorDiv = document.getElementById('sign-in-modal-error');
+            
+            if (modal && emailInput) {
+                emailInput.value = '';
+                errorDiv.classList.remove('active');
+                errorDiv.textContent = '';
+                modal.classList.add('active');
+                emailInput.focus();
+            }
+        }
+
+        // Hide sign-in modal
+        function hideSignInModal() {
+            const modal = document.getElementById('sign-in-modal');
+            const emailInput = document.getElementById('sign-in-email-input');
+            const errorDiv = document.getElementById('sign-in-modal-error');
+            
+            if (modal) {
+                modal.classList.remove('active');
+                if (emailInput) emailInput.value = '';
+                if (errorDiv) {
+                    errorDiv.classList.remove('active');
+                    errorDiv.textContent = '';
+                }
+            }
+        }
+
+        // Sign-in handler function (defined globally so onclick can access it)
+        window.handleSignIn = async function() {
+            console.log('🔐 handleSignIn function called!');
+            showSignInModal();
+        };
+
+        // Handle sign-in submission
+        async function handleSignInSubmit() {
+            const emailInput = document.getElementById('sign-in-email-input');
+            const errorDiv = document.getElementById('sign-in-modal-error');
+            const submitBtn = document.getElementById('sign-in-modal-submit');
+            const signInBtn = document.getElementById('sign-in-btn');
+            
+            if (!emailInput) {
+                console.error('Email input not found');
+                return;
+            }
+
+            const email = emailInput.value.trim();
+            
+            if (!email) {
+                errorDiv.textContent = 'Please enter your email address';
+                errorDiv.classList.add('active');
+                return;
+            }
+
+            if (!email.includes('@') || !email.includes('.')) {
+                errorDiv.textContent = 'Please enter a valid email address';
+                errorDiv.classList.add('active');
+                return;
+            }
+
+            errorDiv.classList.remove('active');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Signing in...';
+
+            try {
+                console.log('🔐 Attempting to sign in with email:', email);
+                const result = await ipcRenderer.invoke('sign-in-user', email);
+                console.log('🔐 Sign-in result:', result);
+
+                if (result.success) {
+                    if (result.hasSubscription) {
+                        hideSignInModal();
+                        alert('Signed in successfully! Welcome back.');
+                        // Re-check subscription status to update UI
+                        await checkSubscriptionStatus();
+                    } else {
+                        errorDiv.textContent = 'No active subscription found for this email';
+                        errorDiv.classList.add('active');
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Sign In';
+                    }
+                } else {
+                    errorDiv.textContent = result.error || 'Failed to sign in. Please try again.';
+                    errorDiv.classList.add('active');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Sign In';
+                }
+            } catch (error) {
+                console.error('❌ Sign-in error:', error);
+                errorDiv.textContent = 'An error occurred. Please try again: ' + error.message;
+                errorDiv.classList.add('active');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Sign In';
+            }
+        }
+
+        // Wait for DOM to be ready
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('✅ Account window DOM loaded');
+            initializeAccountWindow();
+        });
+
+        // Also run immediately if DOM is already loaded
+        if (document.readyState === 'loading') {
+            // DOM hasn't finished loading yet, wait for DOMContentLoaded
+        } else {
+            // DOM is already loaded
+            console.log('✅ Account window DOM already loaded');
+            initializeAccountWindow();
+        }
+
+        function initializeAccountWindow() {
+            setupEventListeners();
+            checkSubscriptionStatus();
+        }
+
+        function setupEventListeners() {
+            // Sign In Button (for free users)
+            const signInBtn = document.getElementById('sign-in-btn');
+            if (signInBtn) {
+                console.log('✅ Sign-in button found');
+                
+                // Ensure onclick attribute is set (inline onclick should work)
+                if (!signInBtn.getAttribute('onclick')) {
+                    signInBtn.setAttribute('onclick', 'window.handleSignIn && window.handleSignIn(); return false;');
+                    console.log('✅ Added onclick attribute to button');
+                }
+                
+                // Attach event listener as well
+                signInBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('🔐 Sign-in button clicked via addEventListener!');
+                    if (window.handleSignIn) {
+                        window.handleSignIn();
+                    } else {
+                        console.error('❌ window.handleSignIn is not defined!');
+                        alert('Sign-in function not available. Please refresh the window.');
+                    }
+                });
+                
+                console.log('✅ Event listeners attached to sign-in button');
+                console.log('✅ Button onclick:', signInBtn.onclick);
+                console.log('✅ window.handleSignIn type:', typeof window.handleSignIn);
+            } else {
+                console.warn('⚠️ Sign-in button not found in DOM');
+            }
+
+            // Sign-in modal handlers
+            const signInModalCancel = document.getElementById('sign-in-modal-cancel');
+            const signInModalSubmit = document.getElementById('sign-in-modal-submit');
+            const signInEmailInput = document.getElementById('sign-in-email-input');
+            
+            if (signInModalCancel) {
+                signInModalCancel.addEventListener('click', hideSignInModal);
+            }
+            
+            if (signInModalSubmit) {
+                signInModalSubmit.addEventListener('click', handleSignInSubmit);
+            }
+            
+            if (signInEmailInput) {
+                signInEmailInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        handleSignInSubmit();
+                    }
+                });
+            }
+
+            // Get Premium Button (for free users)
+            const getPremiumBtn = document.getElementById('get-premium-btn');
+            if (getPremiumBtn) {
+                getPremiumBtn.addEventListener('click', async () => {
+                    console.log('🎯 GET PREMIUM BUTTON CLICKED!');
+                    try {
+                        getPremiumBtn.disabled = true;
+                        getPremiumBtn.textContent = 'Processing...';
+                        
+                        const result = await ipcRenderer.invoke('create-checkout-session');
+                        
+                        if (result.success) {
+                            console.log('✅ Checkout session created successfully');
+                        } else {
+                            console.error('❌ Error creating checkout session:', result.error);
+                            getPremiumBtn.textContent = 'Try Again';
+                        }
+                    } catch (error) {
+                        console.error('Error creating checkout session:', error);
+                        getPremiumBtn.textContent = 'Try Again';
+                    } finally {
+                        getPremiumBtn.disabled = false;
+                        if (getPremiumBtn.textContent === 'Processing...') {
+                            getPremiumBtn.textContent = 'Get Premium';
+                        }
+                    }
+                });
+            }
+
+            // Manage Subscription Button (for premium users)
+            const manageSubscriptionBtn = document.getElementById('manage-subscription-btn');
+            if (manageSubscriptionBtn) {
+                manageSubscriptionBtn.addEventListener('click', async () => {
+                    try {
+                        manageSubscriptionBtn.disabled = true;
+                        manageSubscriptionBtn.textContent = 'Opening...';
+                        
+                        // Open Polar customer portal for subscription management
+                        const result = await ipcRenderer.invoke('cancel-subscription');
+                        
+                        if (result.success) {
+                            console.log('✅ Opened Polar customer portal');
+                            // Note: We don't update UI here since user needs to manage subscription on Polar
+                        } else {
+                            console.error('❌ Error opening Polar portal:', result.error);
+                        }
+                    } catch (error) {
+                        console.error('Error opening Polar portal:', error);
+                    } finally {
+                        manageSubscriptionBtn.disabled = false;
+                        manageSubscriptionBtn.textContent = 'Manage Subscription';
+                    }
+                });
+            }
+
+            // Sign Out Button
+            const signOutBtn = document.getElementById('sign-out-btn');
+            if (signOutBtn) {
+                signOutBtn.addEventListener('click', async () => {
+                    try {
+                        signOutBtn.disabled = true;
+                        signOutBtn.textContent = 'Signing out...';
+                        
+                        // Sign out user
+                        const result = await ipcRenderer.invoke('sign-out-user');
+                        
+                        if (result.success) {
+                            console.log('✅ Signed out successfully');
+                            // Update UI to show free user section
+                            updateUI('free');
+                            // Show message
+                            alert('Signed out successfully. You can sign in again anytime.');
+                        } else {
+                            console.error('❌ Error signing out:', result.error);
+                            alert('Error signing out. Please try again.');
+                        }
+                    } catch (error) {
+                        console.error('Error signing out:', error);
+                        alert('Error signing out. Please try again.');
+                    } finally {
+                        signOutBtn.disabled = false;
+                        signOutBtn.textContent = 'Sign Out';
+                    }
+                });
+            }
+        }
 
         // Check subscription status on load
         async function checkSubscriptionStatus() {
@@ -339,63 +754,12 @@
                 document.getElementById('subscription-status').style.display = 'none';
                 document.getElementById('license-info').style.display = 'none';
             }
+            
+            // Re-attach event listeners after UI update (in case buttons were recreated)
+            setTimeout(() => {
+                setupEventListeners();
+            }, 100);
         }
-
-        // Get Premium Button (for free users)
-        const getPremiumBtn = document.getElementById('get-premium-btn');
-        getPremiumBtn.addEventListener('click', async () => {
-            console.log('🎯 GET PREMIUM BUTTON CLICKED!');
-            try {
-                getPremiumBtn.disabled = true;
-                getPremiumBtn.textContent = 'Processing...';
-                
-                const result = await ipcRenderer.invoke('create-checkout-session');
-                
-                if (result.success) {
-                    console.log('✅ Checkout session created successfully');
-                } else {
-                    console.error('❌ Error creating checkout session:', result.error);
-                    getPremiumBtn.textContent = 'Try Again';
-                }
-            } catch (error) {
-                console.error('Error creating checkout session:', error);
-                getPremiumBtn.textContent = 'Try Again';
-            } finally {
-                getPremiumBtn.disabled = false;
-                if (getPremiumBtn.textContent === 'Processing...') {
-                    getPremiumBtn.textContent = 'Get Premium';
-                }
-            }
-        });
-
-        // Manage Subscription Button (for premium users)
-        const manageSubscriptionBtn = document.getElementById('manage-subscription-btn');
-        manageSubscriptionBtn.addEventListener('click', async () => {
-            try {
-                manageSubscriptionBtn.disabled = true;
-                manageSubscriptionBtn.textContent = 'Opening...';
-                
-                // Open Polar customer portal for subscription management
-                const result = await ipcRenderer.invoke('cancel-subscription');
-                
-                if (result.success) {
-                    console.log('✅ Opened Polar customer portal');
-                    // Note: We don't update UI here since user needs to manage subscription on Polar
-                } else {
-                    console.error('❌ Error opening Polar portal:', result.error);
-                }
-            } catch (error) {
-                console.error('Error opening Polar portal:', error);
-            } finally {
-                manageSubscriptionBtn.disabled = false;
-                manageSubscriptionBtn.textContent = 'Manage Subscription';
-            }
-        });
-
-
-
-                // Initialize
-                checkSubscriptionStatus();
 
                 // Listen for subscription status changes
                 ipcRenderer.on('subscription-status-changed', async (event, data) => {

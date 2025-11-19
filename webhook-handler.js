@@ -98,7 +98,7 @@ class PolarWebhookHandler {
 
     async updateUserSubscriptionStatus(userEmail, status) {
         try {
-            const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 5.0');
+            const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 6.0');
             const userFile = path.join(userDataPath, 'jarvis_user.json');
             
             if (fs.existsSync(userFile)) {

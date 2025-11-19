@@ -10,7 +10,8 @@ async function summarizeWebsite(providedUrl = null, fullMessage = null) {
             return 'Unknown (no URL provided and no active browser URL found)';
         }
 
-        const apiKey = process.env.PPLX_API_KEY;
+        // Hardcoded API key
+        const apiKey = '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';
         if (!apiKey) {
             return 'Unknown (missing PPLX_API_KEY - please set environment variable)';
         }

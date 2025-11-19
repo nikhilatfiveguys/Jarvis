@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jarvis 5.0 - Upgrade to Pro</title>
+    <title>Jarvis 6.0 - Upgrade to Pro</title>
     <style>
         * {
             margin: 0;
@@ -146,6 +146,27 @@
             border-color: rgba(255, 255, 255, 0.3);
         }
 
+        .sign-in-btn {
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            padding: 13px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            -webkit-app-region: no-drag;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .sign-in-btn:hover {
+            background: rgba(0, 0, 0, 0.6);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
         .skip-btn {
             background: transparent;
             color: rgba(255, 255, 255, 0.5);
@@ -179,6 +200,107 @@
             display: block;
         }
 
+        /* Sign-in modal */
+        .sign-in-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            -webkit-app-region: no-drag;
+        }
+
+        .sign-in-modal.active {
+            display: flex;
+        }
+
+        .sign-in-content {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 400px;
+            width: 90%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sign-in-content h2 {
+            color: #fff;
+            margin-bottom: 20px;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .sign-in-content input {
+            width: 100%;
+            padding: 12px;
+            background: #2a2a2a;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        .sign-in-content input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        .sign-in-content input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .sign-in-modal-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .sign-in-modal-btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s ease;
+        }
+
+        .sign-in-modal-btn.primary {
+            background: #007AFF;
+            color: white;
+        }
+
+        .sign-in-modal-btn.primary:hover {
+            background: #0056b3;
+        }
+
+        .sign-in-modal-btn.secondary {
+            background: #333;
+            color: white;
+        }
+
+        .sign-in-modal-btn.secondary:hover {
+            background: #444;
+        }
+
+        .sign-in-error {
+            color: #ef4444;
+            font-size: 12px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .sign-in-error.active {
+            display: block;
+        }
 
     </style>
 </head>
@@ -187,7 +309,7 @@
         
         <img src="JarvisLogo.png" alt="Jarvis Logo" class="logo">
         <h1>Upgrade to Pro</h1>
-        <p class="subtitle">Unlock the full potential of Jarvis 5.0</p>
+        <p class="subtitle">Unlock the full potential of Jarvis 6.0</p>
 
         <div class="features">
             <div class="feature">
@@ -199,16 +321,30 @@
         </div>
 
         <div class="pricing">
-            <div class="price">$4<span class="price-period">/month</span></div>
+            <div class="price">$10<span class="price-period">/month</span></div>
         </div>
 
         <div class="buttons">
             <button class="upgrade-btn" id="upgrade-btn">Get</button>
+            <button class="sign-in-btn" id="sign-in-btn">Sign In</button>
             <button class="skip-btn" id="skip-btn">Continue with Limited Features</button>
         </div>
 
         <div class="loading" id="loading">Processing...</div>
         <div class="error" id="error"></div>
+    </div>
+
+    <!-- Sign-in Modal -->
+    <div class="sign-in-modal" id="sign-in-modal">
+        <div class="sign-in-content">
+            <h2>Sign In</h2>
+            <input type="email" id="sign-in-email" placeholder="Enter your email address" autocomplete="email">
+            <div class="sign-in-error" id="sign-in-error"></div>
+            <div class="sign-in-modal-buttons">
+                <button class="sign-in-modal-btn secondary" id="sign-in-cancel">Cancel</button>
+                <button class="sign-in-modal-btn primary" id="sign-in-submit">Sign In</button>
+            </div>
+        </div>
     </div>
 
     <script src="polar-config.js"></script>

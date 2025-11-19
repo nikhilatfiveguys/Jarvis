@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jarvis 5.0 - AI Overlay Assistant</title>
+    <title>Jarvis 6.0 - AI Overlay Assistant</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -65,11 +65,24 @@
         </div>
         
         
-        <!-- Answer This button - positioned under HUD when no output, moves next to humanize when output shown -->
-        <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Answer what's on screen">Answer This</button>
+        <!-- Arrow button to reveal chat history -->
+        <button id="reveal-history-btn" class="reveal-history-btn hidden" title="Show chat history">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 2L10 6L2 6L6 2Z" fill="currentColor"/>
+            </svg>
+        </button>
+        
+        <!-- Answer Screen button - positioned under HUD when no output, moves next to humanize when output shown -->
+        <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Answer what's on screen">Answer Screen</button>
         
 
-        <!-- Draggable output chip -->
+        <!-- Messages container - scrollable, contains all messages -->
+        <div id="messages-container" class="messages-container hidden">
+            <!-- Previous messages will be dynamically added here (hidden above) -->
+            <!-- Current output message will be added here (visible at bottom) -->
+        </div>
+        
+        <!-- Draggable output chip - current visible message (will be moved into messages-container) -->
         <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag me to drop text into apps">
             <!-- Resize handle -->
             <div id="resize-handle" class="resize-handle" title="Drag to resize"></div>

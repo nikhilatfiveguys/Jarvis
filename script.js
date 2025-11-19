@@ -22,13 +22,19 @@ class JarvisOverlay {
         
         this.licenseStatus = null;
         this.features = {};
+        this.subscriptionJustActivated = false; // Flag to prevent showing limit notification right after subscription
+        this.subscriptionActivatedTime = null;
+        this.countdownTimerInterval = null; // Track countdown timer to stop it
         
         // Message tracking for free users
+        this.maxFreeMessages = 5;
         this.messageCount = this.loadMessageCount();
-        this.maxFreeMessages = 10;
         
         // Check for free access
         this.checkFreeAccess();
+        
+        // Check and reset message count if 24 hours have passed
+        this.checkAndResetMessageCount();
         
         this.initializeElements();
         this.setupEventListeners();
@@ -38,6 +44,121 @@ class JarvisOverlay {
         this.setupVoiceRecording(); // Voice recording handlers disabled inside, but subscription listeners still active
         this.checkLicense();
         this.updateMessageCounter();
+    }
+
+    async loadApiKeys() {
+        try {
+            // First try to get from main process via IPC (most reliable in Electron)
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    const apiKeys = await ipcRenderer.invoke('get-api-keys');
+                    if (apiKeys) {
+                        this.apiKey = apiKeys.openai;
+                        this.perplexityApiKey = apiKeys.perplexity;
+                        this.claudeApiKey = apiKeys.claude;
+                        console.log('✅ API keys loaded from main process');
+                        console.log('OpenAI key present:', !!this.apiKey);
+                        console.log('Perplexity key present:', !!this.perplexityApiKey);
+                        console.log('Claude key present:', !!this.claudeApiKey);
+                        // Rebuild tools array now that API keys are loaded
+                        this.rebuildToolsArray();
+                        return;
+                    }
+                } catch (ipcError) {
+                    console.warn('Failed to get API keys via IPC, trying fallback:', ipcError);
+                }
+            }
+            
+            // Fallback to environment variables (works if nodeIntegration is true)
+            this.apiKey = process.env.OPENAI_API_KEY;
+            this.perplexityApiKey = process.env.PPLX_API_KEY;
+            this.claudeApiKey = process.env.CLAUDE_API_KEY;
+            
+            // API keys must be set via environment variables or IPC
+            if (!this.apiKey) {
+                console.warn('⚠️ No OpenAI API key found in environment or IPC.');
+            }
+            if (!this.perplexityApiKey) {
+                console.warn('⚠️ No Perplexity API key found in environment or IPC.');
+            }
+            if (!this.claudeApiKey) {
+                console.warn('⚠️ No Claude API key found in environment or IPC.');
+            }
+            
+            console.log('✅ API keys loaded (fallback method)');
+            console.log('OpenAI key present:', !!this.apiKey);
+            console.log('Perplexity key present:', !!this.perplexityApiKey);
+            console.log('Claude key present:', !!this.claudeApiKey);
+            // Rebuild tools array now that API keys are loaded
+            this.rebuildToolsArray();
+        } catch (error) {
+            console.error('Error loading API keys:', error);
+            // API keys must be set via environment variables
+            console.warn('⚠️ Failed to load API keys. Please set environment variables.');
+            // Rebuild tools array (will be empty if no keys)
+            this.rebuildToolsArray();
+        }
+    }
+
+    rebuildToolsArray() {
+        // Start with base tools
+        this.tools = [
+            {
+                type: "function",
+                name: "getscreenshot",
+                description: "Takes a screenshot of the user's screen and returns it for analysis. Use this when the user asks about what's on their screen, wants you to analyze an image, or needs help with something visual.",
+                parameters: {
+                    type: "object",
+                    properties: {},
+                    required: []
+                }
+            }
+        ];
+        
+        // Add web search tool if Perplexity API key is available (check for truthy and non-empty string)
+        if (this.perplexityApiKey && this.perplexityApiKey.trim() !== '') {
+            this.tools.push({
+                type: "function",
+                name: "searchweb",
+                description: "Searches the web using Perplexity AI to get current, up-to-date information. Use this when you need real-time data, current events, recent information, or anything beyond your knowledge cutoff.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        query: {
+                            type: "string",
+                            description: "The search query to find information about"
+                        }
+                    },
+                    required: ["query"]
+                }
+            });
+            console.log('✅ Perplexity web search tool added');
+        } else {
+            console.warn('⚠️ Perplexity API key not available - web search tool not added');
+        }
+        
+        // Add Claude tool if API key is available (check for truthy and non-empty string)
+        if (this.claudeApiKey && this.claudeApiKey.trim() !== '') {
+            this.tools.push({
+                type: "function",
+                name: "askclaude",
+                description: "Use Claude AI for complex analytical questions, deep reasoning, philosophical questions, or when you need more thorough analysis. Call this when asked for deeper thinking or complex problem solving.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        question: {
+                            type: "string",
+                            description: "The question to send to Claude"
+                        }
+                    },
+                    required: ["question"]
+                }
+            });
+            console.log('✅ Claude AI tool added');
+        } else {
+            console.warn('⚠️ Claude API key not available - Claude tool not added');
+        }
     }
 
     async checkLicense() {
@@ -57,9 +178,26 @@ class JarvisOverlay {
                         screenshot_analysis: true,
                         voice_activation: true
                     };
+                    console.log('✅ Premium subscription active');
+                    
+                    // Immediately clear any message limit notifications
+                    if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                        const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+                        if (currentContent.includes('Message limit reached') || 
+                            currentContent.includes('message limit reached') ||
+                            currentContent.includes('Message Limit Reached') || 
+                            currentContent.includes('message limit') || 
+                            (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
+                            console.log('🧹 Clearing message limit notification after subscription check');
+                            this.dragOutput.classList.add('hidden');
+                            this.dragOutput.innerHTML = '';
+                            this.dragOutput.textContent = '';
+                        }
+                    }
                 } else {
                     this.licenseStatus = { valid: false, type: 'free' };
                     this.features = {};
+                    console.log('ℹ️ Free tier - subscription not active');
                 }
                 
                 // Update message counter display
@@ -69,6 +207,8 @@ class JarvisOverlay {
             console.error('Failed to check license:', error);
             this.licenseStatus = { valid: false, type: 'error' };
             this.features = {};
+            // Still update message counter even on error
+            this.updateMessageCounter();
         }
     }
 
@@ -191,15 +331,46 @@ class JarvisOverlay {
         this.updateMessageCounter();
         
         // Show notification to user
-        this.showNotification('Your subscription has been cancelled. You now have 10 free messages available.', 'error');
+        this.showNotification('Your subscription has been cancelled. You now have 5 free messages available every 24 hours.', 'error');
         
         // Update any UI elements that show subscription status
         this.updateAccountInfo();
     }
 
-    handleSubscriptionActivated(data) {
+    async handleSubscriptionActivated(data) {
+        console.log('🎉 Subscription activated event received:', data);
         
-        // Update license status to premium
+        // Stop countdown timer immediately
+        if (this.countdownTimerInterval) {
+            console.log('🛑 Stopping countdown timer');
+            clearInterval(this.countdownTimerInterval);
+            this.countdownTimerInterval = null;
+        }
+        
+        // Set flag to prevent showing limit notification
+        this.subscriptionJustActivated = true;
+        this.subscriptionActivatedTime = Date.now();
+        console.log('🏁 Set subscription activation flag - will block limit notifications for 30 seconds');
+        
+        // Immediately clear any "message limit reached" notifications
+        if (this.dragOutput) {
+            const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+            if (currentContent.includes('Message limit reached') || 
+                currentContent.includes('message limit reached') ||
+                currentContent.includes('Message Limit Reached') || 
+                currentContent.includes('message limit') ||
+                (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
+                console.log('🧹 Clearing message limit notification on subscription activation');
+                this.dragOutput.classList.add('hidden');
+                this.dragOutput.innerHTML = '';
+                this.dragOutput.textContent = '';
+            }
+        }
+        
+        // Force a fresh subscription check from Supabase
+        await this.checkLicense();
+        
+        // Update license status to premium (in case checkLicense didn't update it yet)
         this.licenseStatus = { 
             valid: true, 
             type: 'active',
@@ -211,14 +382,45 @@ class JarvisOverlay {
             voice_activation: true
         };
         
-        // Show success notification
-        this.showNotification(data.message || 'Your Jarvis Premium subscription is now active!', 'success');
-        
         // Reset message count for premium users
         this.resetMessageCount();
         
+        // Update message counter (will hide it for premium users)
+        this.updateMessageCounter();
+        
+        // Show success notification
+        this.showNotification(data.message || 'Your Jarvis Premium subscription is now active!', false);
+        
         // Update account info to reflect new subscription status
         this.updateAccountInfo();
+        
+        // Set up a periodic check to ensure subscription status is updated (in case webhook is delayed)
+        let checkCount = 0;
+        const maxChecks = 5; // Check 5 times over 10 seconds
+        const checkInterval = setInterval(async () => {
+            checkCount++;
+            await this.checkLicense();
+            
+            // Clear notification again after each check
+            if (this.hasPremiumAccess() && this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+                if (currentContent.includes('Message limit reached') || 
+                    currentContent.includes('message limit reached') ||
+                    currentContent.includes('Message Limit Reached') || 
+                    currentContent.includes('message limit') ||
+                    (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
+                    this.dragOutput.classList.add('hidden');
+                    this.dragOutput.innerHTML = '';
+                    this.dragOutput.textContent = '';
+                }
+            }
+            
+            if (checkCount >= maxChecks || this.hasPremiumAccess()) {
+                clearInterval(checkInterval);
+            }
+        }, 2000); // Check every 2 seconds
+        
+        console.log('✅ Subscription activation complete');
     }
 
     showPaywall() {
@@ -231,52 +433,25 @@ class JarvisOverlay {
     }
 
 
-    showUpgradePrompt() {
-        // Show upgrade prompt in the chat
-        const upgradeMessage = `
-🚀 **Upgrade to Jarvis Pro**
-Unlock advanced features like screenshot analysis, voice commands, and more!
-
-**Pro Features:**
-• Advanced screenshot analysis
-• Voice activation & commands  
-• App control & automation
-• Cloud sync & backup
-• Unlimited conversations
-
-**Start your 7-day free trial today!**
-        `;
-        
-        this.addMessage('assistant', upgradeMessage);
-        
-        // Add upgrade button
-        const upgradeButton = document.createElement('button');
-        upgradeButton.textContent = 'Upgrade to Pro';
-        upgradeButton.className = 'upgrade-button';
-        upgradeButton.style.cssText = `
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            margin-top: 10px;
-            font-weight: 600;
-        `;
-        
-        upgradeButton.onclick = () => {
-            // Open paywall window
-            if (this.isElectron && window.require) {
+    async showUpgradePrompt() {
+        // Open paywall/checkout directly
+        if (this.isElectron && window.require) {
+            try {
+                const { ipcRenderer } = window.require('electron');
+                // Create checkout session and open it
+                const result = await ipcRenderer.invoke('create-checkout-session');
+                if (result && result.success) {
+                    this.showNotification('Opening checkout page...', 'info');
+                } else {
+                    // Fallback to paywall window
+                    ipcRenderer.send('open-paywall');
+                }
+            } catch (error) {
+                console.error('Error opening checkout:', error);
+                // Fallback to paywall window
                 const { ipcRenderer } = window.require('electron');
                 ipcRenderer.send('open-paywall');
             }
-        };
-        
-        // Find the last message and add the button
-        const messages = document.querySelectorAll('.message.assistant');
-        if (messages.length > 0) {
-            const lastMessage = messages[messages.length - 1];
-            lastMessage.appendChild(upgradeButton);
         }
     }
 
@@ -369,6 +544,11 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         this.messageCounter = document.getElementById('message-counter');
         this.messageCountText = document.getElementById('message-count-text');
         this.attachmentsBar = document.getElementById('attachments-bar');
+        this.messagesContainer = document.getElementById('messages-container');
+        this.revealHistoryBtn = document.getElementById('reveal-history-btn');
+        
+        // Set up MutationObserver to keep scroll at bottom when content changes
+        this.setupScrollObserver();
         
         
         this.isDragging = false;
@@ -377,103 +557,16 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         this.pendingAttachments = [];
         
         this.currentModel = 'gpt-5-mini';
-        this.apiKey = process.env.OPENAI_API_KEY || '';
-        this.perplexityApiKey = process.env.PPLX_API_KEY || '';
-        this.claudeApiKey = process.env.CLAUDE_API_KEY || '';
+        // API keys will be loaded via loadApiKeys() method
+        this.apiKey = null;
+        this.perplexityApiKey = null;
+        this.claudeApiKey = null;
+        this.naturalWriteApiKey = 'nw_6f9427e5026add995264a567970f5b0ce09f39be867f8921';
+        // Initialize tools array (will be rebuilt after API keys are loaded)
+        this.tools = [];
         
-        // Define available tools for Responses API (flat structure)
-        this.tools = [
-            {
-                type: "function",
-                name: "getscreenshot",
-                description: "Takes a screenshot of the user's screen and returns it for analysis. Use this when the user asks about what's on their screen, wants you to analyze an image, or needs help with something visual.",
-                parameters: {
-                    type: "object",
-                    properties: {},
-                    required: []
-                }
-            }
-        ];
-        
-        // Update tools based on available API keys
-        this.updateAvailableTools();
-        
-        // Listen for API keys from main process
-        if (this.isElectron && window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.on('api-keys', (event, keys) => {
-                console.log('Received API keys from main process:', {
-                    openai: keys.openai ? `${keys.openai.substring(0, 20)}...` : 'missing',
-                    perplexity: keys.perplexity ? `${keys.perplexity.substring(0, 20)}...` : 'missing',
-                    claude: keys.claude ? `${keys.claude.substring(0, 20)}...` : 'missing'
-                });
-                if (keys.openai) {
-                    this.apiKey = keys.openai;
-                    console.log('OpenAI API key set, length:', this.apiKey.length);
-                } else {
-                    console.warn('OpenAI API key not received from main process');
-                }
-                if (keys.perplexity) this.perplexityApiKey = keys.perplexity;
-                if (keys.claude) this.claudeApiKey = keys.claude;
-                
-                // Update tools based on available API keys
-                this.updateAvailableTools();
-            });
-        }
-    }
-    
-    updateAvailableTools() {
-        // Reset tools to base set
-        this.tools = [
-            {
-                type: "function",
-                name: "getscreenshot",
-                description: "Takes a screenshot of the user's screen and returns it for analysis. Use this when the user asks about what's on their screen, wants you to analyze an image, or needs help with something visual.",
-                parameters: {
-                    type: "object",
-                    properties: {},
-                    required: []
-                }
-            }
-        ];
-        
-        // Add web search tool if API key is available
-        if (this.perplexityApiKey) {
-            this.tools.push({
-                type: "function",
-                name: "searchweb",
-                description: "Searches the web using Perplexity AI to get current, up-to-date information. Use this when you need real-time data, current events, recent information, or anything beyond your knowledge cutoff.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        query: {
-                            type: "string",
-                            description: "The search query to find information about"
-                        }
-                    },
-                    required: ["query"]
-                }
-            });
-        }
-        
-        // Add Claude tool if API key is available
-        if (this.claudeApiKey) {
-            this.tools.push({
-                type: "function",
-                name: "askclaude",
-                description: "Use Claude AI for complex analytical questions, deep reasoning, philosophical questions, or when you need more thorough analysis. Call this when asked for deeper thinking or complex problem solving.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        question: {
-                            type: "string",
-                            description: "The question to send to Claude"
-                        }
-                    },
-                    required: ["question"]
-                }
-            });
-        }
+        // Load API keys asynchronously and rebuild tools array when done
+        this.loadApiKeys().catch(err => console.error('Failed to load API keys:', err));
     }
 
     setupEventListeners() {
@@ -490,6 +583,11 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         
         if (this.humanizeBtn) {
             this.humanizeBtn.addEventListener('click', () => this.humanize());
+        }
+        
+        // Reveal history button event listener
+        if (this.revealHistoryBtn) {
+            this.revealHistoryBtn.addEventListener('click', () => this.toggleChatHistory());
         }
         
         // Settings button event listeners
@@ -521,7 +619,18 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         }
         
         if (this.settingsCloseBtn) {
-            this.settingsCloseBtn.addEventListener('click', () => this.hideSettingsMenu());
+            this.settingsCloseBtn.addEventListener('click', () => {
+                this.hideSettingsMenu();
+                // Hide overlay like Option+Space does
+                if (this.isElectron && window.require) {
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('hide-overlay');
+                    } catch (e) {
+                        console.error('Failed to hide overlay:', e);
+                    }
+                }
+            });
         }
         
         if (this.accountInfoBtn) {
@@ -580,30 +689,31 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         if (this.closeOutputFloating) {
             this.closeOutputFloating.addEventListener('click', () => this.hideOutput());
         }
+        // Attach drag listeners to drag-output (will be called initially and when new drag-output is created)
+        this.attachDragListeners();
+    }
+    
+    attachDragListeners() {
         if (this.dragOutput) {
+            // Attach drag listeners (new elements won't have listeners, so safe to add)
             this.dragOutput.addEventListener('dragstart', (e) => this.handleDragStart(e));
             this.dragOutput.addEventListener('dragend', (e) => this.handleDragEnd(e));
-            // Track drag to keep window interactive during drag (especially important on Windows)
+            // Track drag to enable click-through when outside overlay
             this.dragOutput.addEventListener('drag', (e) => {
                 if (this.isDraggingOutput && this.isElectron) {
                     const { ipcRenderer } = require('electron');
-                    // On Windows, keep window fully interactive during drag to allow dropping to other windows
-                    // On other platforms, we can enable drag-through when outside overlay
-                    if (process.platform === 'win32') {
-                        // Windows: Always keep interactive during drag to allow cross-window drag
-                        ipcRenderer.invoke('make-interactive');
+                    // Check if mouse is outside overlay bounds
+                    const overlayRect = this.overlay.getBoundingClientRect();
+                    const mouseX = e.clientX;
+                    const mouseY = e.clientY;
+                    
+                    // If mouse is outside overlay, enable drag-through mode
+                    if (mouseX < overlayRect.left || mouseX > overlayRect.right || 
+                        mouseY < overlayRect.top || mouseY > overlayRect.bottom) {
+                        ipcRenderer.invoke('enable-drag-through');
                     } else {
-                        // macOS/Linux: Enable drag-through when outside overlay
-                        const overlayRect = this.overlay.getBoundingClientRect();
-                        const mouseX = e.clientX;
-                        const mouseY = e.clientY;
-                        
-                        if (mouseX < overlayRect.left || mouseX > overlayRect.right || 
-                            mouseY < overlayRect.top || mouseY > overlayRect.bottom) {
-                            ipcRenderer.invoke('enable-drag-through');
-                        } else {
-                            ipcRenderer.invoke('make-interactive');
-                        }
+                        // Mouse is still over overlay, keep interactive
+                        ipcRenderer.invoke('make-interactive');
                     }
                 }
             });
@@ -623,7 +733,6 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
                 e.stopPropagation();
             });
         }
-        
     }
 
     setupHotkeys() {
@@ -665,21 +774,44 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         });
         
         this.dragHandle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Get the actual visual position of the overlay (accounting for transform)
+            const rect = this.overlay.getBoundingClientRect();
+            
+            // Calculate offset from mouse position to overlay's top-left corner
+            this.dragOffset.x = e.clientX - rect.left;
+            this.dragOffset.y = e.clientY - rect.top;
+            
+            // If overlay is still using transform, convert to absolute positioning
+            const computedStyle = window.getComputedStyle(this.overlay);
+            if (computedStyle.transform !== 'none' || computedStyle.left === '50%' || computedStyle.top === '50%') {
+                // Convert from centered position to absolute
+                const currentLeft = rect.left;
+                const currentTop = rect.top;
+                this.overlay.style.left = `${currentLeft}px`;
+                this.overlay.style.top = `${currentTop}px`;
+                this.overlay.style.transform = 'none';
+            }
+            
             this.isDragging = true;
-            this.dragOffset.x = e.clientX - this.overlay.offsetLeft;
-            this.dragOffset.y = e.clientY - this.overlay.offsetTop;
             this.overlay.style.cursor = 'grabbing';
-                e.preventDefault();
+            this.overlay.classList.add('dragging');
         });
         
         document.addEventListener('mousemove', (e) => {
             if (!this.isDragging) return;
             
+            // Calculate new position based on mouse position minus offset
             const newX = e.clientX - this.dragOffset.x;
             const newY = e.clientY - this.dragOffset.y;
             
-            const maxX = window.innerWidth - this.overlay.offsetWidth;
-            const maxY = window.innerHeight - this.overlay.offsetHeight;
+            // Constrain to viewport bounds
+            const overlayWidth = this.overlay.offsetWidth || 400;
+            const overlayHeight = this.overlay.offsetHeight || 100;
+            const maxX = window.innerWidth - overlayWidth;
+            const maxY = window.innerHeight - overlayHeight;
             
             this.overlay.style.left = `${Math.max(0, Math.min(newX, maxX))}px`;
             this.overlay.style.top = `${Math.max(0, Math.min(newY, maxY))}px`;
@@ -690,6 +822,7 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
             if (this.isDragging) {
                 this.isDragging = false;
                 this.overlay.style.cursor = 'default';
+                this.overlay.classList.remove('dragging');
             }
         });
     }
@@ -714,14 +847,34 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
         }
     }
 
-    showOverlay() {
+    async showOverlay() {
         if (!this.overlay) return;
+        
+        // Re-check subscription status when overlay is shown
+        await this.checkLicense();
+        
+        // Clear any message limit notifications if user has premium
+        if (this.hasPremiumAccess() && this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+            const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+            if (currentContent.includes('Message limit reached') || 
+                currentContent.includes('message limit reached') ||
+                currentContent.includes('Message Limit Reached') || 
+                currentContent.includes('message limit') ||
+                (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
+                this.dragOutput.classList.add('hidden');
+                this.dragOutput.innerHTML = '';
+                this.dragOutput.textContent = '';
+            }
+        }
         
         this.overlay.classList.remove('hidden');
         this.instructions.classList.add('hidden');
         this.recenterOverlay();
         this.isActive = true;
         this.textInput.focus();
+        
+        // Update message counter to reflect current subscription status
+        this.updateMessageCounter();
         
         this.showNotification('Jarvis is ready! Look for the red X button in the top-right corner of this message.');
     }
@@ -831,6 +984,9 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
 
     async captureAndAnalyzeScreen(message) {
         try {
+            // Re-check subscription status before processing (in case it was cancelled)
+            await this.checkLicense();
+            
             // Check if user has license for screenshot analysis
             if (!this.features.screenshotAnalysis) {
                 this.showNotification('Screenshot analysis requires a Pro subscription. Please upgrade to continue.');
@@ -860,23 +1016,40 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
 
     async processMessage(message) {
         try {
-            // Wait for API key if not yet received (max 5 seconds)
-            if (!this.apiKey || this.apiKey.trim() === '') {
-                console.log('API key not yet received, waiting...');
-                let waited = 0;
-                while ((!this.apiKey || this.apiKey.trim() === '') && waited < 5000) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    waited += 100;
+            // Re-check subscription status before processing (in case it was cancelled or activated)
+            await this.checkLicense();
+            
+            // Double-check premium access after license check completes
+            const hasPremium = this.hasPremiumAccess();
+            
+            // ALWAYS clear any existing "message limit reached" notification if user now has premium
+            if (hasPremium) {
+                if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                    const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+                    if (currentContent.includes('Message limit reached') || 
+                        currentContent.includes('message limit reached') ||
+                        currentContent.includes('Message Limit Reached') || 
+                        currentContent.includes('message limit') || 
+                        (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
+                        // Clear the notification immediately
+                        this.dragOutput.classList.add('hidden');
+                        this.dragOutput.innerHTML = '';
+                        this.dragOutput.textContent = '';
+                    }
                 }
-                
-                if (!this.apiKey || this.apiKey.trim() === '') {
-                    throw new Error('API key not received from main process. Please restart the app.');
-                }
-                console.log('API key received after waiting', waited, 'ms');
             }
             
-            // Check message limit for free users
-            if (!this.hasPremiumAccess() && this.hasReachedMessageLimit()) {
+            // Check message limit for free users ONLY if not premium
+            // Triple-check: premium status, grace period flag, and subscription activation time
+            const shouldBlock = hasPremium || 
+                               (this.subscriptionJustActivated && this.subscriptionActivatedTime && (Date.now() - this.subscriptionActivatedTime < 30000));
+            
+            if (!shouldBlock && this.hasReachedMessageLimit()) {
+                // One final check before showing
+                if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
+                    console.log('🚫 Final block - premium detected before showing notification');
+                    return;
+                }
                 this.showMessageLimitReached();
                 return;
             }
@@ -918,9 +1091,7 @@ Unlock advanced features like screenshot analysis, voice commands, and more!
             }
         } catch (error) {
             console.error('Message processing error:', error);
-            const errorMessage = error.message || 'Unknown error';
-            console.error('Full error details:', error);
-            this.showNotification(`Error: ${errorMessage}. Please check the console for details.`);
+            this.showNotification("Sorry, I'm having trouble processing that request right now.");
         }
     }
 
@@ -961,12 +1132,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             };
             
             console.log('API Request payload:', JSON.stringify(requestPayload, null, 2));
-            console.log('API Key present:', !!this.apiKey, 'Length:', this.apiKey ? this.apiKey.length : 0);
-
-            // Check if API key is available
-            if (!this.apiKey || this.apiKey.trim() === '') {
-                throw new Error('OpenAI API key is not set. Please check your configuration.');
-            }
 
             this.showLoadingNotification();
             
@@ -980,9 +1145,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             });
             
             if (!response.ok) {
-                const errorText = await response.text();
-                console.error('API Error Response:', response.status, errorText);
-                throw new Error(`API error: ${response.status} - ${errorText.substring(0, 200)}`);
+                throw new Error(`API error: ${response.status}`);
             }
             
             let data = await response.json();
@@ -1213,8 +1376,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
     }
     
     async executeSearchWeb(query) {
-        // Check if Perplexity API key is available
-        if (!this.perplexityApiKey) {
+        // Check if Perplexity API key is available (check for truthy and non-empty string)
+        if (!this.perplexityApiKey || this.perplexityApiKey.trim() === '') {
+            console.warn('⚠️ Perplexity API key not available for web search');
             return `Web search is not available. To enable web search, set the PPLX_API_KEY environment variable with your Perplexity API key.`;
         }
 
@@ -1263,8 +1427,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
     }
 
     async executeAskClaude(question) {
-        // Check if Claude API key is available
-        if (!this.claudeApiKey) {
+        // Check if Claude API key is available (check for truthy and non-empty string)
+        if (!this.claudeApiKey || this.claudeApiKey.trim() === '') {
+            console.warn('⚠️ Claude API key not available');
             return `Claude is not available. To enable Claude, set the CLAUDE_API_KEY environment variable with your Anthropic API key.`;
         }
 
@@ -1511,6 +1676,12 @@ ${currentQuestion}`;
         
         const content = String(text || '');
         
+        // Don't show "message limit reached" notifications if user has premium
+        if (this.hasPremiumAccess() && (content.includes('Message limit reached') || content.includes('message limit reached') || content.includes('Message Limit Reached') || content.includes('message limit') || (content.includes('Wait') && content.includes('subscribe')))) {
+            console.log('🚫 Blocked message limit notification in showNotification - user has premium');
+            return;
+        }
+        
         // Check if this is a long response and chunk it
         if (content.length > 800 && content.toLowerCase().includes('elaborate')) {
             this.showChunkedResponse(content, isHTML);
@@ -1520,11 +1691,116 @@ ${currentQuestion}`;
         // Process content for links and math formatting
         const processedContent = this.processContent(content, isHTML);
         
-        this.dragOutput.innerHTML = processedContent;
-        this.dragOutput.dataset.fullText = content.replace(/<[^>]*>/g, '');
+        // Create current output message container (with resize handle) FIRST
+        const currentOutput = document.createElement('div');
+        currentOutput.className = 'drag-output';
+        currentOutput.id = 'drag-output';
+        currentOutput.draggable = true;
+        currentOutput.title = 'Drag me to drop text into apps';
+        currentOutput.innerHTML = processedContent;
         
-        this.dragOutput.classList.remove('hidden');
+        // Add resize handle
+        const resizeHandle = document.createElement('div');
+        resizeHandle.id = 'resize-handle';
+        resizeHandle.className = 'resize-handle';
+        resizeHandle.title = 'Drag to resize';
+        currentOutput.appendChild(resizeHandle);
+        
+        currentOutput.dataset.fullText = content.replace(/<[^>]*>/g, '');
+        currentOutput.classList.remove('hidden');
+        
+        // Move drag-output into messages-container or replace if already there
+        if (this.messagesContainer) {
+            // Remove old drag-output if it exists elsewhere
+            const oldDragOutput = document.getElementById('drag-output');
+            if (oldDragOutput && oldDragOutput.parentNode !== this.messagesContainer) {
+                oldDragOutput.remove();
+            }
+            
+            // Replace or append current output FIRST (so it's at the bottom)
+            if (oldDragOutput && oldDragOutput.parentNode === this.messagesContainer) {
+                this.messagesContainer.replaceChild(currentOutput, oldDragOutput);
+            } else {
+                this.messagesContainer.appendChild(currentOutput);
+            }
+            
+            // NOW render previous messages (they'll be inserted before currentOutput, above viewport)
+            this.renderPreviousMessages();
+            
+            this.messagesContainer.classList.remove('hidden');
+            
+                        // Set initial height to fit just the current message
+                        const currentMessage = this.messagesContainer.querySelector('#drag-output');
+                        if (currentMessage) {
+                            // Start with height matching just the current message + padding
+                            // Use requestAnimationFrame to ensure DOM is ready
+                            requestAnimationFrame(() => {
+                                if (this.messagesContainer && currentMessage) {
+                                    const currentHeight = currentMessage.offsetHeight;
+                                    const padding = 0.5 * 16; // padding-bottom only (0.5rem = 8px)
+                                    const initialHeight = currentHeight + padding;
+                                    this.messagesContainer.style.height = `${initialHeight}px`;
+                                    this.messagesContainer.style.maxHeight = '400px';
+                                    
+                                    // Ensure we're scrolled to bottom to hide previous messages
+                                    requestAnimationFrame(() => {
+                                        if (this.messagesContainer) {
+                                            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+                                        }
+                                    });
+                                }
+                            });
+                        }
+            
+            // Force scroll to bottom IMMEDIATELY to hide previous messages
+            // Temporarily disable user scroll tracking
+            this.isUserScrolling = false;
+            
+            // Do it synchronously first, then async to ensure it sticks
+            const forceScroll = () => {
+                if (this.messagesContainer) {
+                    // Scroll to bottom to show the current message fully
+                    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+                }
+            };
+            
+            forceScroll();
+            setTimeout(forceScroll, 0);
+            setTimeout(forceScroll, 10);
+            setTimeout(forceScroll, 50);
+            
+            // Show reveal history button only if there are previous messages AND output is visible
+            const previousMessages = this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)');
+            if (this.revealHistoryBtn && previousMessages.length > 0 && !this.messagesContainer.classList.contains('hidden')) {
+                this.revealHistoryBtn.classList.remove('hidden');
+            } else if (this.revealHistoryBtn) {
+                this.revealHistoryBtn.classList.add('hidden');
+            }
+            
+            // Show close button
+            if (this.closeOutputFloating) {
+                this.closeOutputFloating.classList.remove('hidden');
+            }
+            
+            // Then ensure it stays at bottom with multiple attempts
+            setTimeout(() => {
+                this.scrollToBottom();
+            }, 0);
+        } else {
+            // Fallback if messages-container doesn't exist
+            currentOutput.classList.remove('hidden');
+        }
+        
+        this.dragOutput = currentOutput;
+        this.resizeHandle = resizeHandle;
+        
+        // Attach drag event listeners to the new drag-output element
+        this.attachDragListeners();
+        
         this.positionFloatingClose();
+        
+        // Ensure scroll stays at bottom after all rendering is complete
+        this.scrollToBottom();
         
         // Show answer this button
         if (this.answerThisBtn) {
@@ -1543,6 +1819,17 @@ ${currentQuestion}`;
     showLoadingNotification(message = null, context = 'default') {
         if (!this.dragOutput) return;
         
+        // Clear any "message limit reached" notifications if user has premium
+        if (this.hasPremiumAccess() && !this.dragOutput.classList.contains('hidden')) {
+            const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+            if (currentContent.includes('Message limit reached') || currentContent.includes('message limit reached') || currentContent.includes('Message Limit Reached') || currentContent.includes('message limit')) {
+                // Clear it before showing loading notification
+                this.dragOutput.classList.add('hidden');
+                this.dragOutput.innerHTML = '';
+                this.dragOutput.textContent = '';
+            }
+        }
+        
         // Stop any existing loading animation
         this.stopLoadingAnimation();
         
@@ -1550,9 +1837,7 @@ ${currentQuestion}`;
         const messageSets = {
             'default': ['analyzing', 'thinking', 'preparing', 'processing', 'answering', 'working'],
             'search': ['searching', 'querying', 'fetching', 'analyzing results', 'processing data', 'gathering information'],
-            'claude': ['analyzing', 'reasoning', 'thinking deeply', 'processing', 'formulating', 'synthesizing'],
-            'file': ['processing files', 'reading files', 'analyzing content', 'extracting data', 'preparing files', 'uploading'],
-            'document': ['processing document', 'extracting content', 'analyzing text', 'reading document', 'preparing content', 'loading document']
+            'claude': ['analyzing', 'reasoning', 'thinking deeply', 'processing', 'formulating', 'synthesizing']
         };
         
         const loadingMessages = messageSets[context] || messageSets['default'];
@@ -1580,14 +1865,62 @@ ${currentQuestion}`;
             dotIndex = (dotIndex + 1) % dots.length;
             const animatedText = `${this.currentLoadingMessage}${dots[dotIndex]}`;
             const processedContent = this.processContent(animatedText, false);
-            this.dragOutput.innerHTML = processedContent;
+            
+            // Render previous messages, then add loading message
+            this.renderPreviousMessages();
+            
+            // Create loading message container
+            const loadingContainer = this.dragOutput ? this.dragOutput.cloneNode(false) : document.createElement('div');
+            loadingContainer.className = 'drag-output';
+            loadingContainer.id = 'drag-output';
+            loadingContainer.innerHTML = processedContent;
+            
+            // Replace or add loading container
+            if (this.messagesContainer) {
+                if (this.dragOutput && this.dragOutput.parentNode === this.messagesContainer) {
+                    this.messagesContainer.replaceChild(loadingContainer, this.dragOutput);
+                } else {
+                    this.messagesContainer.appendChild(loadingContainer);
+                }
+                this.dragOutput = loadingContainer;
+                this.messagesContainer.classList.remove('hidden');
+                
+                // Ensure container is visible and has proper height to show loading message
+                requestAnimationFrame(() => {
+                    if (this.messagesContainer && this.dragOutput) {
+                        // Set container height to fit the loading message
+                        const loadingHeight = this.dragOutput.offsetHeight || 60; // Default height if not calculated yet
+                        const padding = 0.5 * 16; // padding-bottom
+                        this.messagesContainer.style.height = `${loadingHeight + padding}px`;
+                        this.messagesContainer.style.maxHeight = '400px';
+                        this.messagesContainer.style.overflowY = 'visible'; // Don't scroll during loading
+                        
+                        // Set scroll to 0 to keep loading notification at top, visible
+                        this.messagesContainer.scrollTop = 0;
+                        
+                        // Position close button after container is sized and layout is complete
+                        setTimeout(() => {
+                            this.positionFloatingClose();
+                        }, 150);
+                    }
+                });
+            } else {
+                // Fallback
+                loadingContainer.innerHTML = processedContent;
+            }
         };
         
         // Initial display
         updateDisplay();
-        this.dragOutput.classList.add('loading-notification');
-        this.dragOutput.classList.remove('hidden');
-        this.positionFloatingClose();
+        if (this.dragOutput) {
+            this.dragOutput.classList.add('loading-notification');
+            this.dragOutput.classList.remove('hidden');
+            // Ensure it's visible
+            this.dragOutput.style.display = 'block';
+            this.dragOutput.style.opacity = '1';
+            this.dragOutput.style.visibility = 'visible';
+        }
+        // Position close button will be called after container is sized (in updateDisplay's requestAnimationFrame)
         
         // Hide buttons during loading
         if (this.answerThisBtn) {
@@ -1661,6 +1994,18 @@ ${currentQuestion}`;
             console.error('Failed to clear conversation history from localStorage:', e);
         }
         
+        // Clear the messages container
+        if (this.messagesContainer) {
+            this.messagesContainer.innerHTML = '';
+            this.messagesContainer.classList.add('hidden');
+        }
+        
+        // Hide reveal history button
+        if (this.revealHistoryBtn) {
+            this.revealHistoryBtn.classList.add('hidden');
+            this.revealHistoryBtn.classList.remove('rotated');
+        }
+        
         // Clear the drag output if it's visible
         if (this.dragOutput) {
             this.dragOutput.innerHTML = '';
@@ -1672,6 +2017,63 @@ ${currentQuestion}`;
         
         // Show confirmation
         this.showNotification('Chat history cleared! 🗑️', true);
+    }
+    
+    toggleChatHistory() {
+        if (!this.revealHistoryBtn || !this.messagesContainer) return;
+        
+        const previousMessages = this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)');
+        if (previousMessages.length === 0) return;
+        
+        // Toggle the rotated class for visual feedback
+        const isExpanded = this.revealHistoryBtn.classList.contains('rotated');
+        
+        if (isExpanded) {
+            // Collapse: hide previous messages only (keep current output visible)
+            this.revealHistoryBtn.classList.remove('rotated');
+            
+            // Hide all previous messages (not the current output)
+            previousMessages.forEach(msg => {
+                msg.style.display = 'none';
+            });
+            
+            // Reset container to just show current message
+            const currentMessage = this.messagesContainer.querySelector('#drag-output');
+            if (currentMessage) {
+                // Ensure current message stays visible
+                currentMessage.style.opacity = '1';
+                currentMessage.style.pointerEvents = 'auto';
+                currentMessage.style.height = 'auto';
+                currentMessage.style.overflow = 'visible';
+                currentMessage.style.margin = '';
+                currentMessage.style.padding = '';
+                
+                const currentHeight = currentMessage.offsetHeight;
+                const padding = 0.5 * 16;
+                this.messagesContainer.style.height = `${currentHeight + padding}px`;
+                this.messagesContainer.style.overflowY = 'hidden';
+            }
+        } else {
+            // Expand: reveal all previous messages
+            this.revealHistoryBtn.classList.add('rotated');
+            
+            // Show all previous messages
+            previousMessages.forEach(msg => {
+                msg.style.display = 'block';
+                msg.style.opacity = '1';
+                msg.style.pointerEvents = 'auto';
+            });
+            
+            // Expand container to show all messages with scrolling
+            this.messagesContainer.style.height = '400px'; // Max height
+            this.messagesContainer.style.maxHeight = '400px';
+            this.messagesContainer.style.overflowY = 'auto';
+            
+            // Scroll to bottom to show current message
+            requestAnimationFrame(() => {
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            });
+        }
     }
 
     showAccountModal() {
@@ -1704,18 +2106,11 @@ ${currentQuestion}`;
 
     async handleSelectedFiles(files) {
         try {
-            // Show loading notification for file processing
-            this.showLoadingNotification(null, 'file');
-            
             const newAttachments = [];
             for (const file of files) {
                 const pf = await this.processFile(file);
                 if (pf) newAttachments.push(pf);
             }
-            
-            // Stop loading animation
-            this.stopLoadingAnimation();
-            
             if (newAttachments.length === 0) {
                 this.showNotification('No supported files found. Please select images, PDFs, or text files.', false);
                 return;
@@ -1726,7 +2121,6 @@ ${currentQuestion}`;
             this.showNotification(`Attached ${newAttachments.length} file${newAttachments.length>1?'s':''}. Type a message and press Send.`, false);
         } catch (error) {
             console.error('Add file error:', error);
-            this.stopLoadingAnimation();
             this.showNotification(`Error processing files: ${error.message}`, false);
         }
     }
@@ -1898,6 +2292,32 @@ ${currentQuestion}`;
 
     async analyzeFilesWithChatGPT(files, prompt) {
         try {
+            // Re-check subscription status before processing (in case it was cancelled or activated)
+            await this.checkLicense();
+            
+            // Clear any existing "message limit reached" notification if user now has premium
+            if (this.hasPremiumAccess() && this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                const currentContent = this.dragOutput.innerHTML || '';
+                if (currentContent.includes('Message Limit Reached') || currentContent.includes('message limit')) {
+                    this.dragOutput.classList.add('hidden');
+                }
+            }
+            
+            // Check message limit for free users
+            // Block if premium or subscription just activated
+            const shouldBlockLimit = this.hasPremiumAccess() || 
+                                    (this.subscriptionJustActivated && this.subscriptionActivatedTime && (Date.now() - this.subscriptionActivatedTime < 30000));
+            
+            if (!shouldBlockLimit && this.hasReachedMessageLimit()) {
+                // Final check before showing
+                if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
+                    console.log('🚫 Blocked in analyzeFilesWithChatGPT - premium detected');
+                    return;
+                }
+                this.showMessageLimitReached();
+                return;
+            }
+
             const fileNames = files.map(f => f.name).join(', ');
             const displayFiles = fileNames.length > 50 ? fileNames.substring(0, 50) + '...' : fileNames;
             this.showNotification(`📄 Analyzing ${files.length} file${files.length > 1 ? 's' : ''}: ${displayFiles}`, false);
@@ -1958,6 +2378,9 @@ ${currentQuestion}`;
 
     async loadAccountInfo() {
         try {
+            // Re-check subscription status before loading account info
+            await this.checkLicense();
+            
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
                 const accountInfo = await ipcRenderer.invoke('get-account-info');
@@ -2166,13 +2589,30 @@ User Question: ${question}`;
     }
 
     showDocumentProcessingIndicator() {
-        // Use the animated loading notification instead of static indicator
-        this.showLoadingNotification(null, 'document');
+        const indicator = document.createElement('div');
+        indicator.id = 'document-processing-indicator';
+        indicator.innerHTML = '📄 Processing document...';
+        indicator.style.cssText = `
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 10000;
+            animation: pulse 1.5s infinite;
+        `;
+        document.body.appendChild(indicator);
     }
 
     hideDocumentProcessingIndicator() {
-        // Stop the loading animation
-        this.stopLoadingAnimation();
+        const indicator = document.getElementById('document-processing-indicator');
+        if (indicator) {
+            indicator.remove();
+        }
     }
 
     checkFreeAccess() {
@@ -2198,6 +2638,58 @@ User Question: ${question}`;
         }
     }
 
+    loadMessageResetTimestamp() {
+        try {
+            const timestamp = localStorage.getItem('jarvis_message_reset_timestamp');
+            return timestamp ? parseInt(timestamp) : null;
+        } catch (e) {
+            console.error('Failed to load message reset timestamp:', e);
+            return null;
+        }
+    }
+
+    saveMessageResetTimestamp() {
+        try {
+            const timestamp = Date.now();
+            localStorage.setItem('jarvis_message_reset_timestamp', timestamp.toString());
+        } catch (e) {
+            console.error('Failed to save message reset timestamp:', e);
+        }
+    }
+
+    checkAndResetMessageCount() {
+        try {
+            // If user has premium, don't track messages
+            if (this.hasPremiumAccess()) {
+                return;
+            }
+
+            const resetTimestamp = this.loadMessageResetTimestamp();
+            const now = Date.now();
+            const twentyFourHours = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+            // If no timestamp exists, set it now and reset count
+            if (!resetTimestamp) {
+                this.messageCount = 0;
+                this.saveMessageCount();
+                this.saveMessageResetTimestamp();
+                this.updateMessageCounter();
+                return;
+            }
+
+            // If 24 hours have passed, reset the count
+            if (now - resetTimestamp >= twentyFourHours) {
+                this.messageCount = 0;
+                this.saveMessageCount();
+                this.saveMessageResetTimestamp();
+                this.updateMessageCounter();
+                console.log('Message count reset after 24 hours');
+            }
+        } catch (e) {
+            console.error('Failed to check and reset message count:', e);
+        }
+    }
+
     saveMessageCount() {
         try {
             localStorage.setItem('jarvis_message_count', this.messageCount.toString());
@@ -2207,18 +2699,44 @@ User Question: ${question}`;
     }
 
     incrementMessageCount() {
+        // Check if 24 hours have passed before incrementing
+        this.checkAndResetMessageCount();
+        
         this.messageCount++;
         this.saveMessageCount();
         this.updateMessageCounter();
+        
+        // Ensure timestamp is set if it doesn't exist
+        if (!this.loadMessageResetTimestamp()) {
+            this.saveMessageResetTimestamp();
+        }
     }
 
     resetMessageCount() {
         this.messageCount = 0;
         this.saveMessageCount();
+        this.saveMessageResetTimestamp();
         this.updateMessageCounter();
     }
 
     hasReachedMessageLimit() {
+        // Premium users never hit message limit
+        if (this.hasPremiumAccess()) {
+            return false;
+        }
+        
+        // Don't show limit if subscription was just activated (within last 30 seconds)
+        if (this.subscriptionJustActivated && this.subscriptionActivatedTime) {
+            const timeSinceActivation = Date.now() - this.subscriptionActivatedTime;
+            if (timeSinceActivation < 30000) { // 30 seconds grace period
+                console.log('⏱️ Subscription just activated, blocking message limit check');
+                return false;
+            } else {
+                // Clear flag after grace period
+                this.subscriptionJustActivated = false;
+            }
+        }
+        
         return this.messageCount >= this.maxFreeMessages;
     }
 
@@ -2227,21 +2745,29 @@ User Question: ${question}`;
     }
 
     updateMessageCounter() {
-        if (!this.messageCounter || !this.messageCountText) return;
+        if (!this.messageCounter || !this.messageCountText) {
+            console.warn('Message counter elements not found');
+            return;
+        }
         
         // Only show counter for free users
         if (this.hasPremiumAccess()) {
             this.messageCounter.classList.add('hidden');
+            console.log('Premium access - hiding message counter');
             return;
         }
         
+        // Check and reset if 24 hours have passed
+        this.checkAndResetMessageCount();
+        
         // Show counter for free users
         this.messageCounter.classList.remove('hidden');
-        this.messageCountText.textContent = `${this.messageCount}/${this.maxFreeMessages}`;
+        const remaining = this.getRemainingMessages();
+        this.messageCountText.textContent = `${remaining}/${this.maxFreeMessages}`;
+        console.log(`Free tier - showing ${remaining}/${this.maxFreeMessages} messages remaining`);
         
         // Update styling based on remaining messages
         this.messageCounter.classList.remove('warning', 'critical');
-        const remaining = this.getRemainingMessages();
         
         if (remaining <= 2) {
             this.messageCounter.classList.add('critical');
@@ -2252,51 +2778,156 @@ User Question: ${question}`;
 
     hasPremiumAccess() {
         // Check if user has premium subscription
-        return this.licenseStatus && this.licenseStatus.valid && 
+        // If licenseStatus is null or invalid, assume free (conservative approach)
+        if (!this.licenseStatus) {
+            return false;
+        }
+        return this.licenseStatus.valid && 
                (this.licenseStatus.type === 'premium' || this.licenseStatus.type === 'active');
     }
 
+    getTimeUntilReset() {
+        const resetTimestamp = this.loadMessageResetTimestamp();
+        if (!resetTimestamp) return null;
+        
+        const now = Date.now();
+        const twentyFourHours = 24 * 60 * 60 * 1000;
+        const timeUntilReset = (resetTimestamp + twentyFourHours) - now;
+        
+        if (timeUntilReset <= 0) return null; // Reset should happen now
+        
+        return timeUntilReset;
+    }
+
+    formatTimeUntilReset(ms) {
+        const hours = Math.floor(ms / (1000 * 60 * 60));
+        const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((ms % (1000 * 60)) / 1000);
+        
+        if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${seconds}s`;
+        } else {
+            return `${seconds}s`;
+        }
+    }
+
     showMessageLimitReached() {
-        const remaining = this.getRemainingMessages();
-        const message = `
-            <div style="text-align: center; padding: 20px;">
-                <h3 style="color: #ff6b6b; margin-bottom: 15px;">🚫 Message Limit Reached</h3>
-                <p style="margin-bottom: 20px; color: #666;">
-                    You've used all ${this.maxFreeMessages} free messages. 
-                    Upgrade to Jarvis Premium for unlimited conversations!
-                </p>
-                <div style="margin-bottom: 20px;">
-                    <button id="upgrade-to-premium" style="
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                        border: none;
-                        padding: 12px 24px;
-                        border-radius: 8px;
-                        font-size: 16px;
-                        font-weight: 600;
-                        cursor: pointer;
-                        transition: transform 0.2s;
-                    " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-                        Get Premium - Unlimited Messages
-                    </button>
-                </div>
-                <p style="font-size: 14px; color: #999;">
-                    Premium includes: Unlimited messages, Screenshot analysis, Voice activation
-                </p>
-            </div>
-        `;
+        // AGGRESSIVE MULTI-LAYER BLOCKING
         
-        this.showNotification(message, true);
+        // Block 1: Check premium access (synchronous check)
+        if (this.hasPremiumAccess()) {
+            console.log('🚫 Block 1: Blocked - user has premium access');
+            return;
+        }
         
-        // Add click handler for upgrade button
-        setTimeout(() => {
-            const upgradeBtn = document.getElementById('upgrade-to-premium');
-            if (upgradeBtn) {
-                upgradeBtn.addEventListener('click', () => {
-                    this.showUpgradePrompt();
-                });
+        // Block 2: Check grace period flag
+        if (this.subscriptionJustActivated) {
+            if (this.subscriptionActivatedTime) {
+                const timeSinceActivation = Date.now() - this.subscriptionActivatedTime;
+                if (timeSinceActivation < 30000) {
+                    console.log('🚫 Block 2: Blocked - subscription just activated (grace period)');
+                    return;
+                }
+            } else {
+                // Flag is set but no time - still block
+                console.log('🚫 Block 2b: Blocked - subscription activation flag set');
+                return;
             }
-        }, 100);
+        }
+        
+        // Block 3: Check license status directly
+        if (this.licenseStatus && this.licenseStatus.valid && 
+            (this.licenseStatus.type === 'premium' || this.licenseStatus.type === 'active')) {
+            console.log('🚫 Block 3: Blocked - license status shows premium');
+            return;
+        }
+        
+        // Block 4: Stop countdown timer if it's running
+        if (this.countdownTimerInterval) {
+            console.log('🛑 Stopping countdown timer before showing notification');
+            clearInterval(this.countdownTimerInterval);
+            this.countdownTimerInterval = null;
+        }
+        
+        console.log('⚠️ Showing message limit notification - free tier user (all blocks passed)');
+        
+        const timeUntilReset = this.getTimeUntilReset();
+        const resetTimeText = timeUntilReset ? this.formatTimeUntilReset(timeUntilReset) : 'soon';
+        
+        // Display as a simple text message (like normal AI responses)
+        const message = `Message limit reached. Wait ${resetTimeText} or subscribe (click 3 lines → account → get premium)`;
+        
+        this.showNotification(message, false);
+        
+        // Start countdown timer if reset time exists
+        if (timeUntilReset && timeUntilReset > 0) {
+            setTimeout(() => {
+                this.startCountdownTimer(timeUntilReset);
+            }, 100);
+        }
+    }
+
+    startCountdownTimer(initialTime) {
+        // Stop any existing countdown timer
+        if (this.countdownTimerInterval) {
+            clearInterval(this.countdownTimerInterval);
+            this.countdownTimerInterval = null;
+        }
+        
+        let remainingTime = initialTime;
+        
+        const updateCountdown = () => {
+            // Stop countdown if user has premium access
+            if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
+                console.log('🛑 Stopping countdown timer - user has premium');
+                if (this.countdownTimerInterval) {
+                    clearInterval(this.countdownTimerInterval);
+                    this.countdownTimerInterval = null;
+                }
+                // Clear the notification
+                if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                    const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
+                    if (currentContent.includes('Message limit reached') || currentContent.includes('message limit')) {
+                        this.dragOutput.classList.add('hidden');
+                        this.dragOutput.innerHTML = '';
+                        this.dragOutput.textContent = '';
+                    }
+                }
+                return;
+            }
+            
+            if (remainingTime <= 0) {
+                // Reset happened, refresh subscription status
+                this.checkAndResetMessageCount();
+                this.updateMessageCounter();
+                // Update the notification text
+                const dragOutput = this.dragOutput;
+                if (dragOutput && !dragOutput.classList.contains('hidden')) {
+                    dragOutput.textContent = 'Messages reset! You now have 5 free messages available.';
+                }
+                if (this.countdownTimerInterval) {
+                    clearInterval(this.countdownTimerInterval);
+                    this.countdownTimerInterval = null;
+                }
+                return;
+            }
+            
+            // Update the notification text with new countdown
+            const dragOutput = this.dragOutput;
+            if (dragOutput && !dragOutput.classList.contains('hidden')) {
+                const resetTimeText = this.formatTimeUntilReset(remainingTime);
+                // Update as simple text message
+                dragOutput.textContent = `Message limit reached. Wait ${resetTimeText} or subscribe (click 3 lines → account → get premium)`;
+            }
+            
+            remainingTime -= 1000; // Decrease by 1 second
+        };
+        
+        // Use setInterval instead of recursive setTimeout for easier cleanup
+        this.countdownTimerInterval = setInterval(updateCountdown, 1000);
+        updateCountdown(); // Run immediately
     }
 
     grantFreeAccess() {
@@ -2469,7 +3100,27 @@ User Question: ${question}`;
     async answerThis() {
         try {
             // Check if user has reached message limit for free users
-            if (!this.hasPremiumAccess() && this.hasReachedMessageLimit()) {
+            // Re-check subscription status before processing (in case it was cancelled or activated)
+            await this.checkLicense();
+            
+            // Clear any existing "message limit reached" notification if user now has premium
+            if (this.hasPremiumAccess() && this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                const currentContent = this.dragOutput.innerHTML || '';
+                if (currentContent.includes('Message Limit Reached') || currentContent.includes('message limit')) {
+                    this.dragOutput.classList.add('hidden');
+                }
+            }
+            
+            // Block if premium or subscription just activated
+            const shouldBlockAnswerThis = this.hasPremiumAccess() || 
+                                         (this.subscriptionJustActivated && this.subscriptionActivatedTime && (Date.now() - this.subscriptionActivatedTime < 30000));
+            
+            if (!shouldBlockAnswerThis && this.hasReachedMessageLimit()) {
+                // Final check before showing
+                if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
+                    console.log('🚫 Blocked in answerThis - premium detected');
+                    return;
+                }
                 this.showNotification('You\'ve reached your free message limit. Upgrade to Pro for unlimited messages!', 'error');
                 return;
             }
@@ -2558,74 +3209,612 @@ User Question: ${question}`;
         }
     }
 
-    async humanize() {
-        try {
-            if (!this.dragOutput || this.dragOutput.classList.contains('hidden')) {
-                this.showNotification('No text to humanize');
-                return;
-            }
-
-            // Get the text content from the output
-            const textToHumanize = this.dragOutput.dataset.fullText || this.dragOutput.innerText || this.dragOutput.textContent;
+    renderPreviousMessages() {
+        if (!this.messagesContainer) return;
+        
+        // Remove all existing message containers except the current drag-output
+        const existingMessages = Array.from(this.messagesContainer.children).filter(
+            child => child.id !== 'drag-output'
+        );
+        existingMessages.forEach(msg => msg.remove());
+        
+        // Render all messages from conversationHistory except the last one (current output)
+        if (this.conversationHistory && this.conversationHistory.length > 0) {
+            const messagesToShow = [];
+            const lastMessage = this.conversationHistory[this.conversationHistory.length - 1];
             
-            if (!textToHumanize || textToHumanize.trim().length === 0) {
-                this.showNotification('No text to humanize');
-                return;
+            // If last message is assistant, exclude it (it's the current output we'll add separately)
+            const endIndex = (lastMessage && lastMessage.role === 'assistant') 
+                ? this.conversationHistory.length - 1 
+                : this.conversationHistory.length;
+            
+            for (let i = 0; i < endIndex; i++) {
+                messagesToShow.push(this.conversationHistory[i]);
             }
-
-            const previewText = textToHumanize.length > 40 ? textToHumanize.substring(0, 40) + '...' : textToHumanize;
-            this.showNotification(`✍️ Humanizing text: "${previewText}"`);
-            this.showNotification('🔄 Processing with Natural Write API...');
-
-            // Call Natural Write API
-            const response = await fetch('https://naturalwrite.com/api/v1/humanize', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': 'nw_6f9427e5026add995264a567970f5b0ce09f39be867f8921'
-                },
-                body: JSON.stringify({
-                    text: textToHumanize
-                })
+            
+            // Render previous messages as separate containers
+            // These will be hidden by default and only visible when scrolling up
+            // Render in chronological order (oldest first) so DOM order is: oldest -> newest -> current
+            const currentDragOutput = this.messagesContainer.querySelector('#drag-output');
+            
+            // Render messages in chronological order (oldest first, newest last before current)
+            messagesToShow.forEach((msg, index) => {
+                // Create a separate container for each message
+                const messageContainer = document.createElement('div');
+                messageContainer.className = 'drag-output';
+                messageContainer.style.cursor = 'default'; // Not draggable for old messages
+                messageContainer.draggable = false; // Old messages not draggable
+                messageContainer.style.opacity = '0'; // Hidden but takes up space
+                messageContainer.style.pointerEvents = 'none'; // Can't interact with hidden messages
+                // Store reverse index: 0 = oldest, higher = newer (closer to current)
+                messageContainer.dataset.messageIndex = messagesToShow.length - 1 - index;
+                messageContainer.dataset.role = msg.role || 'assistant'; // Store role for styling
+                
+                // Ensure container has proper structure - content should be directly in container
+                const msgContent = msg.content || '';
+                if (msgContent.includes('<') && msgContent.includes('>')) {
+                    messageContainer.innerHTML = msgContent;
+                } else {
+                    messageContainer.textContent = msgContent;
+                }
+                
+                // Messages keep their full size - just fade in/out
+                // Don't collapse height, just control opacity
+                
+                // Insert before current output (if it exists) or append
+                // Insert in chronological order: oldest messages first, newest messages last (right before current)
+                if (currentDragOutput) {
+                    this.messagesContainer.insertBefore(messageContainer, currentDragOutput);
+                } else {
+                    this.messagesContainer.appendChild(messageContainer);
+                }
             });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                const errorMessage = errorData.message || errorData.error || `API error: ${response.status}`;
-                console.error('Natural Write API error:', errorData);
-                throw new Error(errorMessage);
-            }
-
-            const result = await response.json();
-            
-            // Extract humanized text from response
-            // The API might return different structures, so we handle both
-            const humanizedText = result.humanized_text || result.text || result.result || JSON.stringify(result);
-            
-            if (!humanizedText || humanizedText.trim().length === 0) {
-                throw new Error('No humanized text received from API');
-            }
-
-            // Update the output with humanized text
-            this.showNotification(humanizedText, false);
-            
-        } catch (error) {
-            console.error('Humanize error:', error);
-            this.showNotification(`Error: ${error.message || "Couldn't humanize the text"}`);
         }
+    }
+    
+    scrollToBottom() {
+        if (!this.messagesContainer) return;
+        
+        // Don't scroll if loading notification is active - keep it visible above HUD
+        if (this.dragOutput && this.dragOutput.classList.contains('loading-notification')) {
+            return;
+        }
+        
+        // Force scroll to absolute bottom to hide all previous messages
+        const scrollToBottom = () => {
+            if (this.messagesContainer) {
+                const container = this.messagesContainer;
+                
+                // Don't scroll if loading notification is active
+                const loadingNotification = container.querySelector('.loading-notification');
+                if (loadingNotification) {
+                    return;
+                }
+                
+                // Force scroll to absolute bottom
+                container.scrollTop = container.scrollHeight;
+                
+                // Hide previous messages when at bottom
+                container.classList.add('at-bottom');
+                const previousMessages = container.querySelectorAll('.drag-output:not(#drag-output)');
+                previousMessages.forEach(msg => {
+                    msg.style.opacity = '0';
+                    msg.style.pointerEvents = 'none';
+                });
+                
+                // Verify we're at the bottom
+                const maxScroll = container.scrollHeight - container.clientHeight;
+                if (container.scrollTop < maxScroll - 1) {
+                    // Force it again if not at bottom
+                    container.scrollTop = container.scrollHeight;
+                }
+            }
+        };
+        
+        // Try multiple times with different delays to ensure it sticks
+        scrollToBottom();
+        setTimeout(scrollToBottom, 0);
+        setTimeout(scrollToBottom, 10);
+        setTimeout(scrollToBottom, 50);
+        setTimeout(scrollToBottom, 100);
+        setTimeout(scrollToBottom, 200);
+        requestAnimationFrame(() => {
+            scrollToBottom();
+            setTimeout(scrollToBottom, 0);
+            setTimeout(scrollToBottom, 50);
+        });
+    }
+    
+    setupScrollObserver() {
+        if (!this.messagesContainer) return;
+        
+        // Track if user is manually scrolling (to prevent auto-scroll when they scroll up)
+        this.isUserScrolling = false;
+        
+        // Cache for message heights to prevent recalculations
+        let cachedMessageHeights = new Map();
+        
+        // Track scroll accumulator for wheel events (shared between wheel handler and updateMessageVisibility)
+        let scrollAccumulator = 0;
+        let previousScrollAccumulator = -1; // Initialize to -1 to detect first scroll
+        let maxAccumulatorReached = 0; // Track the maximum accumulator value reached
+        let wheelRafId = null;
+        
+        // Function to update visibility of previous messages based on scroll position
+        const updateMessageVisibility = () => {
+            if (!this.messagesContainer) return;
+            const container = this.messagesContainer;
+            
+            // Don't update visibility if loading notification is active - keep it visible above HUD
+            const loadingNotification = container.querySelector('.loading-notification');
+            if (loadingNotification) {
+                container.scrollTop = 0; // Keep loading notification at top
+                return;
+            }
+            
+            const scrollTop = container.scrollTop;
+            const scrollHeight = container.scrollHeight;
+            const clientHeight = container.clientHeight;
+            const isAtBottom = scrollHeight - scrollTop <= clientHeight + 50;
+            
+            const previousMessages = Array.from(container.querySelectorAll('.drag-output:not(#drag-output)'));
+            const currentMessage = container.querySelector('#drag-output');
+            
+            if (!currentMessage) return;
+            
+            if (isAtBottom) {
+                // At bottom - hide all previous messages
+                if (!container.classList.contains('at-bottom')) {
+                    container.classList.add('at-bottom');
+                    previousMessages.forEach((msg) => {
+                        msg.style.opacity = '0';
+                        msg.style.pointerEvents = 'none';
+                    });
+                    
+                    // Set container height to just current message
+                    const currentHeight = currentMessage.offsetHeight;
+                    const padding = 0.5 * 16;
+                    container.style.height = `${currentHeight + padding}px`;
+                    container.scrollTop = container.scrollHeight;
+                    
+                    // Reset scroll accumulator when at bottom
+                    scrollAccumulator = 0;
+                    if (wheelRafId !== null) {
+                        cancelAnimationFrame(wheelRafId);
+                        wheelRafId = null;
+                    }
+                }
+            } else {
+                // Scrolled up - show messages above output chat
+                container.classList.remove('at-bottom');
+                
+                // Keep output chat fixed at bottom - prevent container from scrolling
+                // Instead, expand container upward to reveal messages
+                // Don't scroll if loading notification is active
+                if (!container.querySelector('.loading-notification')) {
+                    container.scrollTop = container.scrollHeight; // Always stay at bottom
+                }
+                
+                // Calculate which messages to show based on container expansion
+                const currentContainerHeight = parseFloat(container.style.height) || currentMessage.offsetHeight;
+                const currentMessageHeight = currentMessage.offsetHeight;
+                const padding = 0.5 * 16;
+                
+                // Calculate how many messages can fit based on current height
+                let availableHeight = currentContainerHeight - currentMessageHeight - padding;
+                let messagesToShow = 0;
+                let accumulatedHeight = 0;
+                
+                // Show messages from newest to oldest (reverse order)
+                for (let i = previousMessages.length - 1; i >= 0; i--) {
+                    const msg = previousMessages[i];
+                    msg.style.height = 'auto';
+                    void msg.offsetHeight;
+                    let msgHeight = cachedMessageHeights.get(msg);
+                    if (!msgHeight) {
+                        msgHeight = msg.offsetHeight || msg.scrollHeight || msg.clientHeight;
+                        cachedMessageHeights.set(msg, msgHeight);
+                    }
+                    
+                    if (accumulatedHeight + msgHeight <= availableHeight) {
+                        accumulatedHeight += msgHeight;
+                        messagesToShow++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                // Ensure at least 1 message shows if there are any
+                if (previousMessages.length > 0 && messagesToShow === 0) {
+                    messagesToShow = 1;
+                }
+                
+                // Calculate heights once and cache them
+                let currentHeight = currentMessage.offsetHeight;
+                let totalHeight = currentHeight;
+                
+                // Show/hide messages and calculate height
+                previousMessages.forEach((msg, index) => {
+                    const reverseIndex = previousMessages.length - 1 - index;
+                    const shouldShow = reverseIndex < messagesToShow;
+                    
+                    if (shouldShow) {
+                        // Ensure message is visible and expanded
+                        msg.style.removeProperty('height');
+                        msg.style.removeProperty('min-height');
+                        msg.style.height = 'auto';
+                        void msg.offsetHeight; // Force reflow
+                        
+                        msg.style.opacity = '1';
+                        msg.style.pointerEvents = 'auto';
+                        msg.style.transition = 'none';
+                        
+                        // Get height (use cache if available)
+                        let msgHeight = cachedMessageHeights.get(msg);
+                        if (!msgHeight) {
+                            msgHeight = msg.offsetHeight || msg.scrollHeight || msg.clientHeight;
+                            cachedMessageHeights.set(msg, msgHeight);
+                        }
+                        totalHeight += msgHeight;
+                    } else {
+                        msg.style.opacity = '0';
+                        msg.style.pointerEvents = 'none';
+                        msg.style.transition = 'none';
+                    }
+                });
+                
+                // Update container height - cap at 400px max
+                const maxHeight = 400;
+                const targetHeight = Math.min(totalHeight + padding, maxHeight);
+                
+                // Only update height if it changed to prevent glitches
+                const existingHeight = parseFloat(container.style.height) || 0;
+                if (Math.abs(existingHeight - targetHeight) > 1) {
+                    container.style.height = `${targetHeight}px`;
+                }
+            }
+        };
+        
+        // Observe changes to the messages container
+        this.scrollObserver = new MutationObserver(() => {
+            // Clear height cache when messages change
+            cachedMessageHeights.clear();
+            
+            // When content changes, scroll to bottom after a brief delay
+            // But only if user hasn't manually scrolled up
+            if (!this.isUserScrolling) {
+                requestAnimationFrame(() => {
+                    if (this.messagesContainer) {
+                        const container = this.messagesContainer;
+                        
+                        // Don't scroll if loading notification is active - keep it visible above HUD
+                        const loadingNotification = container.querySelector('.loading-notification');
+                        if (loadingNotification) {
+                            container.scrollTop = 0; // Keep loading notification at top
+                            return;
+                        }
+                        
+                        // Only auto-scroll if we're near the bottom
+                        const isNearBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+                        if (isNearBottom) {
+                            container.scrollTop = container.scrollHeight;
+                            updateMessageVisibility();
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Start observing
+        this.scrollObserver.observe(this.messagesContainer, {
+            childList: true,
+            subtree: true
+        });
+        
+        // Track user scrolling to prevent auto-scroll when they scroll up
+        let scrollTimeout;
+        let lastScrollTop = this.messagesContainer.scrollTop;
+        
+        // Track scroll wheel events to expand container instead of scrolling
+        // scrollAccumulator, targetAccumulator, wheelRafId, and isAnimating are declared above
+        
+        const updateMessagesFromAccumulator = () => {
+            // Get current messages
+            const previousMessages = Array.from(this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)'));
+            if (previousMessages.length === 0) return;
+            
+            const currentMessage = this.messagesContainer.querySelector('#drag-output');
+            if (!currentMessage) return;
+            
+            const padding = 0.5 * 16;
+            let targetHeight = currentMessage.offsetHeight + padding;
+            
+            // Three phases:
+            // Phase 1 (0 to maxScroll): Scroll DOWN → messages appear newest→oldest, output moves down
+            // Phase 2 (maxScroll to maxScroll*2): Scroll DOWN → messages scroll behind button (newest first) to reveal older ones
+            // Scrolling UP: Messages disappear oldest→newest, sliding back behind HUD
+            const maxScroll = previousMessages.length * 50;
+            const maxScrollWithHide = maxScroll * 2;
+            
+            // Detect scroll direction based on accumulator change
+            // Scroll DOWN (deltaY > 0) → accumulator increases → isScrollingUp = false
+            // Scroll UP (deltaY < 0) → accumulator decreases → isScrollingUp = true
+            const isScrollingUp = previousScrollAccumulator >= 0 && scrollAccumulator < previousScrollAccumulator;
+            // Phase 2: scrolling DOWN beyond maxScroll (accumulator > maxScroll AND increasing)
+            const isScrollingDown = previousScrollAccumulator >= 0 && scrollAccumulator > previousScrollAccumulator;
+            const isPhase2 = scrollAccumulator > maxScroll && isScrollingDown;
+            
+            // Debug logging (only log significant changes)
+            if (Math.abs(scrollAccumulator - previousScrollAccumulator) > 5) {
+                console.log('Scroll:', {
+                    acc: scrollAccumulator.toFixed(0),
+                    prev: previousScrollAccumulator.toFixed(0),
+                    maxScroll,
+                    isScrollingUp,
+                    isScrollingDown,
+                    isPhase2,
+                    msgCount: previousMessages.length
+                });
+            }
+            
+            // When scrolling up, ensure we don't go below 0
+            // But allow negative values temporarily for smooth animation
+            if (isScrollingUp && scrollAccumulator < 0) {
+                // Clamp to 0 only after all messages are hidden
+                // For now, allow negative to animate oldest message disappearing
+            }
+            
+            let accumulatedHeight = 0;
+            
+            // Messages are in DOM order: oldest (index 0) → newest (index length-1)
+            // forwardIndex: 0 = oldest (farthest from output), length-1 = newest (closest to output)
+            // reverseIndex: 0 = newest (closest to output), length-1 = oldest (farthest from output)
+            
+            for (let i = 0; i < previousMessages.length; i++) {
+                const forwardIndex = i; // 0 = oldest, length-1 = newest
+                const reverseIndex = previousMessages.length - 1 - i; // 0 = newest, length-1 = oldest
+                const msg = previousMessages[i];
+                
+                let progress;
+                
+                if (isScrollingUp) {
+                    // Scrolling UP: Messages slide up behind HUD oldest→newest (top to bottom)
+                    // This is the EXACT REVERSE of Phase 1 (scrolling DOWN)
+                    // 
+                    // In Phase 1 (scrolling DOWN), messages appear using reverseIndex:
+                    //   - reverseIndex=0 (newest) appears at accumulator 0→50
+                    //   - reverseIndex=1 appears at accumulator 50→100
+                    //   - reverseIndex=2 appears at accumulator 100→150, etc.
+                    //
+                    // When scrolling UP, we reverse this:
+                    //   - forwardIndex=0 (oldest) disappears when accumulator goes from 50→0
+                    //   - forwardIndex=1 disappears when accumulator goes from 100→50
+                    //   - forwardIndex=2 disappears when accumulator goes from 150→100, etc.
+                    //
+                    // So: message at forwardIndex should be visible when accumulator > (forwardIndex + 1) * 50
+                    //     and should disappear progressively as accumulator decreases below that
+                    const disappearStart = (forwardIndex + 1) * 50; // When accumulator < this, start disappearing
+                    const disappearEnd = forwardIndex * 50; // When accumulator < this, fully hidden
+                    
+                    if (scrollAccumulator >= disappearStart) {
+                        progress = 1; // Fully visible
+                    } else if (scrollAccumulator <= disappearEnd) {
+                        progress = 0; // Fully hidden behind HUD
+                    } else {
+                        // Transitioning from visible to hidden as accumulator decreases
+                        progress = (scrollAccumulator - disappearEnd) / 50;
+                    }
+                } else if (isPhase2) {
+                    // Phase 2 (scrolling DOWN beyond maxScroll): Messages scroll behind Answer Screen button
+                    // reverseIndex=0 (newest, closest to output) scrolls behind button first
+                    // This reveals older messages above
+                    const hideStart = maxScroll + (reverseIndex * 50);
+                    const hideEnd = hideStart + 50;
+                    
+                    if (scrollAccumulator <= hideStart) {
+                        progress = 1; // Still visible
+                    } else if (scrollAccumulator >= hideEnd) {
+                        progress = 0; // Hidden behind button
+                    } else {
+                        progress = 1 - ((scrollAccumulator - hideStart) / 50); // Transitioning 1→0
+                    }
+                } else {
+                    // Phase 1 (scrolling DOWN): Messages appear newest→oldest
+                    // reverseIndex=0 (newest) appears first when accumulator goes 0→50
+                    // reverseIndex=1 appears second when accumulator goes 50→100
+                    const appearStart = reverseIndex * 50;
+                    const appearEnd = appearStart + 50;
+                    
+                    if (scrollAccumulator <= appearStart) {
+                        progress = 0; // Hidden
+                    } else if (scrollAccumulator >= appearEnd) {
+                        progress = 1; // Fully visible
+                    } else {
+                        progress = (scrollAccumulator - appearStart) / 50; // Transitioning 0→1
+                    }
+                }
+                
+                // Always expand message for height calculation
+                msg.style.removeProperty('height');
+                msg.style.removeProperty('min-height');
+                msg.style.height = 'auto';
+                void msg.offsetHeight;
+                
+                // Get message height for smooth sliding animation
+                let msgHeight = cachedMessageHeights.get(msg);
+                if (!msgHeight) {
+                    msgHeight = msg.offsetHeight || msg.scrollHeight || msg.clientHeight || 50;
+                    cachedMessageHeights.set(msg, msgHeight);
+                }
+                
+                // Apply animation
+                // Progress: 0 = hidden above HUD/behind button, 1 = fully visible
+                let translateY = 0;
+                
+                if (isScrollingUp) {
+                    // Scrolling UP: Messages slide UP behind HUD (negative translateY)
+                    // This is the EXACT OPPOSITE of scrolling DOWN Phase 1
+                    // When scrolling DOWN: messages slide DOWN (positive translateY) as they appear
+                    // When scrolling UP: messages slide UP (negative translateY) as they disappear
+                    // Oldest messages (forwardIndex=0) slide up first, exactly like they slid down last
+                    translateY = -(1 - progress) * 30; // Slide up smoothly behind HUD (opposite of Phase 1)
+                } else if (isPhase2) {
+                    // Phase 2: Messages slide DOWN behind Answer Screen button (positive translateY)
+                    translateY = (1 - progress) * (msgHeight + 40); // Slide down smoothly behind button
+                } else {
+                    // Phase 1: Messages slide DOWN into view (positive translateY)
+                    translateY = (1 - progress) * 30; // Small slide down when appearing
+                }
+                
+                msg.style.opacity = progress > 0 ? '1' : '0';
+                msg.style.transform = `translateY(${translateY}px)`;
+                msg.style.pointerEvents = progress > 0 ? 'auto' : 'none';
+                msg.style.transition = 'none';
+                
+                // Count height for visible messages only
+                // When scrolling up, messages slide up visually but maintain layout space until fully hidden
+                // This prevents the appearance of messages "moving to the bottom"
+                if (progress > 0) {
+                    // Only count height for messages that are at least partially visible
+                    // This ensures smooth container height decrease as messages hide
+                    accumulatedHeight += msgHeight * progress;
+                }
+            }
+            
+            targetHeight += accumulatedHeight;
+            // Cap height during Phase 1
+            if (!isPhase2 && !isScrollingUp) {
+                targetHeight = Math.min(targetHeight, 400); // Cap at 400px during Phase 1
+            }
+            
+            // Update container height
+            this.messagesContainer.style.height = `${targetHeight}px`;
+        };
+        
+        // Make updateMessagesFromAccumulator globally accessible for the toggle button
+        window.updateMessagesFromAccumulator = updateMessagesFromAccumulator;
+        
+        this.messagesContainer.addEventListener('wheel', (e) => {
+            // Check if scrolling inside a drag-output element
+            const targetIsOutput = e.target.closest('.drag-output');
+            if (targetIsOutput) {
+                // Allow normal scrolling inside individual chat boxes
+                return;
+            }
+            
+            // Allow normal scrolling - don't prevent default
+            // e.preventDefault(); // Commented out to allow normal scrolling
+            return; // Skip custom scroll handling
+            
+            // Get current messages
+            const previousMessages = Array.from(this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)'));
+            if (previousMessages.length === 0) return;
+            
+            // Store previous accumulator BEFORE updating
+            const prevAccumulator = scrollAccumulator;
+            
+            // Update accumulator directly
+            // e.deltaY: positive = scroll DOWN, negative = scroll UP
+            // Scroll DOWN (deltaY > 0) → increase accumulator → reveal messages
+            // Scroll UP (deltaY < 0) → decrease accumulator → hide messages
+            const maxScroll = previousMessages.length * 50; // 50px per message
+            const maxScrollWithHide = maxScroll * 2; // Allow scrolling beyond max to hide messages behind button
+            const minScroll = -50; // Allow going negative to hide oldest message smoothly
+            
+            // Add deltaY directly (positive deltaY increases accumulator)
+            scrollAccumulator = scrollAccumulator + e.deltaY;
+            scrollAccumulator = Math.max(minScroll, Math.min(scrollAccumulator, maxScrollWithHide));
+            
+            // Update max accumulator reached
+            maxAccumulatorReached = Math.max(maxAccumulatorReached, scrollAccumulator);
+            
+            // Update previousScrollAccumulator BEFORE calling updateMessagesFromAccumulator
+            previousScrollAccumulator = prevAccumulator;
+            
+            // Cancel any pending animation
+            if (wheelRafId !== null) {
+                cancelAnimationFrame(wheelRafId);
+            }
+            
+            // Update messages immediately for smooth, responsive scrolling
+            wheelRafId = requestAnimationFrame(() => {
+                updateMessagesFromAccumulator();
+                wheelRafId = null;
+            });
+        }, { passive: true });
+        
+        // Allow normal scrolling
+        this.messagesContainer.addEventListener('scroll', () => {
+            // Normal scroll behavior - no custom handling
+        }, { passive: true });
+        
+        // Initial visibility update
+        updateMessageVisibility();
+    }
+
+    async humanize() {
+        // Show "coming soon" message
+        this.showNotification('Coming soon', false);
     }
 
     positionFloatingClose() {
         try {
-            if (!this.closeOutputFloating || this.dragOutput.classList.contains('hidden')) return;
-            const overlayRect = this.overlay.getBoundingClientRect();
-            const outRect = this.dragOutput.getBoundingClientRect();
-            const relLeft = (outRect.right - overlayRect.left) - 8; // top-right with 8px offset
-            const relTop = (outRect.top - overlayRect.top) - 8; // top with 8px offset
-            this.closeOutputFloating.style.left = `${relLeft}px`;
-            this.closeOutputFloating.style.top = `${relTop}px`;
-            this.closeOutputFloating.classList.remove('hidden');
-        } catch (_) {}
+            if (!this.closeOutputFloating || !this.dragOutput || this.dragOutput.classList.contains('hidden')) return;
+            
+            // Wait for next frame to ensure element is positioned, then try again after a small delay
+            // Use longer delay if it's a loading notification to ensure container is properly sized
+            const isLoading = this.dragOutput && this.dragOutput.classList.contains('loading-notification');
+            const delay = isLoading ? 200 : 10;
+            
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        try {
+                            if (!this.closeOutputFloating || !this.dragOutput || this.dragOutput.classList.contains('hidden')) return;
+                            
+                            // Get the actual position of drag-output on screen
+                            const dragOutputRect = this.dragOutput.getBoundingClientRect();
+                            const overlayRect = this.overlay.getBoundingClientRect();
+                            
+                            // Ensure we have valid dimensions
+                            if (dragOutputRect.width === 0 || dragOutputRect.height === 0) {
+                                // Retry if element not yet rendered
+                                setTimeout(() => this.positionFloatingClose(), 50);
+                                return;
+                            }
+                            
+                            // For loading notifications, ensure we account for container position
+                            let topPosition;
+                            if (isLoading && this.messagesContainer) {
+                                // Get container's visible top (accounting for scroll)
+                                const containerRect = this.messagesContainer.getBoundingClientRect();
+                                // The drag-output is at the top of the visible container area
+                                topPosition = containerRect.top - overlayRect.top - 8;
+                            } else {
+                                // Normal case: use drag-output's position directly
+                                topPosition = dragOutputRect.top - overlayRect.top - 8;
+                            }
+                            
+                            // Right: overlay width minus (drag-output right edge - overlay left edge), minus 4px to move it more into the corner
+                            const dragOutputRightFromOverlayLeft = dragOutputRect.right - overlayRect.left;
+                            const rightPosition = overlayRect.width - dragOutputRightFromOverlayLeft - 4;
+                            
+                            // Apply the calculated positions
+                            this.closeOutputFloating.style.top = `${topPosition}px`;
+                            this.closeOutputFloating.style.right = `${rightPosition}px`;
+                            this.closeOutputFloating.style.left = 'auto'; // Clear left to use right positioning
+                            this.closeOutputFloating.style.display = 'block'; // Ensure it's visible
+                            this.closeOutputFloating.style.position = 'absolute'; // Ensure absolute positioning
+                            this.closeOutputFloating.classList.remove('hidden');
+                        } catch (error) {
+                            console.error('Error positioning close button:', error);
+                        }
+                    }, delay);
+                });
+            });
+        } catch (error) {
+            console.error('Error in positionFloatingClose:', error);
+        }
     }
 
     hideOverlay() {
@@ -2638,11 +3827,19 @@ User Question: ${question}`;
     }
 
     hideOutput() {
+        if (this.messagesContainer) {
+            this.messagesContainer.classList.add('hidden');
+        }
         if (this.dragOutput) {
             this.dragOutput.classList.add('hidden');
         }
         if (this.closeOutputFloating) {
             this.closeOutputFloating.classList.add('hidden');
+        }
+        // Hide reveal history button
+        if (this.revealHistoryBtn) {
+            this.revealHistoryBtn.classList.add('hidden');
+            this.revealHistoryBtn.classList.remove('rotated');
         }
         // Move answer this button back under HUD
         if (this.answerThisBtn) {
@@ -2658,10 +3855,9 @@ User Question: ${question}`;
         // Mark that we're dragging the output
         this.isDraggingOutput = true;
         
-        // Ensure window is interactive for drag to start (critical on Windows for cross-window drag)
+        // Ensure window is interactive initially for drag to start
         if (this.isElectron) {
             const { ipcRenderer } = require('electron');
-            // Make window fully interactive to allow drag to other windows
             ipcRenderer.invoke('make-interactive');
         }
         
@@ -2681,8 +3877,6 @@ User Question: ${question}`;
         this.dragOutput.style.opacity = '1';
         
         // Check if mouse is still over overlay after drag ends
-        // On Windows, use a longer delay to ensure drag operation completes fully
-        const delay = (this.isElectron && typeof process !== 'undefined' && process.platform === 'win32') ? 200 : 50;
         setTimeout(() => {
             if (!this.isDraggingOutput && !this.isResizing && this.isElectron) {
                 const { ipcRenderer } = require('electron');
@@ -2698,7 +3892,7 @@ User Question: ${question}`;
                     ipcRenderer.invoke('make-interactive');
                 }
             }
-        }, delay);
+        }, 50);
     }
     
     handleResizeStart(e) {
