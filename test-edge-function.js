@@ -20,7 +20,7 @@ async function testEdgeFunction() {
             body: JSON.stringify({
                 provider: 'perplexity',
                 payload: {
-                    model: 'sonar',
+                    model: 'sonar-pro',
                     messages: [
                         { role: 'user', content: 'Say hello in one word' }
                     ]

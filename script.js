@@ -703,23 +703,14 @@ class JarvisOverlay {
             // Attach drag listeners (new elements won't have listeners, so safe to add)
             this.dragOutput.addEventListener('dragstart', (e) => this.handleDragStart(e));
             this.dragOutput.addEventListener('dragend', (e) => this.handleDragEnd(e));
-            // Track drag to enable click-through when outside overlay
+            // Track drag - CRITICAL: Keep window interactive during entire drag operation
+            // Don't switch to click-through while dragging, as it breaks drag-drop on Windows
             this.dragOutput.addEventListener('drag', (e) => {
                 if (this.isDraggingOutput && this.isElectron) {
                     const { ipcRenderer } = require('electron');
-                    // Check if mouse is outside overlay bounds
-                    const overlayRect = this.overlay.getBoundingClientRect();
-                    const mouseX = e.clientX;
-                    const mouseY = e.clientY;
-                    
-                    // If mouse is outside overlay, enable drag-through mode
-                    if (mouseX < overlayRect.left || mouseX > overlayRect.right || 
-                        mouseY < overlayRect.top || mouseY > overlayRect.bottom) {
-                        ipcRenderer.invoke('enable-drag-through');
-                    } else {
-                        // Mouse is still over overlay, keep interactive
-                        ipcRenderer.invoke('make-interactive');
-                    }
+                    // Always keep window interactive during drag - don't switch to click-through
+                    // This is essential for drag-drop to work, especially on Windows
+                    ipcRenderer.invoke('make-interactive');
                 }
             });
         }
@@ -1096,7 +1087,8 @@ class JarvisOverlay {
             }
         } catch (error) {
             console.error('Message processing error:', error);
-            this.showNotification("Sorry, I'm having trouble processing that request right now.");
+            const errorMessage = error.message || "Sorry, I'm having trouble processing that request right now.";
+            this.showNotification(errorMessage);
         }
     }
 
@@ -1171,7 +1163,55 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
             
             if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
+                // Clone the response so we can read it multiple times if needed
+                const responseClone = response.clone();
+                let errorText;
+                try {
+                    errorText = await response.text();
+                    console.error('Raw error response:', errorText);
+                    console.error('Response headers:', Object.fromEntries(response.headers.entries()));
+                    
+                    let errorData;
+                    try {
+                        errorData = JSON.parse(errorText);
+                    } catch (parseErr) {
+                        // Not JSON, use raw text
+                        errorData = { message: errorText, raw: errorText };
+                    }
+                    
+                    console.error('OpenAI API Error:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        error: errorData,
+                        usingProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
+                        proxyUrl: this.apiProxyUrl || 'none'
+                    });
+                    
+                    // If 401 and using proxy, it's likely a Supabase Secrets issue
+                    if (response.status === 401 && this.apiProxyUrl) {
+                        const details = errorData.details || errorData.error?.message || errorData.message || errorText;
+                        throw new Error(`Unauthorized (401): API keys may be missing or invalid in Supabase Secrets. Details: ${details}`);
+                    }
+                    
+                    // Check if it's a Supabase Edge Function error
+                    if (errorData.error || errorData.details) {
+                        const errorMsg = errorData.error?.message || errorData.details || errorData.message || JSON.stringify(errorData);
+                        throw new Error(`API error: ${response.status} - ${errorMsg}`);
+                    }
+                    throw new Error(`API error: ${response.status} - ${errorData.error?.message || errorData.message || errorText}`);
+                } catch (parseError) {
+                    console.error('OpenAI API Error (parse failed):', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        errorText: errorText || 'Unknown',
+                        parseError: parseError.message
+                    });
+                    // If 401 and using proxy, suggest checking Supabase Secrets
+                    if (response.status === 401 && this.apiProxyUrl) {
+                        throw new Error(`Unauthorized (401): Check if API keys are set in Supabase Secrets. Raw error: ${errorText || 'No details'}`);
+                    }
+                    throw new Error(`API error: ${response.status} - ${response.statusText || errorText || 'Unknown error'}`);
+                }
             }
             
             let data = await response.json();
@@ -1450,7 +1490,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        model: 'sonar',
+                        model: 'sonar-pro',
                         messages: [
                             {
                                 role: 'system',
@@ -1466,10 +1506,29 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
             
             if (!perplexityResponse.ok) {
-                const errorData = await perplexityResponse.json().catch(() => ({}));
-                console.error('Perplexity API Error:', errorData);
+                const errorText = await perplexityResponse.text().catch(() => 'Unknown error');
+                console.error('Raw Perplexity error response:', errorText);
+                let errorData;
+                try {
+                    errorData = JSON.parse(errorText);
+                } catch {
+                    errorData = { error: { message: errorText } };
+                }
+                console.error('Perplexity API Error:', {
+                    status: perplexityResponse.status,
+                    statusText: perplexityResponse.statusText,
+                    error: errorData,
+                    usingProxy: !!(this.apiProxyUrl && this.supabaseAnonKey)
+                });
                 this.stopLoadingAnimation();
-                return `Web search failed: ${errorData.error?.message || 'API error'}`;
+                
+                // If 401 and using proxy, suggest checking Supabase Secrets
+                if (perplexityResponse.status === 401 && this.apiProxyUrl) {
+                    return `Web search failed: Unauthorized (401). Check if PPLX_API_KEY is set in Supabase Secrets.`;
+                }
+                
+                const errorMessage = errorData.error?.message || errorData.details || errorData.message || `HTTP ${perplexityResponse.status}: ${perplexityResponse.statusText}`;
+                return `Web search failed: ${errorMessage}`;
             }
             
             const perplexityData = await perplexityResponse.json();
@@ -3963,37 +4022,74 @@ User Question: ${question}`;
         }
         
         const textToDrag = this.dragOutput.dataset.fullText || this.dragOutput.textContent || this.dragOutput.innerText;
+        
+        // Set data in multiple formats for better Windows compatibility
         e.dataTransfer.setData('text/plain', textToDrag);
+        e.dataTransfer.setData('text/html', textToDrag);
+        e.dataTransfer.setData('text/unicode', textToDrag);
         e.dataTransfer.effectAllowed = 'copy';
+        
+        // Windows-specific: Create a drag image for better visual feedback
+        const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+        if (isWindows) {
+            // Create a temporary drag image element
+            const dragImage = document.createElement('div');
+            dragImage.style.position = 'absolute';
+            dragImage.style.top = '-1000px';
+            dragImage.style.padding = '10px';
+            dragImage.style.background = 'rgba(0, 0, 0, 0.8)';
+            dragImage.style.color = 'white';
+            dragImage.style.borderRadius = '8px';
+            dragImage.style.fontSize = '14px';
+            dragImage.style.maxWidth = '300px';
+            dragImage.textContent = textToDrag.substring(0, 50) + (textToDrag.length > 50 ? '...' : '');
+            document.body.appendChild(dragImage);
+            e.dataTransfer.setDragImage(dragImage, 10, 10);
+            setTimeout(() => document.body.removeChild(dragImage), 0);
+        }
         
         // Add visual feedback
         this.dragOutput.style.opacity = '0.7';
     }
 
     handleDragEnd(e) {
-        // Clear drag flag
-        this.isDraggingOutput = false;
-        
-        // Restore opacity
+        // Restore opacity first
         this.dragOutput.style.opacity = '1';
         
-        // Check if mouse is still over overlay after drag ends
+        // On Windows, keep window interactive longer to ensure drag-drop completes
+        // Windows needs more time because drag-drop can take longer to process
+        const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+        const delay = isWindows ? 500 : 100; // Longer delay on Windows
+        
+        // Keep window interactive during the delay to ensure drag-drop completes
+        if (this.isElectron) {
+            const { ipcRenderer } = require('electron');
+            // Ensure window stays interactive during delay
+            ipcRenderer.invoke('make-interactive');
+        }
+        
+        // Clear drag flag after a short delay to ensure drag-drop completes
         setTimeout(() => {
-            if (!this.isDraggingOutput && !this.isResizing && this.isElectron) {
-                const { ipcRenderer } = require('electron');
-                const rect = this.overlay.getBoundingClientRect();
-                const mouseX = e.clientX || 0;
-                const mouseY = e.clientY || 0;
-                // Check if mouse is outside overlay bounds
-                if (mouseX < rect.left || mouseX > rect.right || mouseY < rect.top || mouseY > rect.bottom || mouseX === 0 && mouseY === 0) {
-                    // Mouse is outside, set click-through
-                    ipcRenderer.invoke('make-click-through');
-                } else {
-                    // Mouse is still over overlay, keep interactive
-                    ipcRenderer.invoke('make-interactive');
+            this.isDraggingOutput = false;
+            
+            // Now check if mouse is still over overlay after drag ends
+            setTimeout(() => {
+                if (!this.isDraggingOutput && !this.isResizing && this.isElectron) {
+                    const { ipcRenderer } = require('electron');
+                    const rect = this.overlay.getBoundingClientRect();
+                    const mouseX = e.clientX || 0;
+                    const mouseY = e.clientY || 0;
+                    // Check if mouse is outside overlay bounds
+                    if (mouseX < rect.left || mouseX > rect.right || mouseY < rect.top || mouseY > rect.bottom || mouseX === 0 && mouseY === 0) {
+                        // Mouse is outside, set click-through
+                        ipcRenderer.invoke('make-click-through');
+                    } else {
+                        // Mouse is still over overlay, keep interactive
+                        ipcRenderer.invoke('make-interactive');
+                    }
                 }
-            }
-        }, 50);
+            }, 50);
+        }, delay);
     }
     
     handleResizeStart(e) {

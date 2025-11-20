@@ -280,7 +280,7 @@ class JarvisApp {
             console.log('Onboarding window closed');
             // Only clear reference if we're not transitioning (transition handler will manage it)
             if (!this.isTransitioningOnboarding) {
-                this.onboardingWindow = null;
+            this.onboardingWindow = null;
             }
             // Don't quit if we have a main window or if we're transitioning
             // The onboarding completion handler will manage window transitions
