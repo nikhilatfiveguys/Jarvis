@@ -1,5 +1,5 @@
 
-const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut, systemPreferences, clipboard } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 const { POLAR_CONFIG, PolarClient, LicenseManager } = require('./polar-config');
@@ -810,6 +810,28 @@ class JarvisApp {
             this.mainWindow = null;
         });
 
+        // Windows-specific focus handling: ensure window can receive focus when clicked
+        if (process.platform === 'win32') {
+            // Force focus when window is clicked
+            this.mainWindow.on('focus', () => {
+                // Ensure window stays focusable when it receives focus
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    try {
+                        this.mainWindow.setFocusable(true);
+                    } catch (_) {}
+                }
+            });
+
+            // Handle window blur - on Windows, we need to ensure it can regain focus
+            this.mainWindow.on('blur', () => {
+                // Don't make it unfocusable on blur - allow it to regain focus
+                // The window should remain focusable so user can click to focus it
+            });
+
+            // Ensure window can receive focus when clicked (Windows-specific)
+            // The window will automatically receive focus when clicked if it's focusable
+            // We handle this through the focus event handler above
+        }
 
         // Prevent navigation away from the app
         this.mainWindow.webContents.on('will-navigate', (event) => {
@@ -849,15 +871,54 @@ class JarvisApp {
         ipcMain.handle('make-interactive', () => {
             if (this.mainWindow) {
                 this.mainWindow.setIgnoreMouseEvents(false);
-                try { this.mainWindow.setFocusable(true); this.mainWindow.focus(); } catch (_) {}
+                try { 
+                    this.mainWindow.setFocusable(true);
+                    // On Windows, ensure window can receive focus and stays focusable
+                    if (process.platform === 'win32') {
+                        this.mainWindow.focus();
+                        // Force focus again after a short delay to ensure it sticks
+                        setTimeout(() => {
+                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                this.mainWindow.setFocusable(true);
+                                this.mainWindow.focus();
+                            }
+                        }, 100);
+                    } else {
+                        this.mainWindow.focus();
+                    }
+                } catch (_) {}
             }
+        });
+
+        // Handle focus request from renderer (Windows-specific fix)
+        ipcMain.handle('request-focus', () => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                try {
+                    this.mainWindow.setFocusable(true);
+                    this.mainWindow.focus();
+                    return true;
+                } catch (_) {
+                    return false;
+                }
+            }
+            return false;
         });
 
         // Handle making overlay click-through
         ipcMain.handle('make-click-through', () => {
             if (this.mainWindow) {
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-                try { this.mainWindow.setFocusable(false); } catch (_) {}
+                try { 
+                    // On Windows, keep window focusable but blurred so it can regain focus when clicked
+                    // This prevents the "background process" issue
+                    if (process.platform === 'win32') {
+                        // Don't set focusable to false - keep it focusable so it can regain focus
+                        this.mainWindow.blur();
+                    } else {
+                        // On macOS/Linux, we can safely make it unfocusable
+                        this.mainWindow.setFocusable(false);
+                    }
+                } catch (_) {}
             }
         });
         
@@ -1049,6 +1110,17 @@ class JarvisApp {
                         prioritySupport: false
                     }
                 };
+            }
+        });
+
+        // Handle copying text to clipboard
+        ipcMain.handle('copy-to-clipboard', (event, text) => {
+            try {
+                clipboard.writeText(text);
+                return true;
+            } catch (error) {
+                console.error('Failed to copy to clipboard:', error);
+                return false;
             }
         });
 
@@ -1797,10 +1869,28 @@ class JarvisApp {
             this.mainWindow.setIgnoreMouseEvents(false);
         } catch (_) {}
         
+        // On Windows, ensure window is focusable when showing overlay
+        if (process.platform === 'win32') {
+            try {
+                this.mainWindow.setFocusable(true);
+            } catch (_) {}
+        }
+        
         // Show the window
         this.mainWindow.show();
         this.mainWindow.moveTop();
         this.isOverlayVisible = true;
+        
+        // On Windows, force focus after showing to ensure it can receive input
+        if (process.platform === 'win32') {
+            setTimeout(() => {
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    try {
+                        this.mainWindow.focus();
+                    } catch (_) {}
+                }
+            }, 50);
+        }
         
         // Use the robust fullscreen visibility method
         this.forceFullscreenVisibility();

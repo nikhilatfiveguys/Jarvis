@@ -581,6 +581,15 @@ class JarvisOverlay {
             if (e.key === 'Enter') this.sendMessage();
         });
         
+        // Windows-specific: Request window focus when input field gets focus
+        // This ensures the window can receive keyboard input
+        this.textInput.addEventListener('focus', () => {
+            if (this.isElectron) {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('request-focus').catch(() => {});
+            }
+        });
+        
         
         if (this.answerThisBtn) {
             this.answerThisBtn.addEventListener('click', () => this.answerThis());
@@ -684,6 +693,16 @@ class JarvisOverlay {
                 if (this.isElectron) {
                     const { ipcRenderer } = require('electron');
                     ipcRenderer.invoke('make-click-through');
+                }
+            });
+            
+            // Windows-specific: Request focus when clicking on overlay
+            // This ensures the window can receive keyboard input
+            this.overlay.addEventListener('mousedown', () => {
+                if (this.isElectron) {
+                    const { ipcRenderer } = require('electron');
+                    // Request focus to ensure window can receive input
+                    ipcRenderer.invoke('request-focus').catch(() => {});
                 }
             });
         }
@@ -4023,6 +4042,29 @@ User Question: ${question}`;
         
         const textToDrag = this.dragOutput.dataset.fullText || this.dragOutput.textContent || this.dragOutput.innerText;
         
+        // CRITICAL FIX: Electron windows with special properties can't drag-drop to external apps
+        // Copy to clipboard automatically on Windows as a workaround
+        const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+        if (isWindows && this.isElectron) {
+            const { ipcRenderer } = require('electron');
+            // Copy to clipboard when drag starts (Windows workaround)
+            ipcRenderer.invoke('copy-to-clipboard', textToDrag).then(() => {
+                // Show brief notification that text was copied
+                this.showNotification('✅ Text copied to clipboard - paste it where needed');
+                // Auto-hide after 2 seconds
+                setTimeout(() => {
+                    if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
+                        const content = this.dragOutput.textContent || '';
+                        if (content.includes('copied to clipboard')) {
+                            this.dragOutput.classList.add('hidden');
+                        }
+                    }
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy to clipboard:', err);
+            });
+        }
+        
         // Set data in multiple formats for better Windows compatibility
         e.dataTransfer.setData('text/plain', textToDrag);
         e.dataTransfer.setData('text/html', textToDrag);
@@ -4030,7 +4072,6 @@ User Question: ${question}`;
         e.dataTransfer.effectAllowed = 'copy';
         
         // Windows-specific: Create a drag image for better visual feedback
-        const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
         if (isWindows) {
             // Create a temporary drag image element
             const dragImage = document.createElement('div');
