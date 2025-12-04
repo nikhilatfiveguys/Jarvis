@@ -27,6 +27,9 @@ const PRODUCTION_CONFIG = {
     },
     exa: {
         apiKey: process.env.EXA_API_KEY || 'f95a33de-d38c-42f2-a710-3cda56202fc5'
+    },
+    openrouter: {
+        apiKey: process.env.OPENROUTER_API_KEY || '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'
     }
 };
 

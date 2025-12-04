@@ -2,14 +2,71 @@
 const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut, systemPreferences, clipboard } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
+
+// Handle Squirrel events for macOS auto-updates
+// This MUST be at the very top before anything else
+if (process.platform === 'darwin') {
+    const handleSquirrelEvent = () => {
+        if (process.argv.length === 1) {
+            return false;
+        }
+
+        const squirrelEvent = process.argv[1];
+        switch (squirrelEvent) {
+            case '--squirrel-install':
+            case '--squirrel-updated':
+                // App was installed or updated, quit immediately
+                app.quit();
+                return true;
+            case '--squirrel-uninstall':
+                // App is being uninstalled
+                app.quit();
+                return true;
+            case '--squirrel-obsolete':
+                // App is being replaced by a newer version
+                app.quit();
+                return true;
+        }
+        return false;
+    };
+
+    if (handleSquirrelEvent()) {
+        // Squirrel event handled, app will quit
+        process.exit(0);
+    }
+}
+
+// Delay loading electron-updater until app is ready
+let autoUpdater = null;
+function getAutoUpdater() {
+    if (!autoUpdater) {
+        autoUpdater = require('electron-updater').autoUpdater;
+    }
+    return autoUpdater;
+}
 const { POLAR_CONFIG, PolarClient, LicenseManager } = require('./polar-config');
-// const VoiceRecorder = require('./voice-recorder'); // Voice recording temporarily disabled
+const VoiceRecorder = require('./voice-recorder');
 const SupabaseIntegration = require('./supabase-integration');
 // Legacy Polar support (deprecated - kept for backward compatibility)
 const PolarIntegration = require('./polar-integration');
 const PolarSuccessHandler = require('./polar-success-handler');
 const PolarWebhookHandler = require('./polar-webhook-handler');
+const GoogleDocsIntegration = require('./google-docs-integration');
+const GoogleCalendarIntegration = require('./google-calendar-integration');
+const GmailIntegration = require('./gmail-integration');
 const https = require('https');
+
+// Load native macOS content protection module (if available)
+let nativeContentProtection = null;
+if (process.platform === 'darwin') {
+    try {
+        nativeContentProtection = require('./native/mac-content-protection');
+        console.log('✅ Native content protection module loaded');
+    } catch (error) {
+        console.warn('⚠️ Native content protection module not available:', error.message);
+        console.warn('   Screen recording protection will use Electron\'s built-in API only');
+    }
+}
 
 class JarvisApp {
     constructor() {
@@ -20,6 +77,10 @@ class JarvisApp {
         this.fullscreenMaintenanceInterval = null;
         this.fullscreenEnforcementInterval = null;
         this.isTransitioningOnboarding = false; // Track onboarding window transitions
+        this.screenRecordingCheckInterval = null; // Track screen recording detection
+        this.wasVisibleBeforeRecording = false; // Track if window was visible before recording
+        this.screenshotDetectionSetup = false; // Track screenshot detection setup
+        this.nativeContentProtection = nativeContentProtection; // Store reference to native module
         this.licenseManager = new LicenseManager(new PolarClient(POLAR_CONFIG));
         // Load secure configuration first
         const SecureConfig = require('./config/secure-config');
@@ -36,6 +97,15 @@ class JarvisApp {
         this.polarSuccessHandler = new PolarSuccessHandler(this.polarIntegration, this);
         this.polarWebhookHandler = new PolarWebhookHandler(this.secureConfig, this.polarIntegration, this);
         
+        // Google Docs integration (pass secureConfig so it can read from .env)
+        this.googleDocsIntegration = new GoogleDocsIntegration(this.secureConfig);
+        
+        // Google Calendar integration (pass secureConfig so it can read from .env)
+        this.googleCalendarIntegration = new GoogleCalendarIntegration(this.secureConfig);
+        
+        // Gmail integration (pass secureConfig so it can read from .env)
+        this.gmailIntegration = new GmailIntegration(this.secureConfig);
+        
         // Get API keys from secure configuration
         const exaConfig = this.secureConfig.getExaConfig();
         const openaiConfig = this.secureConfig.getOpenAIConfig();
@@ -43,7 +113,20 @@ class JarvisApp {
         this.exaApiKey = exaConfig.apiKey;
         this.currentDocument = null;
         this.openaiApiKey = openaiConfig.apiKey;
-        // this.voiceRecorder = new VoiceRecorder(this.openaiApiKey); // Voice recording temporarily disabled
+        
+        // Initialize voice recorder only if API key is available
+        if (this.openaiApiKey && this.openaiApiKey.trim() !== '') {
+            // Log partial key for debugging (first 7 chars + ...)
+            const keyPreview = this.openaiApiKey.length > 7 
+                ? `${this.openaiApiKey.substring(0, 7)}...` 
+                : '***';
+            console.log(`✅ Initializing voice recorder with OpenAI API key: ${keyPreview}`);
+            this.voiceRecorder = new VoiceRecorder(this.openaiApiKey);
+        } else {
+            console.warn('⚠️ OpenAI API key not configured. Voice recording will be disabled.');
+            console.warn('   Please set OPENAI_API_KEY in your .env file or environment variables.');
+            this.voiceRecorder = null;
+        }
         this.isVoiceRecording = false;
         const gotLock = app.requestSingleInstanceLock();
         if (!gotLock) {
@@ -61,13 +144,104 @@ class JarvisApp {
         });
 
         this.setupApp();
+        // Auto-updater will be set up after app is ready
+    }
+
+    setupAutoUpdater() {
+        // Configure auto-updater (only call after app is ready)
+        const updater = getAutoUpdater();
+        updater.autoDownload = false; // Don't auto-download, let user choose
+        updater.autoInstallOnAppQuit = true; // Auto-install on quit after download
+        
+        // Enable app to restart after install
+        updater.autoRunAppAfterInstall = true;
+        
+        // Create a custom logger that suppresses notifications
+        updater.logger = {
+            info: (msg) => console.log('[updater]', msg),
+            warn: (msg) => console.warn('[updater]', msg),
+            error: (msg) => console.error('[updater]', msg),
+            debug: (msg) => {} // Suppress debug
+        };
+        
+        // Set update check interval (check every 4 hours)
+        setInterval(() => {
+            getAutoUpdater().checkForUpdates().catch(err => {
+                console.log('Update check failed:', err.message);
+            });
+        }, 4 * 60 * 60 * 1000); // 4 hours
+        
+        // Check for updates on startup (after a delay to not slow down startup)
+        setTimeout(() => {
+            getAutoUpdater().checkForUpdates().catch(err => {
+                console.log('Initial update check failed:', err.message);
+            });
+        }, 5000); // Check 5 seconds after app ready
+        
+        // Handle update events
+        updater.on('checking-for-update', () => {
+            console.log('Checking for updates...');
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-checking');
+            }
+        });
+        
+        updater.on('update-available', (info) => {
+            console.log('Update available:', info.version);
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-available', {
+                    version: info.version,
+                    releaseDate: info.releaseDate,
+                    releaseNotes: info.releaseNotes || 'Bug fixes and improvements'
+                });
+            }
+        });
+        
+        updater.on('update-not-available', (info) => {
+            console.log('Update not available. Current version is latest.');
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-not-available');
+            }
+        });
+        
+        updater.on('error', (err) => {
+            console.error('Error in auto-updater:', err);
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-error', err.message);
+            }
+        });
+        
+        updater.on('download-progress', (progressObj) => {
+            const message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
+            console.log(message);
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-download-progress', {
+                    percent: progressObj.percent,
+                    transferred: progressObj.transferred,
+                    total: progressObj.total,
+                    bytesPerSecond: progressObj.bytesPerSecond
+                });
+            }
+        });
+        
+        updater.on('update-downloaded', (info) => {
+            console.log('Update downloaded:', info.version);
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-downloaded', {
+                    version: info.version,
+                    releaseDate: info.releaseDate,
+                    releaseNotes: info.releaseNotes || 'Bug fixes and improvements'
+                });
+            }
+        });
     }
 
     async setupApp() {
         // Handle app ready
         app.whenReady().then(async () => {
             this.setupAuthHandlers();
-            // this.setupVoiceRecording(); // Voice recording temporarily disabled
+            this.setupVoiceRecording();
+            this.setupAutoUpdater(); // Setup auto-updater after app is ready
             
             // Check if user has active subscription before showing paywall
             const userEmail = this.getUserEmail();
@@ -131,6 +305,11 @@ class JarvisApp {
 
         app.on('before-quit', () => {
             globalShortcut.unregisterAll();
+            // Cleanup screen recording detection
+            if (this.screenRecordingCheckInterval) {
+                clearInterval(this.screenRecordingCheckInterval);
+                this.screenRecordingCheckInterval = null;
+            }
         });
 
         // Handle app activation (macOS)
@@ -165,7 +344,7 @@ class JarvisApp {
 
 
     createPaywallWindow() {
-        this.paywallWindow = new BrowserWindow({
+        const paywallOptions = {
             width: 480,
             height: 600,
             center: true,
@@ -174,12 +353,23 @@ class JarvisApp {
             transparent: true,
             backgroundColor: '#00000000',
             hasShadow: true,
-            titleBarStyle: 'hidden',
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false
             }
-        });
+        };
+        
+        // macOS-only: Prevent screen recording
+        if (process.platform === 'darwin') {
+            paywallOptions.titleBarStyle = 'hidden';
+            paywallOptions.contentProtection = true;
+        }
+        
+        this.paywallWindow = new BrowserWindow(paywallOptions);
+
+        // macOS-only: Enable content protection (check stealth mode preference)
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(this.paywallWindow, stealthEnabled);
 
         this.paywallWindow.loadFile('paywall.html');
         
@@ -260,12 +450,17 @@ class JarvisApp {
             }
         };
         
-        // titleBarStyle is macOS-only, don't set it on Windows
+        // macOS-only: Prevent screen recording
         if (process.platform === 'darwin') {
             windowOptions.titleBarStyle = 'hidden';
+            windowOptions.contentProtection = true;
         }
         
         this.onboardingWindow = new BrowserWindow(windowOptions);
+
+        // macOS-only: Enable content protection (check stealth mode preference)
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(this.onboardingWindow, stealthEnabled);
 
         // Load the appropriate onboarding screen
         if (step === 'features') {
@@ -356,7 +551,7 @@ class JarvisApp {
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
         
-        const accountWindow = new BrowserWindow({
+        const accountOptions = {
             width: 480,
             height: 600,
             x: screenWidth - 480, // Position at right edge
@@ -371,7 +566,18 @@ class JarvisApp {
                 nodeIntegration: true,
                 contextIsolation: false
             }
-        });
+        };
+        
+        // macOS-only: Prevent screen recording
+        if (process.platform === 'darwin') {
+            accountOptions.contentProtection = true;
+        }
+        
+        const accountWindow = new BrowserWindow(accountOptions);
+
+        // macOS-only: Enable content protection (check stealth mode preference)
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(accountWindow, stealthEnabled);
 
         accountWindow.loadFile('account-window.html');
         
@@ -383,8 +589,13 @@ class JarvisApp {
         return accountWindow;
     }
 
-    /* Voice recording temporarily disabled
     setupVoiceRecording() {
+        // Only set up shortcuts if voice recorder is available
+        if (!this.voiceRecorder) {
+            console.warn('⚠️ Voice recording not available - OpenAI API key not configured');
+            return;
+        }
+
         // Set up global shortcuts for voice recording
         const shortcuts = [
             'Command+S',        // Command+S for toggle recording
@@ -415,6 +626,15 @@ class JarvisApp {
     async startVoiceRecording() {
         if (this.isVoiceRecording) return;
         
+        if (!this.voiceRecorder) {
+            const errorMsg = 'Voice recording not available - OpenAI API key not configured';
+            console.error(errorMsg);
+            if (this.mainWindow) {
+                this.mainWindow.webContents.send('voice-recording-error', errorMsg);
+            }
+            return;
+        }
+        
         this.isVoiceRecording = true;
         this.recordingStartTime = Date.now();
         
@@ -430,14 +650,15 @@ class JarvisApp {
             console.error('Failed to start recording:', error);
             this.isVoiceRecording = false;
             if (this.mainWindow) {
-                this.mainWindow.webContents.send('voice-recording-error', error.message);
+                const errorMsg = error.message || 'Failed to start voice recording';
+                this.mainWindow.webContents.send('voice-recording-error', errorMsg);
             }
         }
     }
 
 
     async stopVoiceRecording() {
-        if (!this.isVoiceRecording) return;
+        if (!this.isVoiceRecording || !this.voiceRecorder) return;
         
         this.isVoiceRecording = false;
         
@@ -454,7 +675,16 @@ class JarvisApp {
         } catch (error) {
             console.error('Voice recording error:', error);
             if (this.mainWindow) {
-                this.mainWindow.webContents.send('voice-recording-error', error.message);
+                let errorMsg = error.message || 'Voice recording failed';
+                // Provide more helpful error messages
+                if (error.response?.status === 401) {
+                    errorMsg = 'OpenAI API key is invalid or expired. Please check your OPENAI_API_KEY configuration.';
+                } else if (error.response?.status === 429) {
+                    errorMsg = 'OpenAI API rate limit exceeded. Please try again later.';
+                } else if (error.message?.includes('API key')) {
+                    errorMsg = 'OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables or .env file.';
+                }
+                this.mainWindow.webContents.send('voice-recording-error', errorMsg);
             }
         } finally {
             if (this.mainWindow) {
@@ -462,7 +692,6 @@ class JarvisApp {
             }
         }
     }
-    */
 
 
     setupAuthHandlers() {
@@ -680,7 +909,7 @@ class JarvisApp {
         const { width, height } = primaryDisplay.bounds;
 
         // Create a true overlay window
-        this.mainWindow = new BrowserWindow({
+        const mainWindowOptions = {
             width: width,
             height: height,
             x: 0,
@@ -704,7 +933,28 @@ class JarvisApp {
             show: false, // Don't show until ready
             hasShadow: false,
             thickFrame: false
-        });
+        };
+        
+        // macOS-only: Prevent screen recording
+        if (process.platform === 'darwin') {
+            mainWindowOptions.contentProtection = true;
+        }
+        
+        this.mainWindow = new BrowserWindow(mainWindowOptions);
+
+        // macOS-only: Enable content protection to hide from screen recording (like Cluely)
+        // Check if stealth mode is enabled (default: true)
+        const stealthModeEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(this.mainWindow, stealthModeEnabled);
+        
+        // CRITICAL: Also ensure screenshot detection is set up when window is created
+        // This ensures shortcuts are registered even if stealth mode was enabled before window creation
+        if (stealthModeEnabled) {
+            // Wait a moment for window to be fully ready, then setup screenshot detection
+            setTimeout(() => {
+                this.setupScreenshotDetection();
+            }, 500);
+        }
 
         // Immediately assert fullscreen visibility properties after creation
         try {
@@ -870,9 +1120,40 @@ class JarvisApp {
         // Handle making overlay interactive
         ipcMain.handle('make-interactive', () => {
             if (this.mainWindow) {
-                this.mainWindow.setIgnoreMouseEvents(false);
-                try { 
+                try {
+                    console.log('🔵 [MAIN] make-interactive called');
+                    // CRITICAL: Set ignore mouse events to FALSE first
+                    this.mainWindow.setIgnoreMouseEvents(false);
+                    console.log('🔵 [MAIN] setIgnoreMouseEvents(false) called');
+                    // Then set focusable and focus
                     this.mainWindow.setFocusable(true);
+                    this.mainWindow.focus();
+                    console.log('🔵 [MAIN] Window focused');
+                    
+                    // On macOS, ensure the window can receive clicks
+                    if (process.platform === 'darwin') {
+                        // Force window to front and ensure it's clickable
+                        this.mainWindow.show();
+                        this.mainWindow.focus();
+                        // Sometimes need to call setIgnoreMouseEvents again after show
+                        setTimeout(() => {
+                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                console.log('🔵 [MAIN] Re-applying interactive state after delay');
+                                this.mainWindow.setIgnoreMouseEvents(false);
+                                this.mainWindow.setFocusable(true);
+                                this.mainWindow.focus();
+                                console.log('✅ [MAIN] Window should now be interactive');
+                            }
+                        }, 50);
+                        // Also do it again after a longer delay to ensure it sticks
+                        setTimeout(() => {
+                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                console.log('🔵 [MAIN] Final check - ensuring interactive');
+                                this.mainWindow.setIgnoreMouseEvents(false);
+                                this.mainWindow.setFocusable(true);
+                            }
+                        }, 200);
+                    }
                     // On Windows, ensure window can receive focus and stays focusable
                     if (process.platform === 'win32') {
                         this.mainWindow.focus();
@@ -883,10 +1164,17 @@ class JarvisApp {
                                 this.mainWindow.focus();
                             }
                         }, 100);
-                    } else {
-                        this.mainWindow.focus();
                     }
-                } catch (_) {}
+                    
+                    console.log('✅ [MAIN] make-interactive completed');
+                    return { success: true };
+                } catch (error) {
+                    console.error('❌ [MAIN] Error making window interactive:', error);
+                    return { success: false, error: error.message };
+                }
+            } else {
+                console.error('❌ [MAIN] mainWindow is null');
+                return { success: false, error: 'Main window not available' };
             }
         });
 
@@ -945,6 +1233,14 @@ class JarvisApp {
                     // License will be checked in renderer process
                 }
 
+                // Ensure content protection is enabled so overlay is hidden from screenshots
+                // This makes the overlay invisible to screenshots without actually hiding it visually
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    // Temporarily ensure content protection is enabled for screenshot
+                    // The overlay will stay visible but won't appear in the screenshot
+                    console.log('📸 Ensuring content protection is enabled for screenshot');
+                    this.mainWindow.setContentProtection(true);
+                }
                 
                 // Use Electron's built-in desktopCapturer with proper error handling
                 let sources;
@@ -965,6 +1261,16 @@ class JarvisApp {
                 // Get the first screen source
                 const source = sources[0];
                 const dataUrl = source.thumbnail.toDataURL();
+                
+                // Restore content protection state if we changed it
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    const stealthEnabled = this.getStealthModePreference();
+                    // Only restore if stealth mode is disabled (otherwise keep it protected)
+                    if (!stealthEnabled) {
+                        this.mainWindow.setContentProtection(false);
+                    }
+                }
+                
                 return dataUrl;
                 
             } catch (error) {
@@ -1124,6 +1430,392 @@ class JarvisApp {
             }
         });
 
+        // Handle stealth mode toggle
+        ipcMain.handle('toggle-stealth-mode', async (_event, enabled) => {
+            try {
+                console.log(`🔄 Toggling stealth mode to: ${enabled}`);
+                
+                // Apply to all windows (including future ones)
+                const windows = BrowserWindow.getAllWindows();
+                let protectedCount = 0;
+                windows.forEach(window => {
+                    if (window && !window.isDestroyed()) {
+                        this.setWindowContentProtection(window, enabled);
+                        protectedCount++;
+                    }
+                });
+                
+                // Store preference in file (for persistence across restarts)
+                const fs = require('fs');
+                const path = require('path');
+                const userDataPath = app.getPath('userData');
+                const stealthFile = path.join(userDataPath, 'stealth_mode.json');
+                fs.writeFileSync(stealthFile, JSON.stringify({ enabled: enabled }, null, 2));
+                
+                console.log(`✅ Stealth mode ${enabled ? 'ENABLED' : 'DISABLED'} - Protected ${protectedCount} windows`);
+                console.log(`   Windows will be ${enabled ? 'HIDDEN' : 'VISIBLE'} in screen sharing`);
+                
+                return true;
+            } catch (error) {
+                console.error('❌ Error toggling stealth mode:', error);
+                return false;
+            }
+        });
+
+        // Handle disabling system sounds (for stealth mode)
+        ipcMain.handle('disable-system-sounds', async (_event, disabled) => {
+            try {
+                // On macOS, we can't directly disable system sounds, but we can prevent
+                // our app from triggering them. The CSS in renderer process handles visual feedback.
+                // This handler exists for future cross-platform support.
+                console.log(`🔇 System sounds ${disabled ? 'DISABLED' : 'ENABLED'} for stealth mode`);
+                return true;
+            } catch (error) {
+                console.error('❌ Error disabling system sounds:', error);
+                return false;
+            }
+        });
+
+        // Handle writing content to Google Docs using API
+        ipcMain.handle('write-to-docs', async (_event, text, options = {}) => {
+            try {
+                if (!text || text.trim().length === 0) {
+                    return { success: false, error: 'No text provided' };
+                }
+
+                // Use Google Docs API
+                const result = await this.googleDocsIntegration.writeText(text, options);
+                return result;
+            } catch (error) {
+                console.error('❌ Error writing to Docs:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Handle writing content to Google Docs with realistic typing simulation
+        ipcMain.handle('write-to-docs-realistic', async (_event, text, options = {}) => {
+            try {
+                if (!text || text.trim().length === 0) {
+                    return { success: false, error: 'No text provided' };
+                }
+
+                // Use Google Docs API with realistic typing
+                const result = await this.googleDocsIntegration.writeTextRealistic(text, options);
+                return result;
+            } catch (error) {
+                console.error('❌ Error typing to Docs:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Handle Google Docs authentication
+        ipcMain.handle('google-docs-authenticate', async (_event) => {
+            try {
+                const tokens = await this.googleDocsIntegration.authenticate();
+                return { success: true, authenticated: true, message: 'Successfully authenticated with Google Docs!' };
+            } catch (error) {
+                console.error('❌ Google Docs authentication error:', error);
+                return { success: false, authenticated: false, error: error.message };
+            }
+        });
+
+        // List Google Docs documents
+        ipcMain.handle('list-google-docs', async (_event) => {
+            try {
+                const result = await this.googleDocsIntegration.listDocuments(50);
+                return result;
+            } catch (error) {
+                console.error('❌ Error listing Google Docs:', error);
+                return { success: false, error: error.message, documents: [] };
+            }
+        });
+
+        // Check Google Docs authentication status
+        ipcMain.handle('google-docs-auth-status', async (_event) => {
+            try {
+                const isAuthenticated = this.googleDocsIntegration.isAuthenticated();
+                let email = null;
+                if (isAuthenticated) {
+                    email = await this.googleDocsIntegration.getUserEmail();
+                }
+                return { authenticated: isAuthenticated, email: email };
+            } catch (error) {
+                return { authenticated: false, error: error.message };
+            }
+        });
+
+        // Get Google account email
+        ipcMain.handle('google-account-email', async (_event) => {
+            try {
+                const email = await this.googleDocsIntegration.getUserEmail();
+                return { email: email };
+            } catch (error) {
+                return { email: null, error: error.message };
+            }
+        });
+
+        // Sign out from Google Docs
+        ipcMain.handle('google-docs-sign-out', async (_event) => {
+            try {
+                const success = await this.googleDocsIntegration.signOut();
+                return { success, message: success ? 'Signed out from Google Docs' : 'Failed to sign out' };
+            } catch (error) {
+                console.error('❌ Google Docs sign out error:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Auto-update IPC handlers
+        ipcMain.handle('check-for-updates', async () => {
+            try {
+                const result = await getAutoUpdater().checkForUpdates();
+                // If no update info or version matches current, no update available
+                if (!result || !result.updateInfo) {
+                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        this.mainWindow.webContents.send('update-not-available');
+                    }
+                    return { success: true, updateAvailable: false };
+                }
+                // Check if the available version is newer
+                const currentVersion = app.getVersion();
+                const availableVersion = result.updateInfo.version;
+                if (availableVersion === currentVersion) {
+                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        this.mainWindow.webContents.send('update-not-available');
+                    }
+                    return { success: true, updateAvailable: false };
+                }
+                return { success: true, updateAvailable: true, version: availableVersion };
+            } catch (error) {
+                console.error('Error checking for updates:', error);
+                // If error contains "no published versions", treat as up to date
+                if (error.message && error.message.includes('no published versions')) {
+                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        this.mainWindow.webContents.send('update-not-available');
+                    }
+                    return { success: true, updateAvailable: false };
+                }
+                return { success: false, error: error.message };
+            }
+        });
+
+        ipcMain.handle('download-update', async () => {
+            try {
+                const updater = getAutoUpdater();
+                console.log('📥 [IPC] download-update handler called');
+                console.log('📥 [IPC] autoUpdater state:', {
+                    autoDownload: updater.autoDownload,
+                    autoInstallOnAppQuit: updater.autoInstallOnAppQuit
+                });
+                
+                // First check if update is available
+                console.log('📥 [IPC] Checking for updates first...');
+                const checkResult = await updater.checkForUpdates();
+                console.log('📥 [IPC] Check result:', checkResult);
+                
+                if (!checkResult || !checkResult.updateInfo) {
+                    console.error('❌ [IPC] No update available');
+                    return { success: false, error: 'No update available. Please check for updates first.' };
+                }
+                
+                console.log('📥 [IPC] Update found:', checkResult.updateInfo.version);
+                console.log('📥 [IPC] Starting download...');
+                
+                // Try to download directly - electron-updater should handle the state
+                await updater.downloadUpdate();
+                console.log('✅ [IPC] Download initiated successfully');
+                return { success: true };
+            } catch (error) {
+                console.error('❌ [IPC] Error downloading update:', error);
+                console.error('❌ [IPC] Error stack:', error.stack);
+                return { success: false, error: error.message || 'Unknown error' };
+            }
+        });
+
+        ipcMain.handle('install-update', () => {
+            try {
+                console.log('📦 Installing update...');
+                // Set a flag so we know we're updating
+                app.isQuitting = true;
+                
+                // Use setTimeout to ensure IPC response is sent before quitting
+                setTimeout(() => {
+                    try {
+                        // quitAndInstall params:
+                        // isSilent: false = show any needed prompts
+                        // isForceRunAfter: true = definitely restart the app
+                        getAutoUpdater().quitAndInstall(false, true);
+                    } catch (e) {
+                        console.error('quitAndInstall failed:', e);
+                        // Fallback: manually quit and let Squirrel handle restart
+                        app.quit();
+                    }
+                }, 100);
+                
+                return { success: true };
+            } catch (error) {
+                console.error('Error installing update:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        ipcMain.handle('get-app-version', () => {
+            return app.getVersion();
+        });
+
+        // Google Calendar IPC handlers
+        // Authenticate with Google Calendar
+        ipcMain.handle('google-calendar-authenticate', async (_event) => {
+            try {
+                const tokens = await this.googleCalendarIntegration.authenticate();
+                return { success: true, authenticated: true };
+            } catch (error) {
+                console.error('❌ Google Calendar authentication error:', error);
+                return { success: false, authenticated: false, error: error.message };
+            }
+        });
+
+        // Create calendar event
+        ipcMain.handle('create-calendar-event', async (_event, eventData) => {
+            try {
+                const result = await this.googleCalendarIntegration.createEvent(eventData);
+                return result;
+            } catch (error) {
+                console.error('❌ Error creating calendar event:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Check Google Calendar authentication status
+        ipcMain.handle('google-calendar-auth-status', async (_event) => {
+            try {
+                const isAuthenticated = this.googleCalendarIntegration.isAuthenticated();
+                return { authenticated: isAuthenticated };
+            } catch (error) {
+                return { authenticated: false, error: error.message };
+            }
+        });
+
+        // Sign out from Google Calendar
+        ipcMain.handle('google-calendar-sign-out', async (_event) => {
+            try {
+                const success = await this.googleCalendarIntegration.signOut();
+                return { success, message: success ? 'Signed out from Google Calendar' : 'Failed to sign out' };
+            } catch (error) {
+                console.error('❌ Google Calendar sign out error:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // List upcoming calendar events
+        ipcMain.handle('list-calendar-events', async (_event, maxResults = 10) => {
+            try {
+                const result = await this.googleCalendarIntegration.listUpcomingEvents(maxResults);
+                return result;
+            } catch (error) {
+                console.error('❌ Error listing calendar events:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Gmail IPC handlers
+        // Authenticate with Gmail
+        ipcMain.handle('gmail-authenticate', async (_event) => {
+            try {
+                const tokens = await this.gmailIntegration.authenticate();
+                return { success: true, authenticated: true };
+            } catch (error) {
+                console.error('❌ Gmail authentication error:', error);
+                return { success: false, authenticated: false, error: error.message };
+            }
+        });
+
+        // Check Gmail authentication status
+        ipcMain.handle('gmail-auth-status', async (_event) => {
+            try {
+                const isAuthenticated = this.gmailIntegration.isAuthenticated();
+                return { authenticated: isAuthenticated };
+            } catch (error) {
+                return { authenticated: false, error: error.message };
+            }
+        });
+
+        // Search emails
+        ipcMain.handle('gmail-search', async (_event, query, maxResults = 10) => {
+            try {
+                const result = await this.gmailIntegration.searchEmails(query, maxResults);
+                return result;
+            } catch (error) {
+                console.error('❌ Error searching emails:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Get today's emails
+        ipcMain.handle('gmail-todays-emails', async (_event, maxResults = 20) => {
+            try {
+                const result = await this.gmailIntegration.getTodaysEmails(maxResults);
+                return result;
+            } catch (error) {
+                console.error('❌ Error getting today\'s emails:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Get important emails
+        ipcMain.handle('gmail-important-emails', async (_event, maxResults = 10) => {
+            try {
+                const result = await this.gmailIntegration.getImportantEmails(maxResults);
+                return result;
+            } catch (error) {
+                console.error('❌ Error getting important emails:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Get unread emails
+        ipcMain.handle('gmail-unread-emails', async (_event, maxResults = 20) => {
+            try {
+                const result = await this.gmailIntegration.getUnreadEmails(maxResults);
+                return result;
+            } catch (error) {
+                console.error('❌ Error getting unread emails:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Get recent emails
+        ipcMain.handle('gmail-recent-emails', async (_event, maxResults = 10) => {
+            try {
+                const result = await this.gmailIntegration.getRecentEmails(maxResults);
+                return result;
+            } catch (error) {
+                console.error('❌ Error getting recent emails:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Sign out from Gmail
+        ipcMain.handle('gmail-sign-out', async (_event) => {
+            try {
+                const success = await this.gmailIntegration.signOut();
+                return { success, message: success ? 'Signed out from Gmail' : 'Failed to sign out' };
+            } catch (error) {
+                console.error('❌ Gmail sign out error:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Check Google Drive/Sheets auth status (shares tokens with Docs)
+        ipcMain.handle('google-drive-auth-status', async (_event) => {
+            try {
+                const isAuthenticated = this.googleDocsIntegration.isAuthenticated();
+                return { authenticated: isAuthenticated };
+            } catch (error) {
+                return { authenticated: false, error: error.message };
+            }
+        });
+
         // Handle getting API keys for renderer process
         ipcMain.handle('get-api-keys', () => {
             try {
@@ -1145,6 +1837,11 @@ class JarvisApp {
                 console.log('🔑 Claude API key from env:', process.env.CLAUDE_API_KEY ? `${process.env.CLAUDE_API_KEY.substring(0, 10)}...` : 'NOT FOUND');
                 console.log('🔑 Final Claude key present:', !!claudeKey && claudeKey.trim() !== '');
                 
+                const openrouterConfig = this.secureConfig.getOpenRouterConfig();
+                const openrouterKey = openrouterConfig?.apiKey || '';
+                console.log('🔑 OpenRouter API key from config:', openrouterConfig?.apiKey ? `${openrouterConfig.apiKey.substring(0, 10)}...` : 'NOT FOUND');
+                console.log('🔑 Final OpenRouter key present:', !!openrouterKey && openrouterKey.trim() !== '');
+                
                 console.log('🔗 API Proxy URL:', apiProxyUrl || 'NOT CONFIGURED (will use direct API calls)');
                 
                 return {
@@ -1152,6 +1849,7 @@ class JarvisApp {
                     exa: exaConfig?.apiKey || this.exaApiKey || '',
                     perplexity: perplexityKey,
                     claude: claudeKey,
+                    openrouter: openrouterKey,
                     apiProxyUrl: apiProxyUrl,
                     supabaseAnonKey: supabaseConfig?.anonKey || ''
                 };
@@ -1159,15 +1857,201 @@ class JarvisApp {
                 console.error('Error getting API keys:', error);
                 const perplexityKey = process.env.PPLX_API_KEY || '';
                 const claudeKey = process.env.CLAUDE_API_KEY || '';
+                const openrouterKey = process.env.OPENROUTER_API_KEY || '';
                 console.log('🔑 Fallback Perplexity key present:', !!perplexityKey && perplexityKey.trim() !== '');
                 console.log('🔑 Fallback Claude key present:', !!claudeKey && claudeKey.trim() !== '');
+                console.log('🔑 Fallback OpenRouter key present:', !!openrouterKey && openrouterKey.trim() !== '');
                 return {
                     openai: this.openaiApiKey || '',
                     exa: this.exaApiKey || '',
                     perplexity: perplexityKey,
                     claude: claudeKey,
+                    openrouter: openrouterKey,
                     apiProxyUrl: '',
                     supabaseAnonKey: ''
+                };
+            }
+        });
+
+        // Handle OpenAI API call via main process (to avoid Electron fetch issues)
+        ipcMain.handle('call-openai-api', async (_event, requestPayload) => {
+            try {
+                const supabaseConfig = this.secureConfig.getSupabaseConfig();
+                const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+                const SUPABASE_ANON_KEY = supabaseConfig?.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
+                const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                
+                console.log('🔒 Main process: Calling OpenAI API via Edge Function');
+                console.log('📤 URL:', PROXY_URL);
+                
+                return new Promise((resolve, reject) => {
+                    const parsedUrl = new URL(PROXY_URL);
+                    const postData = JSON.stringify({
+                        provider: 'openai',
+                        endpoint: 'responses',
+                        payload: requestPayload
+                    });
+                    
+                    const options = {
+                        hostname: parsedUrl.hostname,
+                        port: parsedUrl.port || 443,
+                        path: parsedUrl.pathname,
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Content-Length': Buffer.byteLength(postData)
+                        },
+                        rejectUnauthorized: false
+                    };
+                    
+                    const req = https.request(options, (res) => {
+                        let data = '';
+                        res.on('data', (chunk) => { data += chunk; });
+                        res.on('end', () => {
+                            console.log('📥 Main process OpenAI: Response status:', res.statusCode);
+                            if (res.statusCode >= 200 && res.statusCode < 300) {
+                                try {
+                                    const responseData = JSON.parse(data);
+                                    console.log('✅ Main process OpenAI: Successfully parsed response');
+                                    resolve({ ok: true, status: res.statusCode, statusText: res.statusMessage, data: responseData });
+                                } catch (parseError) {
+                                    console.error('❌ Main process OpenAI: Failed to parse response:', parseError);
+                                    resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: `Failed to parse response: ${parseError.message}` } });
+                                }
+                            } else {
+                                console.error('❌ Main process OpenAI: Error response:', res.statusCode);
+                                try {
+                                    const errorData = JSON.parse(data);
+                                    resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: errorData });
+                                } catch {
+                                    resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: data.substring(0, 500) } });
+                                }
+                            }
+                        });
+                    });
+                    req.on('error', (error) => {
+                        console.error('❌ Main process OpenAI: Request error:', error);
+                        resolve({ ok: false, status: 500, statusText: 'Network Error', data: { error: error.message } });
+                    });
+                    req.write(postData);
+                    req.end();
+                });
+            } catch (error) {
+                console.error('❌ Main process OpenAI: API call failed:', error);
+                return { ok: false, status: 500, statusText: 'Internal Error', data: { error: error.message } };
+            }
+        });
+
+        // Handle Perplexity API call via main process (to avoid Electron fetch issues)
+        ipcMain.handle('call-perplexity-api', async (_event, requestPayload) => {
+            try {
+                const supabaseConfig = this.secureConfig.getSupabaseConfig();
+                const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+                const SUPABASE_ANON_KEY = supabaseConfig?.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
+                const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                
+                console.log('🔒 Main process: Calling Perplexity API via Edge Function');
+                console.log('📤 URL:', PROXY_URL);
+                console.log('📤 Payload:', JSON.stringify({ provider: 'perplexity', payload: requestPayload }, null, 2));
+                
+                // Use Node.js https module (more reliable than fetch in older Node versions)
+                return new Promise((resolve, reject) => {
+                    const parsedUrl = new URL(PROXY_URL);
+                    const postData = JSON.stringify({
+                        provider: 'perplexity',
+                        payload: requestPayload
+                    });
+                    
+                    const options = {
+                        hostname: parsedUrl.hostname,
+                        port: parsedUrl.port || 443,
+                        path: parsedUrl.pathname,
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Content-Length': Buffer.byteLength(postData)
+                        },
+                        rejectUnauthorized: false // Allow self-signed certificates (development)
+                    };
+                    
+                    const req = https.request(options, (res) => {
+                        let data = '';
+                        
+                        res.on('data', (chunk) => {
+                            data += chunk;
+                        });
+                        
+                        res.on('end', () => {
+                            console.log('📥 Main process: Response status:', res.statusCode);
+                            console.log('📥 Main process: Response data length:', data.length);
+                            
+                            if (res.statusCode >= 200 && res.statusCode < 300) {
+                                try {
+                                    const responseData = JSON.parse(data);
+                                    console.log('✅ Main process: Successfully parsed response');
+                                    resolve({
+                                        ok: true,
+                                        status: res.statusCode,
+                                        statusText: res.statusMessage,
+                                        data: responseData
+                                    });
+                                } catch (parseError) {
+                                    console.error('❌ Main process: Failed to parse response:', parseError);
+                                    console.error('❌ Main process: Raw response:', data.substring(0, 500));
+                                    resolve({
+                                        ok: false,
+                                        status: res.statusCode,
+                                        statusText: res.statusMessage,
+                                        data: { error: `Failed to parse response: ${parseError.message}`, raw: data.substring(0, 200) }
+                                    });
+                                }
+                            } else {
+                                // Error response
+                                console.error('❌ Main process: Error response:', res.statusCode, data.substring(0, 500));
+                                try {
+                                    const errorData = JSON.parse(data);
+                                    resolve({
+                                        ok: false,
+                                        status: res.statusCode,
+                                        statusText: res.statusMessage,
+                                        data: errorData
+                                    });
+                                } catch {
+                                    resolve({
+                                        ok: false,
+                                        status: res.statusCode,
+                                        statusText: res.statusMessage,
+                                        data: { error: data.substring(0, 500) }
+                                    });
+                                }
+                            }
+                        });
+                    });
+                    
+                    req.on('error', (error) => {
+                        console.error('❌ Main process: Request error:', error);
+                        resolve({
+                            ok: false,
+                            status: 500,
+                            statusText: 'Network Error',
+                            data: { error: error.message }
+                        });
+                    });
+                    
+                    req.write(postData);
+                    req.end();
+                });
+            } catch (error) {
+                console.error('❌ Main process: Perplexity API call failed:', error);
+                return {
+                    ok: false,
+                    status: 500,
+                    statusText: 'Internal Error',
+                    data: { error: error.message }
                 };
             }
         });
@@ -1800,11 +2684,19 @@ class JarvisApp {
             }
             
             this.mainWindow.moveTop();
+            
+            // macOS-only: Reinforce content protection (use stealth mode preference)
+            const stealthEnabled = this.getStealthModePreference();
+            this.setWindowContentProtection(this.mainWindow, stealthEnabled);
+            
             // One reinforcement after a short delay
             setTimeout(() => {
                 if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
                 try { this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) { this.mainWindow.setVisibleOnAllWorkspaces(true); }
                 try { this.mainWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'pop-up-menu'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'floating'); } catch (_) {} } }
+                // Reinforce content protection (use stealth mode preference)
+                const stealthEnabled = this.getStealthModePreference();
+                this.setWindowContentProtection(this.mainWindow, stealthEnabled);
                 this.mainWindow.moveTop();
             }, 150);
         } catch (error) {
@@ -1876,6 +2768,10 @@ class JarvisApp {
             } catch (_) {}
         }
         
+        // macOS-only: Reinforce content protection when showing (use stealth mode preference)
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(this.mainWindow, stealthEnabled);
+
         // Show the window
         this.mainWindow.show();
         this.mainWindow.moveTop();
@@ -1939,6 +2835,10 @@ class JarvisApp {
                 
                 // Bring to front
                 this.mainWindow.moveTop();
+                
+                // macOS-only: Reinforce content protection in enforcement loop (use stealth mode preference)
+                const stealthEnabled = this.getStealthModePreference();
+                this.setWindowContentProtection(this.mainWindow, stealthEnabled);
             } catch (e) {
                 // Ignore errors in enforcement loop
             }
@@ -2083,6 +2983,191 @@ class JarvisApp {
             return null;
         }
     }
+
+    // Helper method to get stealth mode preference
+    getStealthModePreference() {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const userDataPath = app.getPath('userData');
+            const stealthFile = path.join(userDataPath, 'stealth_mode.json');
+            if (fs.existsSync(stealthFile)) {
+                const stealthData = JSON.parse(fs.readFileSync(stealthFile, 'utf8'));
+                const enabled = stealthData.enabled !== false; // Default to true if not explicitly false
+                console.log(`📋 Loaded stealth mode preference: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+                return enabled;
+            } else {
+                // File doesn't exist, default to enabled
+                console.log('📋 No stealth mode preference found, defaulting to ENABLED');
+                return true;
+            }
+        } catch (error) {
+            console.warn('⚠️ Could not read stealth mode preference, defaulting to enabled:', error);
+            return true; // Default to enabled
+        }
+    }
+
+    // Helper method to set content protection on any window (uses native module if available)
+    // Applies ALL 10 stealth methods to make window invisible to screen sharing/recording
+    setWindowContentProtection(window, enable) {
+        if (!window || process.platform !== 'darwin') {
+            console.log(`⚠️ Skipping content protection: window=${!!window}, platform=${process.platform}`);
+            return;
+        }
+        
+        try {
+            console.log(`🔒 Setting COMPREHENSIVE STEALTH MODE to ${enable ? 'ENABLED' : 'DISABLED'} for window`);
+            
+            // Use native module if available (applies ALL 11+ stealth methods)
+            if (this.nativeContentProtection && this.nativeContentProtection.isAvailable()) {
+                console.log('✅ Using native module with ALL 11+ anti-capture methods:');
+                console.log('   1. GPU-exclusive rendering');
+                console.log('   2. Fullscreen exclusive mode behavior');
+                console.log('   3. OS Privacy Restrictions (secure window)');
+                console.log('   4. Overlay window (non-capturable)');
+                console.log('   5. Secure Rendering (NSWindowSharingNone)');
+                console.log('   6. Hardware-accelerated video surface blocking');
+                console.log('   7. Virtual desktops/Spaces isolation');
+                console.log('   8. Sandbox/containerized app behavior');
+                console.log('   9. System-level overlay prevention');
+                console.log('   10. Protected swapchain (GPU-level)');
+                console.log('   11. 🔐 System-Level Secure Input (NEW!)');
+                console.log('       → Makes window appear BLANK/TRANSPARENT');
+                console.log('       → Same as password fields, Touch ID, Keychain');
+                console.log('       → STRONGEST PROTECTION AVAILABLE');
+                
+                // Use comprehensive stealth (applies all methods at once)
+                if (this.nativeContentProtection.applyComprehensiveStealth) {
+                    this.nativeContentProtection.applyComprehensiveStealth(window, enable);
+                } else {
+                    // Fallback to standard method if comprehensive not available
+                    this.nativeContentProtection.setContentProtection(window, enable);
+                }
+                
+                // CRITICAL: Also apply Electron's built-in API as backup
+                // This ensures maximum compatibility
+                try {
+                    window.setContentProtection(enable);
+                    console.log('✅ Also applied Electron built-in content protection as backup');
+                } catch (e) {
+                    console.warn('⚠️ Electron backup content protection failed:', e);
+                }
+            } else {
+                // Fallback to Electron's built-in API (Method 5 only)
+                console.log('⚠️ Using Electron built-in API (native module not available)');
+                console.log('   Only Method 5 (Secure Rendering) will be applied');
+                console.log('   NOTE: This may not hide from screenshots, only screen sharing');
+                window.setContentProtection(enable);
+            }
+            
+            // CRITICAL: For screenshots, we also need to detect and hide the window
+            // setContentProtection works for screen sharing but screenshots may still capture it
+            if (enable) {
+                this.setupScreenshotDetection();
+            } else {
+                this.removeScreenshotDetection();
+            }
+            
+            console.log(`✅ Stealth mode ${enable ? 'ENABLED' : 'DISABLED'} successfully`);
+        } catch (error) {
+            console.error('❌ Failed to set stealth mode:', error);
+            // Try fallback
+            try {
+                window.setContentProtection(enable);
+                if (enable) {
+                    this.setupScreenshotDetection();
+                } else {
+                    this.removeScreenshotDetection();
+                }
+                console.log('✅ Fallback content protection applied');
+            } catch (fallbackError) {
+                console.error('❌ Fallback also failed:', fallbackError);
+            }
+        }
+    }
+
+    // Setup screenshot detection to hide overlay when screenshots are taken
+    setupScreenshotDetection() {
+        if (process.platform !== 'darwin') return;
+        if (this.screenshotDetectionSetup) return; // Already setup
+        
+        this.screenshotDetectionSetup = true;
+        console.log('📸 Setting up screenshot detection for stealth mode');
+        
+        // Monitor for screenshot shortcuts (Cmd+Shift+3, Cmd+Shift+4, Cmd+Shift+5)
+        const screenshotShortcuts = [
+            'CommandOrControl+Shift+3',
+            'CommandOrControl+Shift+4',
+            'CommandOrControl+Shift+5'
+        ];
+        
+        screenshotShortcuts.forEach(shortcut => {
+            try {
+                const registered = globalShortcut.register(shortcut, () => {
+                    console.log(`🥷 Screenshot shortcut detected: ${shortcut}`);
+                    if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.isVisible()) {
+                        // Make opacity change so fast it's imperceptible
+                        // Set opacity to near-zero and restore immediately
+                        this.mainWindow.setOpacity(0.001);
+                        
+                        // Restore opacity almost instantly - screenshot happens in < 10ms
+                        // Use requestAnimationFrame timing for minimal delay
+                        setTimeout(() => {
+                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                if (this.getStealthModePreference()) {
+                                    this.mainWindow.setOpacity(1.0);
+                                }
+                            }
+                        }, 20); // Ultra-fast - 20ms should be imperceptible
+                    }
+                });
+                
+                if (registered) {
+                    console.log(`✅ Registered screenshot shortcut: ${shortcut}`);
+                } else {
+                    console.warn(`⚠️ Failed to register screenshot shortcut: ${shortcut}`);
+                }
+            } catch (error) {
+                console.warn(`⚠️ Could not register screenshot shortcut ${shortcut}:`, error);
+            }
+        });
+        
+        // Also try to detect screenshots by monitoring window focus/blur events
+        // This is a fallback for other screenshot methods
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            this.mainWindow.on('blur', () => {
+                // When window loses focus, it might be a screenshot
+                // Hide briefly as a precaution
+                if (this.getStealthModePreference() && this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.isVisible()) {
+                    // Don't hide on every blur, but we could add logic here if needed
+                }
+            });
+        }
+    }
+
+    // Remove screenshot detection
+    removeScreenshotDetection() {
+        if (!this.screenshotDetectionSetup) return;
+        
+        this.screenshotDetectionSetup = false;
+        console.log('📸 Removing screenshot detection');
+        
+        // Unregister shortcuts
+        const screenshotShortcuts = [
+            'CommandOrControl+Shift+3',
+            'CommandOrControl+Shift+4',
+            'CommandOrControl+Shift+5'
+        ];
+        
+        screenshotShortcuts.forEach(shortcut => {
+            try {
+                globalShortcut.unregister(shortcut);
+            } catch (error) {
+                // Ignore errors
+            }
+        });
+    }
+
 
 
 

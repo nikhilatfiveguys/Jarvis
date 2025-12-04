@@ -13,6 +13,7 @@ An intelligent **macOS-only** overlay assistant powered by AI with voice activat
 - 📸 **Screen Analysis** - Analyze what's on your screen with AI vision
 - ⌨️ **Keyboard Shortcuts** - Quick access with ⌥+Space
 - 🖥️ **Fullscreen Overlay** - Works above all windows, even fullscreen apps
+- 🔒 **Stealth Mode** - Invisible in screen recordings & screen shares (10 anti-capture methods)
 - 🌐 **Web Integration** - Open websites, search, and get summaries
 - 🍎 **App Control** - Launch and control macOS applications
 - 💬 **Text & Voice Input** - Flexible input methods
@@ -147,12 +148,30 @@ Or modify the code to store API keys securely.
 - Screen Recording permission (for screen analysis)
 - Accessibility permissions (for fullscreen overlay support)
 
-## 🔒 Privacy
+## 🔒 Privacy & Stealth Mode
 
+### Privacy
 - All processing happens locally except AI API calls
 - Screen captures are only sent to AI when explicitly requested
 - No data is stored or transmitted without your action
 - API keys remain on your machine
+
+### Stealth Mode (NEW!)
+Jarvis includes **comprehensive stealth mode** that makes it **completely invisible** in screen recordings and screen sharing:
+
+- ✅ Invisible in Zoom, Teams, Meet, OBS, QuickTime, etc.
+- ✅ Works while you see it normally on your screen
+- ✅ Uses 10 different anti-capture techniques
+- ✅ Same technology as password managers & secure apps
+- ✅ Enabled by default
+
+**Quick Start:**
+```bash
+npm run test-stealth    # Verify stealth mode works
+npm start               # Stealth enabled by default
+```
+
+📖 See [STEALTH_MODE_QUICK_START.md](STEALTH_MODE_QUICK_START.md) for details
 
 ## 🤝 Contributing
 

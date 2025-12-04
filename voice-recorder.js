@@ -133,9 +133,19 @@ class VoiceRecorder {
             form.append('language', 'en');
             form.append('response_format', 'json');
 
+            // Validate API key
+            if (!this.apiKey || this.apiKey.trim() === '') {
+                throw new Error('OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables or .env file.');
+            }
+
+            const apiKey = this.apiKey.trim();
+            // Log partial key for debugging
+            const keyPreview = apiKey.length > 7 ? `${apiKey.substring(0, 7)}...` : '***';
+            console.log(`🔊 Transcribing audio with API key: ${keyPreview}`);
+
             const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', form, {
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Authorization': `Bearer ${apiKey}`,
                     ...form.getHeaders()
                 },
                 maxContentLength: Infinity,

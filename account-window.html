@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Account</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -12,240 +15,464 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #1a1a1a;
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a0a0f 0%, #131320 50%, #0d0d15 100%);
             color: #fff;
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             margin: 0;
-            padding: 20px;
+            padding: 24px;
+            overflow-y: auto;
+            min-height: 100vh;
         }
 
-        .license-container {
-            background: #2a2a2a;
-            border-radius: 16px;
-            padding: 32px;
-            text-align: center;
-            max-width: 400px;
+        /* Animated background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.04) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .account-container {
+            position: relative;
+            z-index: 1;
+            max-width: 420px;
             width: 100%;
-            border: 1px solid #333;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 28px;
         }
 
         .logo {
-            width: 48px;
-            height: 48px;
-            margin: 0 auto 20px;
-            background: #007AFF;
-            border-radius: 12px;
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 16px;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            border-radius: 16px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
-            color: white;
-            font-weight: bold;
-        }
-
-        h1 {
-            color: #ffffff;
-            margin-bottom: 8px;
             font-size: 24px;
-            font-weight: 600;
+            color: white;
+            font-weight: 700;
+            box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
+            position: relative;
         }
 
-        .subtitle {
-            color: rgba(255, 255, 255, 0.6);
-            margin-bottom: 32px;
-            font-size: 16px;
+        .logo::after {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.5), rgba(139, 92, 246, 0.5));
+            z-index: -1;
+            filter: blur(8px);
+            opacity: 0.6;
+        }
+
+        /* Card Styles */
+        .card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 24px;
+            margin-bottom: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            margin-bottom: 16px;
         }
 
         /* Premium User Section */
-        .premium-user-section {
-            margin-bottom: 32px;
-        }
-
-        .user-info {
-            background: #333;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
+        .user-info-card {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+            border: 1px solid rgba(99, 102, 241, 0.2);
         }
 
         .user-email {
             color: #ffffff;
-            font-size: 16px;
-            font-weight: 500;
-            margin-bottom: 4px;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 6px;
         }
 
         .next-billing {
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 13px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
         }
 
-        .manage-subscription-btn {
-            background: #333;
-            color: white;
-            border: 1px solid #444;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
+        /* Buttons */
+        .btn {
             width: 100%;
-        }
-
-        .manage-subscription-btn:hover {
-            background: #444;
-        }
-
-        .sign-out-btn {
-            background: #ef4444;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            width: 100%;
-            margin-top: 12px;
-        }
-
-        .sign-out-btn:hover {
-            background: #dc2626;
-        }
-
-
-        /* Free User Section */
-        .free-user-section {
-            margin-bottom: 32px;
-        }
-
-        .features-preview {
-            background: #333;
+            padding: 14px 24px;
             border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            font-family: inherit;
         }
 
-        .features-preview h3 {
-            color: #ffffff;
-            margin-bottom: 16px;
-            font-size: 16px;
-            font-weight: 500;
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
         }
 
-        .features-preview ul {
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.06);
+            color: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: rgba(239, 68, 68, 0.5);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn + .btn {
+            margin-top: 10px;
+        }
+
+        /* Premium Features List */
+        .features-list {
             list-style: none;
             padding: 0;
-            margin: 0;
+            margin: 0 0 20px 0;
         }
 
-        .features-preview li {
+        .features-list li {
             color: rgba(255, 255, 255, 0.8);
             font-size: 14px;
-            margin-bottom: 8px;
-            padding-left: 20px;
-            position: relative;
-        }
-
-        .features-preview li:before {
-            content: "✓";
-            color: #28a745;
-            font-weight: bold;
-            position: absolute;
-            left: 0;
-        }
-
-        .get-premium-btn {
-            background: #28a745;
-            color: white;
-            border: none;
-            padding: 14px 24px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            width: 100%;
-        }
-
-        .get-premium-btn:hover {
-            background: #218838;
-        }
-
-        .sign-in-btn {
-            background: #007AFF;
-            color: white;
-            border: none;
-            padding: 14px 24px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            width: 100%;
-            margin-bottom: 12px;
-            pointer-events: auto !important;
-            z-index: 1000;
-            position: relative;
-        }
-
-        .sign-in-btn:hover {
-            background: #0056b3;
-        }
-
-        /* Keyboard Shortcuts Section */
-        .shortcuts-section {
-            background: #333;
-            border-radius: 12px;
-            padding: 20px;
-        }
-
-        .shortcuts-section h3 {
-            color: #ffffff;
-            margin-bottom: 16px;
-            font-size: 16px;
-            font-weight: 500;
-        }
-
-        .shortcuts-list {
+            padding: 10px 0;
             display: flex;
-            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .features-list li:last-child {
+            border-bottom: none;
+        }
+
+        .features-list li::before {
+            content: "✓";
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%);
+            color: #10b981;
+            font-weight: bold;
+            font-size: 11px;
+            border-radius: 6px;
+        }
+
+        /* Google Services */
+        .service-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            transition: all 0.2s ease;
+        }
+
+        .service-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .service-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.08);
+        }
+
+        .service-info {
+            display: flex;
+            align-items: center;
             gap: 12px;
         }
 
+        .service-icon {
+            font-size: 20px;
+        }
+
+        .service-name {
+            color: rgba(255, 255, 255, 0.95);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .service-status {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .service-status.connected {
+            color: #10b981;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .service-status.disconnected {
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .service-reconnect-btn {
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            background: rgba(99, 102, 241, 0.1);
+            color: #a5b4fc;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .service-reconnect-btn:hover {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: rgba(99, 102, 241, 0.5);
+            transform: translateY(-1px);
+        }
+
+        /* Keyboard Shortcuts */
         .shortcut-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px;
-            background: #2a2a2a;
-            border-radius: 8px;
-            transition: background 0.2s ease;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .shortcut-item:hover {
-            background: #333;
+        .shortcut-item:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
         }
 
         .shortcut-key {
-            background: #444;
+            background: rgba(255, 255, 255, 0.08);
             color: rgba(255, 255, 255, 0.9);
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 6px 10px;
+            border-radius: 8px;
             font-weight: 500;
             font-size: 12px;
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .shortcut-desc {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+        }
+
+        /* Google Connect Button */
+        .google-connect-btn {
+            background: linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc05 100%);
+            background-size: 200% 200%;
+            animation: googleGradient 3s ease infinite;
+        }
+
+        @keyframes googleGradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .google-account-email {
             color: rgba(255, 255, 255, 0.7);
+            font-size: 13px;
+            margin-bottom: 16px;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .google-services-individual {
+            margin-bottom: 16px;
+        }
+
+        /* Sign-in Modal */
+        .sign-in-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .sign-in-modal.active {
+            display: flex;
+        }
+
+        .sign-in-modal-content {
+            background: linear-gradient(135deg, rgba(20, 20, 30, 0.95) 0%, rgba(15, 15, 25, 0.95) 100%);
+            border-radius: 20px;
+            padding: 32px;
+            max-width: 400px;
+            width: 90%;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+        }
+
+        .sign-in-modal-content h2 {
+            color: #fff;
+            margin-bottom: 24px;
+            font-size: 22px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .sign-in-modal-content input {
+            width: 100%;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
             font-size: 14px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .sign-in-modal-content input:focus {
+            outline: none;
+            border-color: rgba(99, 102, 241, 0.5);
+            background: rgba(99, 102, 241, 0.05);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .sign-in-modal-content input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .sign-in-modal-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .sign-in-modal-btn {
+            flex: 1;
+            padding: 14px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .sign-in-modal-btn.primary {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+        }
+
+        .sign-in-modal-btn.primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+        }
+
+        .sign-in-modal-btn.secondary {
+            background: rgba(255, 255, 255, 0.06);
+            color: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sign-in-modal-btn.secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .sign-in-modal-error {
+            color: #f87171;
+            font-size: 13px;
+            margin-top: -8px;
+            margin-bottom: 16px;
+            display: none;
+            padding: 10px 14px;
+            background: rgba(239, 68, 68, 0.1);
+            border-radius: 8px;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .sign-in-modal-error.active {
+            display: block;
         }
 
         .hidden {
@@ -257,169 +484,103 @@
             pointer-events: none;
         }
 
-        /* Sign-in Modal */
-        .sign-in-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(10px);
-            z-index: 10000;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .sign-in-modal.active {
-            display: flex;
-        }
-
-        .sign-in-modal-content {
-            background: #2a2a2a;
-            border-radius: 12px;
-            padding: 32px;
-            max-width: 400px;
-            width: 90%;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-        }
-
-        .sign-in-modal-content h2 {
-            color: #fff;
-            margin-bottom: 20px;
-            font-size: 20px;
-            font-weight: 600;
-        }
-
-        .sign-in-modal-content input {
-            width: 100%;
-            padding: 12px;
-            background: #1a1a1a;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 8px;
-            color: #fff;
-            font-size: 14px;
-            margin-bottom: 16px;
-            box-sizing: border-box;
-        }
-
-        .sign-in-modal-content input:focus {
-            outline: none;
-            border-color: #007AFF;
-        }
-
-        .sign-in-modal-content input::placeholder {
-            color: rgba(255, 255, 255, 0.5);
-        }
-
-        .sign-in-modal-buttons {
-            display: flex;
-            gap: 12px;
-        }
-
-        .sign-in-modal-btn {
-            flex: 1;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s ease;
-        }
-
-        .sign-in-modal-btn.primary {
-            background: #007AFF;
-            color: white;
-        }
-
-        .sign-in-modal-btn.primary:hover {
-            background: #0056b3;
-        }
-
-        .sign-in-modal-btn.secondary {
-            background: #444;
-            color: white;
-        }
-
-        .sign-in-modal-btn.secondary:hover {
-            background: #555;
-        }
-
-        .sign-in-modal-error {
-            color: #ef4444;
-            font-size: 12px;
-            margin-top: 8px;
-            display: none;
-        }
-
-        .sign-in-modal-error.active {
-            display: block;
+        /* Divider */
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            margin: 20px 0;
         }
 
         @media (max-width: 480px) {
-            .license-container {
-                padding: 24px;
-                margin: 10px;
+            body {
+                padding: 16px;
             }
 
-            h1 {
-                font-size: 20px;
-            }
-
-            .subtitle {
-                font-size: 14px;
+            .card {
+                padding: 20px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="license-container">
-        <div class="logo">J</div>
+    <div class="account-container">
+        <div class="header">
+            <div class="logo">J</div>
+        </div>
 
         <!-- Premium User Section (shown when subscribed) -->
         <div id="premium-user-section" class="premium-user-section" style="display: none;">
-            <div class="user-info">
-                <div class="user-email" id="user-email-display">theonlygoated@gmail.com</div>
-                <div class="next-billing" id="next-billing-display">Next billing: November 22, 2025</div>
+            <div class="card user-info-card">
+                <div class="user-email" id="user-email-display">user@email.com</div>
+                <div class="next-billing" id="next-billing-display">Next billing: —</div>
             </div>
-            <button id="manage-subscription-btn" class="manage-subscription-btn">Manage Subscription</button>
-            <button id="sign-out-btn" class="sign-out-btn">Sign Out</button>
+            <button id="manage-subscription-btn" class="btn btn-secondary">Manage Subscription</button>
+            <button id="sign-out-btn" class="btn btn-danger">Sign Out</button>
         </div>
 
-                <!-- Free User Section (shown when not subscribed) -->
-                <div id="free-user-section" class="free-user-section">
-                    <div class="features-preview">
-                        <h3>Premium Features</h3>
-                        <ul>
-                            <li>✓ Unlimited AI responses</li>
-                            <li>✓ Screenshot analysis</li>
-                            <li>✓ Voice activation</li>
-                            <li>✓ Advanced features</li>
-                        </ul>
+        <!-- Free User Section (shown when not subscribed) -->
+        <div id="free-user-section" class="free-user-section">
+            <div class="card">
+                <div class="card-title">Premium Features</div>
+                <ul class="features-list">
+                    <li>Unlimited AI responses</li>
+                    <li>Screenshot analysis</li>
+                    <li>Voice activation</li>
+                    <li>Advanced AI models</li>
+                </ul>
+                <button id="sign-in-btn" class="btn btn-primary" onclick="window.handleSignIn && window.handleSignIn(); return false;">Sign In</button>
+                <button id="get-premium-btn" class="btn btn-success">Get Premium</button>
+            </div>
+        </div>
+
+        <!-- Google Services Section -->
+        <div class="card">
+            <div class="card-title">Google Services</div>
+            <div id="google-account-email" class="google-account-email" style="display: none;"></div>
+            <div id="google-services-individual" class="google-services-individual" style="display: none;">
+                <div class="service-item">
+                    <div class="service-info">
+                        <span class="service-icon">📄</span>
+                        <span class="service-name">Google Docs</span>
                     </div>
-                    <button id="sign-in-btn" class="sign-in-btn" onclick="window.handleSignIn && window.handleSignIn(); return false;">Sign In</button>
-                    <button id="get-premium-btn" class="get-premium-btn">Get Premium</button>
+                    <span id="docs-status" class="service-status"></span>
+                    <button id="docs-reconnect-btn" class="service-reconnect-btn hidden">Reconnect</button>
                 </div>
+                <div class="service-item">
+                    <div class="service-info">
+                        <span class="service-icon">📧</span>
+                        <span class="service-name">Gmail</span>
+                    </div>
+                    <span id="gmail-status" class="service-status"></span>
+                    <button id="gmail-reconnect-btn" class="service-reconnect-btn hidden">Reconnect</button>
+                </div>
+                <div class="service-item">
+                    <div class="service-info">
+                        <span class="service-icon">📅</span>
+                        <span class="service-name">Calendar</span>
+                    </div>
+                    <span id="calendar-status" class="service-status"></span>
+                    <button id="calendar-reconnect-btn" class="service-reconnect-btn hidden">Reconnect</button>
+                </div>
+            </div>
+            <button id="google-connect-all-btn" class="btn btn-primary google-connect-btn">Connect Google Account</button>
+            <button id="google-disconnect-all-btn" class="btn btn-secondary hidden">Disconnect Google Account</button>
+        </div>
 
         <!-- Keyboard Shortcuts Section -->
-        <div class="shortcuts-section">
-            <h3>Keyboard Shortcuts</h3>
-            <div class="shortcuts-list">
-                <div class="shortcut-item">
-                    <span class="shortcut-key">Option + Space</span>
-                    <span class="shortcut-desc">Toggle Jarvis overlay on/off</span>
-                </div>
-                <div class="shortcut-item">
-                    <span class="shortcut-key">Double-click 6 dots</span>
-                    <span class="shortcut-desc">Move Jarvis to top of screen</span>
-                </div>
-                <div class="shortcut-item">
-                    <span class="shortcut-key">Answer Screen button</span>
-                    <span class="shortcut-desc">Answer question on your screen</span>
-                </div>
+        <div class="card">
+            <div class="card-title">Keyboard Shortcuts</div>
+            <div class="shortcut-item">
+                <span class="shortcut-desc">Toggle Jarvis</span>
+                <span class="shortcut-key">⌥ Space</span>
+            </div>
+            <div class="shortcut-item">
+                <span class="shortcut-desc">Move to top</span>
+                <span class="shortcut-key">Double-click ⋮⋮</span>
+            </div>
+            <div class="shortcut-item">
+                <span class="shortcut-desc">Answer screen</span>
+                <span class="shortcut-key">📷 Button</span>
             </div>
         </div>
 
@@ -430,13 +591,12 @@
         </div>
         <div id="payment-section" class="payment-section" style="display: none;"></div>
         <div id="license-info" class="license-info" style="display: none;"></div>
-        <div class="features-list" style="display: none;"></div>
 
         <!-- Sign-in Modal -->
         <div id="sign-in-modal" class="sign-in-modal">
             <div class="sign-in-modal-content">
-                <h2>Sign In</h2>
-                <input type="email" id="sign-in-email-input" placeholder="Enter your email address" autocomplete="email">
+                <h2>Welcome Back</h2>
+                <input type="email" id="sign-in-email-input" placeholder="Enter your email" autocomplete="email">
                 <div id="sign-in-modal-error" class="sign-in-modal-error"></div>
                 <div class="sign-in-modal-buttons">
                     <button class="sign-in-modal-btn secondary" id="sign-in-modal-cancel">Cancel</button>
@@ -491,7 +651,6 @@
             const emailInput = document.getElementById('sign-in-email-input');
             const errorDiv = document.getElementById('sign-in-modal-error');
             const submitBtn = document.getElementById('sign-in-modal-submit');
-            const signInBtn = document.getElementById('sign-in-btn');
             
             if (!emailInput) {
                 console.error('Email input not found');
@@ -524,8 +683,6 @@
                 if (result.success) {
                     if (result.hasSubscription) {
                         hideSignInModal();
-                        alert('Signed in successfully! Welcome back.');
-                        // Re-check subscription status to update UI
                         await checkSubscriptionStatus();
                     } else {
                         errorDiv.textContent = 'No active subscription found for this email';
@@ -541,7 +698,7 @@
                 }
             } catch (error) {
                 console.error('❌ Sign-in error:', error);
-                errorDiv.textContent = 'An error occurred. Please try again: ' + error.message;
+                errorDiv.textContent = 'An error occurred. Please try again.';
                 errorDiv.classList.add('active');
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Sign In';
@@ -555,10 +712,7 @@
         });
 
         // Also run immediately if DOM is already loaded
-        if (document.readyState === 'loading') {
-            // DOM hasn't finished loading yet, wait for DOMContentLoaded
-        } else {
-            // DOM is already loaded
+        if (document.readyState !== 'loading') {
             console.log('✅ Account window DOM already loaded');
             initializeAccountWindow();
         }
@@ -566,38 +720,21 @@
         function initializeAccountWindow() {
             setupEventListeners();
             checkSubscriptionStatus();
+            setupGoogleServices();
+            updateGoogleServicesStatus();
         }
 
         function setupEventListeners() {
             // Sign In Button (for free users)
             const signInBtn = document.getElementById('sign-in-btn');
             if (signInBtn) {
-                console.log('✅ Sign-in button found');
-                
-                // Ensure onclick attribute is set (inline onclick should work)
-                if (!signInBtn.getAttribute('onclick')) {
-                    signInBtn.setAttribute('onclick', 'window.handleSignIn && window.handleSignIn(); return false;');
-                    console.log('✅ Added onclick attribute to button');
-                }
-                
-                // Attach event listener as well
                 signInBtn.addEventListener('click', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    console.log('🔐 Sign-in button clicked via addEventListener!');
                     if (window.handleSignIn) {
                         window.handleSignIn();
-                    } else {
-                        console.error('❌ window.handleSignIn is not defined!');
-                        alert('Sign-in function not available. Please refresh the window.');
                     }
                 });
-                
-                console.log('✅ Event listeners attached to sign-in button');
-                console.log('✅ Button onclick:', signInBtn.onclick);
-                console.log('✅ window.handleSignIn type:', typeof window.handleSignIn);
-            } else {
-                console.warn('⚠️ Sign-in button not found in DOM');
             }
 
             // Sign-in modal handlers
@@ -625,16 +762,13 @@
             const getPremiumBtn = document.getElementById('get-premium-btn');
             if (getPremiumBtn) {
                 getPremiumBtn.addEventListener('click', async () => {
-                    console.log('🎯 GET PREMIUM BUTTON CLICKED!');
                     try {
                         getPremiumBtn.disabled = true;
                         getPremiumBtn.textContent = 'Processing...';
                         
                         const result = await ipcRenderer.invoke('create-checkout-session');
                         
-                        if (result.success) {
-                            console.log('✅ Checkout session created successfully');
-                        } else {
+                        if (!result.success) {
                             console.error('❌ Error creating checkout session:', result.error);
                             getPremiumBtn.textContent = 'Try Again';
                         }
@@ -658,13 +792,9 @@
                         manageSubscriptionBtn.disabled = true;
                         manageSubscriptionBtn.textContent = 'Opening...';
                         
-                        // Open Polar customer portal for subscription management
                         const result = await ipcRenderer.invoke('cancel-subscription');
                         
-                        if (result.success) {
-                            console.log('✅ Opened Polar customer portal');
-                            // Note: We don't update UI here since user needs to manage subscription on Polar
-                        } else {
+                        if (!result.success) {
                             console.error('❌ Error opening Polar portal:', result.error);
                         }
                     } catch (error) {
@@ -684,22 +814,15 @@
                         signOutBtn.disabled = true;
                         signOutBtn.textContent = 'Signing out...';
                         
-                        // Sign out user
                         const result = await ipcRenderer.invoke('sign-out-user');
                         
                         if (result.success) {
-                            console.log('✅ Signed out successfully');
-                            // Update UI to show free user section
                             updateUI('free');
-                            // Show message
-                            alert('Signed out successfully. You can sign in again anytime.');
                         } else {
                             console.error('❌ Error signing out:', result.error);
-                            alert('Error signing out. Please try again.');
                         }
                     } catch (error) {
                         console.error('Error signing out:', error);
-                        alert('Error signing out. Please try again.');
                     } finally {
                         signOutBtn.disabled = false;
                         signOutBtn.textContent = 'Sign Out';
@@ -711,9 +834,7 @@
         // Check subscription status on load
         async function checkSubscriptionStatus() {
             try {
-                console.log('Checking subscription status...');
                 const result = await ipcRenderer.invoke('check-subscription-status');
-                console.log('Subscription status result:', result);
                 
                 if (result && result.hasActiveSubscription && result.subscriptionData) {
                     updateUI('premium', result.subscriptionData);
@@ -732,42 +853,237 @@
             const freeSection = document.getElementById('free-user-section');
             
             if (status === 'premium' && subscriptionData) {
-                // Show premium user section
                 premiumSection.style.display = 'block';
                 freeSection.style.display = 'none';
                 
-                // Update user info
                 document.getElementById('user-email-display').textContent = subscriptionData.email;
                 document.getElementById('next-billing-display').textContent = `Next billing: ${subscriptionData.nextBilling}`;
                 
-                // Hide all other sections
                 document.getElementById('payment-section').style.display = 'none';
                 document.getElementById('subscription-status').style.display = 'none';
                 document.getElementById('license-info').style.display = 'none';
             } else {
-                // Show free user section
                 premiumSection.style.display = 'none';
                 freeSection.style.display = 'block';
                 
-                // Hide all other sections
                 document.getElementById('payment-section').style.display = 'none';
                 document.getElementById('subscription-status').style.display = 'none';
                 document.getElementById('license-info').style.display = 'none';
             }
             
-            // Re-attach event listeners after UI update (in case buttons were recreated)
             setTimeout(() => {
                 setupEventListeners();
             }, 100);
         }
 
-                // Listen for subscription status changes
-                ipcRenderer.on('subscription-status-changed', async (event, data) => {
-                    console.log('🔄 Subscription status changed:', data);
-                    // Re-check subscription status to get latest data
-                    await checkSubscriptionStatus();
+        function setupGoogleServices() {
+            // Individual service reconnect buttons
+            const docsReconnectBtn = document.getElementById('docs-reconnect-btn');
+            if (docsReconnectBtn) {
+                docsReconnectBtn.addEventListener('click', async () => {
+                    try {
+                        docsReconnectBtn.textContent = 'Connecting...';
+                        docsReconnectBtn.disabled = true;
+                        const result = await ipcRenderer.invoke('google-docs-authenticate');
+                        await updateGoogleServicesStatus();
+                    } catch (error) {
+                        await updateGoogleServicesStatus();
+                    } finally {
+                        docsReconnectBtn.disabled = false;
+                    }
                 });
+            }
 
+            const gmailReconnectBtn = document.getElementById('gmail-reconnect-btn');
+            if (gmailReconnectBtn) {
+                gmailReconnectBtn.addEventListener('click', async () => {
+                    try {
+                        gmailReconnectBtn.textContent = 'Connecting...';
+                        gmailReconnectBtn.disabled = true;
+                        const result = await ipcRenderer.invoke('gmail-authenticate');
+                        await updateGoogleServicesStatus();
+                    } catch (error) {
+                        await updateGoogleServicesStatus();
+                    } finally {
+                        gmailReconnectBtn.disabled = false;
+                    }
+                });
+            }
+
+            const calendarReconnectBtn = document.getElementById('calendar-reconnect-btn');
+            if (calendarReconnectBtn) {
+                calendarReconnectBtn.addEventListener('click', async () => {
+                    try {
+                        calendarReconnectBtn.textContent = 'Connecting...';
+                        calendarReconnectBtn.disabled = true;
+                        const result = await ipcRenderer.invoke('google-calendar-authenticate');
+                        await updateGoogleServicesStatus();
+                    } catch (error) {
+                        await updateGoogleServicesStatus();
+                    } finally {
+                        calendarReconnectBtn.disabled = false;
+                    }
+                });
+            }
+
+            // Connect all Google services button
+            const connectAllBtn = document.getElementById('google-connect-all-btn');
+            if (connectAllBtn) {
+                connectAllBtn.addEventListener('click', async () => {
+                    try {
+                        connectAllBtn.textContent = 'Connecting...';
+                        connectAllBtn.disabled = true;
+                        
+                        await ipcRenderer.invoke('google-docs-authenticate');
+                        await ipcRenderer.invoke('gmail-authenticate');
+                        await ipcRenderer.invoke('google-calendar-authenticate');
+                        await updateGoogleServicesStatus();
+                    } catch (error) {
+                        await updateGoogleServicesStatus();
+                    } finally {
+                        connectAllBtn.disabled = false;
+                        connectAllBtn.textContent = 'Connect Google Account';
+                    }
+                });
+            }
+
+            // Disconnect all Google services button
+            const disconnectAllBtn = document.getElementById('google-disconnect-all-btn');
+            if (disconnectAllBtn) {
+                disconnectAllBtn.addEventListener('click', async () => {
+                    try {
+                        disconnectAllBtn.textContent = 'Disconnecting...';
+                        disconnectAllBtn.disabled = true;
+                        
+                        await ipcRenderer.invoke('google-docs-sign-out');
+                        await ipcRenderer.invoke('gmail-sign-out');
+                        await ipcRenderer.invoke('google-calendar-sign-out');
+                        await updateGoogleServicesStatus();
+                    } catch (error) {
+                        await updateGoogleServicesStatus();
+                    } finally {
+                        disconnectAllBtn.disabled = false;
+                        disconnectAllBtn.textContent = 'Disconnect Google Account';
+                    }
+                });
+            }
+        }
+
+        async function updateGoogleServicesStatus() {
+            try {
+                const docsStatus = await ipcRenderer.invoke('google-docs-auth-status');
+                const driveStatus = await ipcRenderer.invoke('google-drive-auth-status');
+                const gmailStatus = await ipcRenderer.invoke('gmail-auth-status');
+                const calendarStatus = await ipcRenderer.invoke('google-calendar-auth-status');
+
+                const connectedServices = [];
+                if (docsStatus.authenticated) connectedServices.push('docs');
+                if (gmailStatus.authenticated) connectedServices.push('gmail');
+                if (calendarStatus.authenticated) connectedServices.push('calendar');
+
+                const connectAllBtn = document.getElementById('google-connect-all-btn');
+                const disconnectAllBtn = document.getElementById('google-disconnect-all-btn');
+                const accountEmail = document.getElementById('google-account-email');
+                const individualServices = document.getElementById('google-services-individual');
+
+                // Update individual service statuses
+                const docsStatusEl = document.getElementById('docs-status');
+                const docsReconnectBtn = document.getElementById('docs-reconnect-btn');
+                const gmailStatusEl = document.getElementById('gmail-status');
+                const gmailReconnectBtn = document.getElementById('gmail-reconnect-btn');
+                const calendarStatusEl = document.getElementById('calendar-status');
+                const calendarReconnectBtn = document.getElementById('calendar-reconnect-btn');
+
+                if (individualServices) {
+                    individualServices.style.display = 'block';
+                }
+
+                // Update Docs status
+                if (docsStatusEl) {
+                    if (docsStatus.authenticated) {
+                        docsStatusEl.textContent = 'Connected';
+                        docsStatusEl.className = 'service-status connected';
+                        if (docsReconnectBtn) {
+                            docsReconnectBtn.classList.add('hidden');
+                            docsReconnectBtn.style.display = 'none';
+                        }
+                    } else {
+                        docsStatusEl.textContent = 'Disconnected';
+                        docsStatusEl.className = 'service-status disconnected';
+                        if (docsReconnectBtn) {
+                            docsReconnectBtn.classList.remove('hidden');
+                            docsReconnectBtn.style.display = 'inline-block';
+                            docsReconnectBtn.textContent = 'Connect';
+                        }
+                    }
+                }
+
+                // Update Gmail status
+                if (gmailStatusEl) {
+                    if (gmailStatus.authenticated) {
+                        gmailStatusEl.textContent = 'Connected';
+                        gmailStatusEl.className = 'service-status connected';
+                        if (gmailReconnectBtn) gmailReconnectBtn.style.display = 'none';
+                    } else {
+                        gmailStatusEl.textContent = 'Disconnected';
+                        gmailStatusEl.className = 'service-status disconnected';
+                        if (gmailReconnectBtn) {
+                            gmailReconnectBtn.style.display = 'block';
+                            gmailReconnectBtn.textContent = 'Connect';
+                        }
+                    }
+                }
+
+                // Update Calendar status
+                if (calendarStatusEl) {
+                    if (calendarStatus.authenticated) {
+                        calendarStatusEl.textContent = 'Connected';
+                        calendarStatusEl.className = 'service-status connected';
+                        if (calendarReconnectBtn) calendarReconnectBtn.style.display = 'none';
+                    } else {
+                        calendarStatusEl.textContent = 'Disconnected';
+                        calendarStatusEl.className = 'service-status disconnected';
+                        if (calendarReconnectBtn) {
+                            calendarReconnectBtn.style.display = 'block';
+                            calendarReconnectBtn.textContent = 'Connect';
+                        }
+                    }
+                }
+
+                // Get and display email if any service is connected
+                if (docsStatus.authenticated && docsStatus.email) {
+                    if (accountEmail) {
+                        accountEmail.textContent = docsStatus.email;
+                        accountEmail.style.display = 'block';
+                    }
+                } else {
+                    if (accountEmail) accountEmail.style.display = 'none';
+                }
+
+                // Toggle connect/disconnect buttons
+                if (connectedServices.length > 0) {
+                    if (connectAllBtn) connectAllBtn.style.display = 'none';
+                    if (disconnectAllBtn) {
+                        disconnectAllBtn.classList.remove('hidden');
+                        disconnectAllBtn.style.display = 'block';
+                    }
+                } else {
+                    if (accountEmail) accountEmail.style.display = 'none';
+                    if (connectAllBtn) {
+                        connectAllBtn.classList.remove('hidden');
+                        connectAllBtn.style.display = 'block';
+                    }
+                    if (disconnectAllBtn) disconnectAllBtn.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error updating Google Services status:', error);
+            }
+        }
+
+        // Listen for subscription status changes
+        ipcRenderer.on('subscription-status-changed', async (event, data) => {
+            await checkSubscriptionStatus();
+        });
     </script>
 </body>
 </html>

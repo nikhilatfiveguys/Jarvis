@@ -17,16 +17,58 @@ serve(async (req) => {
   }
 
   try {
+    // Log incoming request for debugging
+    const authHeader = req.headers.get('Authorization')
+    const apiKeyHeader = req.headers.get('apikey')
+    console.log(`📥 Request received:`, {
+      method: req.method,
+      hasAuthHeader: !!authHeader,
+      hasApiKeyHeader: !!apiKeyHeader,
+      authHeaderPrefix: authHeader ? authHeader.substring(0, 50) + '...' : 'none',
+      apiKeyHeaderPrefix: apiKeyHeader ? apiKeyHeader.substring(0, 50) + '...' : 'none',
+      url: req.url
+    })
+
+    // Verify authentication - accept either Authorization or apikey header
+    // Supabase Edge Functions can be called with either header
+    if (!authHeader && !apiKeyHeader) {
+      console.error('❌ Missing both Authorization and apikey headers')
+      return new Response(
+        JSON.stringify({ 
+          error: 'Missing Authorization header',
+          details: 'Both Authorization and apikey headers are missing'
+        }),
+        { 
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+    
+    // Log that authentication passed
+    console.log('✅ Authentication headers present')
+
     // Get API keys from Supabase Secrets
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
     const perplexityKey = Deno.env.get('PPLX_API_KEY')
     const claudeKey = Deno.env.get('CLAUDE_API_KEY')
+    
+    console.log(`🔑 API Keys check:`, {
+      hasOpenAI: !!openaiKey,
+      hasPerplexity: !!perplexityKey,
+      hasClaude: !!claudeKey,
+      perplexityKeyPrefix: perplexityKey ? perplexityKey.substring(0, 10) + '...' : 'MISSING'
+    })
 
     if (!openaiKey && !perplexityKey && !claudeKey) {
       throw new Error('No API keys configured in Supabase Secrets')
     }
 
-    const { provider, endpoint, payload } = await req.json()
+    const body = await req.json()
+    const { provider, endpoint, payload } = body
+    
+    // Log for debugging (remove sensitive data in production)
+    console.log(`📥 Received request for provider: ${provider}`)
 
     let apiUrl = ''
     let apiKey = ''
@@ -47,8 +89,10 @@ serve(async (req) => {
 
       case 'perplexity':
         if (!perplexityKey) {
-          throw new Error('Perplexity API key not configured')
+          console.error('❌ Perplexity API key not found in Supabase Secrets')
+          throw new Error('Perplexity API key not configured in Supabase Secrets')
         }
+        console.log('✅ Using Perplexity API key from Supabase Secrets')
         apiUrl = 'https://api.perplexity.ai/chat/completions'
         apiKey = perplexityKey
         headers['Authorization'] = `Bearer ${apiKey}`
@@ -77,11 +121,18 @@ serve(async (req) => {
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error(`API Error (${provider}):`, response.status, errorText)
+      console.error(`❌ API Error (${provider}):`, {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText.substring(0, 500),
+        apiKeyPresent: !!apiKey,
+        apiKeyPrefix: apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'
+      })
       return new Response(
         JSON.stringify({ 
           error: `API request failed: ${response.status}`,
-          details: errorText 
+          details: errorText,
+          provider: provider
         }),
         { 
           status: response.status,

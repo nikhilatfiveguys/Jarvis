@@ -18,17 +18,257 @@ body {
     display: none !important;
 }
 
+/* Google Docs Writing Status Indicator */
+.docs-writing-indicator,
+.docs-done-indicator {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10001;
+    pointer-events: auto;
+}
+
+/* Update Notifications */
+.update-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10002;
+    pointer-events: auto;
+    max-width: 400px;
+    animation: slideInFromRight 0.3s ease;
+}
+
+.update-notification-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 12px 16px;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.update-notification-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.update-notification-text {
+    flex: 1;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.update-notification-text strong {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.update-notification-text div {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 12px;
+}
+
+.update-download-btn,
+.update-install-btn {
+    background: #007AFF;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.update-download-btn:hover,
+.update-install-btn:hover {
+    background: #0056CC;
+}
+
+.update-dismiss-btn {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+}
+
+.update-dismiss-btn:hover {
+    color: #fff;
+}
+
+.update-progress-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+}
+
+.update-progress-fill {
+    height: 100%;
+    background: #007AFF;
+    transition: width 0.3s ease;
+}
+
+.update-ready {
+    border-color: #34C759;
+}
+
+.update-ready .update-notification-content {
+    border-color: rgba(52, 199, 89, 0.3);
+}
+
+.docs-status-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 8px 12px;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    animation: slideInFromRight 0.3s ease;
+}
+
+@keyframes slideInFromRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.docs-status-icon {
+    width: 12px;
+    height: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.docs-pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: #4A9EFF;
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.6;
+        transform: scale(1.2);
+    }
+}
+
+.docs-status-icon.done {
+    color: #4CAF50;
+}
+
+.docs-status-icon.done svg {
+    width: 100%;
+    height: 100%;
+}
+
+.docs-status-text {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.docs-open-btn {
+    background: rgba(74, 158, 255, 0.2);
+    border: 1px solid rgba(74, 158, 255, 0.4);
+    border-radius: 6px;
+    color: #4A9EFF;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.docs-open-btn:hover {
+    background: rgba(74, 158, 255, 0.3);
+    border-color: rgba(74, 158, 255, 0.6);
+    transform: translateY(-1px);
+}
+
+.docs-open-btn:active {
+    transform: translateY(0);
+}
+
+.docs-dismiss-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 16px;
+    font-weight: 300;
+    line-height: 1;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    margin-left: 4px;
+    flex-shrink: 0;
+}
+
+.docs-dismiss-btn:hover {
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.docs-dismiss-btn:hover {
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.docs-dismiss-btn:active {
+    transform: scale(0.9);
+}
+
 /* True floating overlay - minimal */
 .overlay {
     position: fixed;
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%);
     background: transparent;
     z-index: 9999;
-    animation: slideIn 0.3s ease;
     pointer-events: auto;
-    will-change: transform, left, top;
 }
 
 /* Attachments bar */
@@ -93,20 +333,19 @@ body {
     backdrop-filter: blur(15px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     gap: 4px;
-    min-width: 260px;
-    max-width: 400px;
+    min-width: 300px;
+    max-width: 450px;
     height: 32px;
     margin-bottom: 0; /* No margin below HUD */
     z-index: 1000; /* Lower than messages container */
     position: relative; /* Ensure stacking context */
 }
 
-/* Reveal history button - small arrow between HUD and output */
+/* Reveal history button - small arrow in right corner under output */
 .reveal-history-btn {
     position: absolute;
     bottom: -20px;
-    left: calc(50% + 90px);
-    transform: translateX(-50%);
+    right: 0;
     background: rgba(0, 0, 0, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 50%;
@@ -125,7 +364,7 @@ body {
 .reveal-history-btn:hover {
     background: rgba(0, 0, 0, 0.7);
     color: rgba(255, 255, 255, 1);
-    transform: translateX(-50%) scale(1.1);
+    transform: scale(1.1);
 }
 
 .reveal-history-btn.hidden {
@@ -133,11 +372,11 @@ body {
 }
 
 .reveal-history-btn.rotated {
-    transform: translateX(-50%) rotate(180deg);
+    transform: rotate(180deg);
 }
 
 .reveal-history-btn.rotated:hover {
-    transform: translateX(-50%) rotate(180deg) scale(1.1);
+    transform: rotate(180deg) scale(1.1);
 }
 
 /* Input section */
@@ -165,29 +404,6 @@ body {
     color: rgba(255, 255, 255, 0.5);
 }
 
-
-.send-btn {
-    background: #007AFF;
-    border: none;
-    color: #fff;
-    padding: 6px 12px;
-    border-radius: 15px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 0.8rem;
-}
-
-.send-btn:hover {
-    background: #0056CC;
-    transform: scale(1.05);
-}
-
-.send-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-}
 
 /* Drag handle (6 dots menu) */
 .drag-handle {
@@ -327,6 +543,102 @@ body {
     word-break: break-word;
 }
 
+/* Ensure paragraphs in drag-output are properly separated */
+.drag-output p {
+    margin: 0;
+    padding: 0;
+    display: block;
+    margin-bottom: 0.5em; /* Add spacing between paragraphs */
+}
+
+/* Last paragraph shouldn't have bottom margin */
+.drag-output p:last-child {
+    margin-bottom: 0;
+}
+
+/* Math rendering styles */
+.drag-output .math-display {
+    display: block;
+    margin: 1em 0;
+    text-align: center;
+    overflow-x: auto;
+}
+
+.drag-output .math-inline {
+    display: inline-block;
+    vertical-align: baseline;
+}
+
+/* KaTeX styling adjustments for dark theme */
+.drag-output .katex {
+    color: #fff;
+}
+
+.drag-output .katex .base {
+    color: #fff;
+}
+
+.drag-output .katex .mord {
+    color: #fff;
+}
+
+/* Table styling */
+.drag-output table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.drag-output table thead {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.drag-output table th {
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.drag-output table td {
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 10px 12px;
+    text-align: left;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.drag-output table tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.drag-output table tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Model tag in bottom corner - stays fixed at bottom of visible scroll area */
+.drag-output .model-tag {
+    position: sticky;
+    bottom: 6px;
+    float: right;
+    clear: both;
+    background: transparent;
+    color: #ffffff;
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 10;
+    font-weight: 400;
+    opacity: 0.8;
+    margin-top: 8px;
+    margin-left: auto;
+    display: block;
+    width: fit-content;
+}
+
 /* Webkit scrollbar styling for drag-output */
 .drag-output::-webkit-scrollbar {
     width: 8px;
@@ -409,35 +721,63 @@ body {
     line-height: 14px;
     text-align: center;
     cursor: pointer;
-    z-index: 10004 !important; /* Higher than messages-container (10002) to appear above output */
+    z-index: 10010 !important; /* Much higher to always appear on top */
     box-shadow: 0 2px 12px rgba(0,0,0,0.55);
     backdrop-filter: blur(6px);
-    opacity: 1; /* Always visible */
+    opacity: 0; /* Hidden by default */
+    visibility: visible !important;
+    pointer-events: auto !important; /* Still clickable when hidden */
     transition: opacity 0.2s ease;
     /* Position will be set by JavaScript relative to drag-output */
 }
 
 .close-output-floating:hover { 
     background: rgba(150,150,150,0.6); 
+    opacity: 1 !important;
+}
+
+/* Show close button when hovering over drag-output (sibling selector) */
+.drag-output:hover ~ .close-output-floating {
     opacity: 1;
 }
 
-/* Show close button when hovering over top-right area of overlay */
+/* Show close button when hovering over messages container (sibling selector) */
+.messages-container:hover ~ .close-output-floating {
+    opacity: 1;
+}
+
+/* Show close button when hovering over action buttons container (sibling selector) */
+.action-buttons-container:hover ~ .close-output-floating {
+    opacity: 1;
+}
+
+/* Show when hovering over the button itself */
+.close-output-floating:hover {
+    opacity: 1 !important;
+}
+
+/* Show when hovering over overlay (parent) - catches hover near the button */
 .overlay:hover .close-output-floating {
     opacity: 1;
 }
 
-/* Ensure close button is always visible when messages container is shown */
-.messages-container:not(.hidden) ~ .close-output-floating {
-    opacity: 1 !important;
+/* Button container for action buttons below output */
+.action-buttons-container {
+    position: absolute;
+    bottom: -28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    align-items: center;
+    z-index: 2000;
+    pointer-events: auto;
 }
 
 /* Humanize button */
 .humanize-btn {
-    position: absolute;
-    bottom: -20px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: relative;
     background: rgba(60, 60, 70, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 20px;
@@ -445,7 +785,6 @@ body {
     font-size: 10px;
     padding: 4px 8px;
     cursor: pointer;
-    z-index: 2000;
     transition: all 0.2s ease;
     backdrop-filter: blur(15px);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
@@ -455,10 +794,36 @@ body {
 .humanize-btn:hover {
     background: rgba(80, 80, 90, 0.9);
     border-color: rgba(255, 255, 255, 0.3);
-    transform: translateX(-50%) scale(1.05);
+    transform: scale(1.05);
 }
 
 .humanize-btn.hidden {
+    display: none;
+}
+
+/* Write to Docs button */
+.write-to-docs-btn {
+    position: relative;
+    background: rgba(60, 60, 70, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 20px;
+    color: #fff;
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    white-space: nowrap;
+}
+
+.write-to-docs-btn:hover {
+    background: rgba(80, 80, 90, 0.9);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: scale(1.05);
+}
+
+.write-to-docs-btn.hidden {
     display: none;
 }
 
@@ -487,12 +852,28 @@ body {
     margin-right: auto;
 }
 
-/* Positioned state: positioned next to humanize button when output is shown */
-.answer-this-btn:not(.answer-this-default) {
-    position: absolute;
-    bottom: -20px;
-    left: calc(50% - 90px);
-    transform: translateX(-50%);
+/* Positioned state: positioned in action buttons container when output is shown */
+/* Answer Screen button when in action buttons container */
+.action-buttons-container .answer-this-btn {
+    position: relative;
+    margin: 0;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    color: #fff;
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    white-space: nowrap;
+}
+
+.action-buttons-container .answer-this-btn:hover {
+    background: rgba(0, 0, 0, 0.8);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
 }
 
 .answer-this-btn:hover {
@@ -500,8 +881,8 @@ body {
     border-color: rgba(255, 255, 255, 0.2);
 }
 
-.answer-this-btn:not(.answer-this-default):hover {
-    transform: translateX(-50%) scale(1.05);
+.action-buttons-container .answer-this-btn:hover {
+    transform: scale(1.05);
 }
 
 .answer-this-btn.hidden {
@@ -524,40 +905,6 @@ body {
 #text-input::placeholder {
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.85rem;
-}
-
-.screenshot-btn, #send-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    padding: 0.3rem;
-    border-radius: 50%;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 0.7rem;
-    min-width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-#send-btn { display: none; }
-
-.screenshot-btn:hover, #send-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.2);
-    transform: scale(1.05);
-}
-
-#send-btn:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.8);
-}
-
-#send-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
 }
 
 /* Temporary notification for responses */
@@ -787,8 +1134,8 @@ body {
     100% { opacity: 0.8; transform: translateX(-50%) scale(1); }
 }
 
-/* Settings button */
 .settings-btn {
+    margin-left: auto;
     background: transparent; /* Remove box */
     border: none;
     border-radius: 0;
@@ -802,7 +1149,6 @@ body {
     justify-content: center;
     min-width: 18px;
     height: 16px;
-    margin-left: auto; /* Push to right and center */
     margin-right: 4px;
     opacity: 1; /* Fully opaque */
 }
@@ -816,6 +1162,47 @@ body {
 
 .settings-btn:active {
     transform: scale(0.98);
+}
+
+.file-btn {
+    background: transparent;
+    border: none;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 0;
+    position: relative;
+}
+
+.file-btn:hover {
+    color: rgba(255, 255, 255, 1);
+    transform: scale(1.1);
+}
+
+.paperclip-icon {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 /* Menu icon (3 lines) */
@@ -886,9 +1273,156 @@ body {
     border-radius: 0 0 8px 8px;
 }
 
+.settings-item-toggle {
+    justify-content: space-between;
+    cursor: pointer;
+}
+
+.settings-item-toggle:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.settings-item-toggle .settings-text {
+    pointer-events: none; /* Let clicks pass through to parent */
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.2);
+    transition: 0.3s;
+    border-radius: 20px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: #4A9EFF;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+.settings-version {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-left: auto;
+    font-weight: 400;
+}
+
 .settings-text {
     flex: 1;
     font-weight: 400;
+}
+
+/* Model Switcher Submenu in Settings */
+.settings-item-submenu {
+    justify-content: space-between;
+}
+
+.submenu-arrow {
+    opacity: 0.6;
+    transition: transform 0.2s ease;
+}
+
+.settings-item-submenu:hover .submenu-arrow {
+    opacity: 1;
+}
+
+.settings-item-update {
+    background: rgba(0, 255, 136, 0.1);
+    border-left: 3px solid #00ff88;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.settings-item-update:hover {
+    background: rgba(0, 255, 136, 0.2);
+}
+
+.update-badge {
+    background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+    color: #000;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.model-submenu {
+    background: rgba(20, 20, 20, 0.95);
+    border-left: 2px solid rgba(255, 255, 255, 0.1);
+    margin: 4px 0;
+    max-height: 300px;
+    overflow-y: auto;
+    animation: slideDown 0.2s ease;
+}
+
+.model-submenu .model-item {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px 8px 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-left: 2px solid transparent;
+}
+
+.model-submenu .model-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-left-color: #007AFF;
+}
+
+.model-submenu .model-item.active {
+    background: rgba(0, 122, 255, 0.15);
+    border-left-color: #007AFF;
+}
+
+.model-submenu .model-name {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.model-submenu .model-desc {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+#current-model-display {
+    color: #007AFF;
+    font-weight: 500;
 }
 
 /* Account Modal */
@@ -1037,6 +1571,87 @@ body {
     transform: translateY(0);
 }
 
+/* Google Services Section */
+.google-services-section {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.google-services-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.google-service-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+}
+
+.google-service-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.google-service-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.google-service-name {
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.google-service-status {
+    color: #888;
+    font-size: 12px;
+    transition: color 0.2s ease;
+}
+
+.google-connect-btn,
+.google-disconnect-btn {
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    white-space: nowrap;
+}
+
+.google-connect-btn {
+    background: linear-gradient(135deg, #4285f4 0%, #34a853 100%);
+    color: white;
+}
+
+.google-connect-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4);
+}
+
+.google-disconnect-btn {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.google-disconnect-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+}
 
 .account-section {
     margin-bottom: 20px;
@@ -1144,4 +1759,344 @@ body {
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
+}
+
+/* Document Name Modal */
+.document-name-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10003;
+    backdrop-filter: blur(5px);
+}
+
+.document-name-modal-content {
+    background: rgba(0, 0, 0, 0.95);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 450px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: modalSlideIn 0.3s ease;
+}
+
+.document-name-modal-content h3 {
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 20px 0;
+}
+
+#document-name-input {
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    margin-bottom: 20px;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+#document-name-input:focus {
+    outline: none;
+    border-color: rgba(74, 158, 255, 0.5);
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+}
+
+#document-name-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.document-name-modal-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.document-name-btn-cancel,
+.document-name-btn-confirm {
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    font-family: inherit;
+}
+
+.document-name-btn-cancel {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Document list styles */
+#document-list-container {
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 20px 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+#document-list-loading {
+    text-align: center;
+    padding: 40px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+}
+
+.document-list-item {
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    transition: background 0.2s ease;
+    background: transparent;
+}
+
+.document-list-item:last-child {
+    border-bottom: none;
+}
+
+.document-list-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.document-list-item:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.document-name-btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+}
+
+.document-name-btn-confirm {
+    background: linear-gradient(135deg, #4A9EFF 0%, #6BB0FF 100%);
+    color: white;
+}
+
+.document-name-btn-confirm:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(74, 158, 255, 0.4);
+}
+
+.document-name-btn-confirm:active {
+    transform: translateY(0);
+}
+
+}
+
+.document-name-modal-content {
+    background: rgba(0, 0, 0, 0.95);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 450px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: modalSlideIn 0.3s ease;
+}
+
+.document-name-modal-content h3 {
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 20px 0;
+}
+
+#document-name-input {
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    margin-bottom: 20px;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+#document-name-input:focus {
+    outline: none;
+    border-color: rgba(74, 158, 255, 0.5);
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+}
+
+#document-name-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.document-name-modal-buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.document-name-btn-cancel,
+.document-name-btn-confirm {
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    font-family: inherit;
+}
+
+.document-name-btn-cancel {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Document list styles */
+#document-list-container {
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 20px 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+#document-list-loading {
+    text-align: center;
+    padding: 40px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+}
+
+.document-list-item {
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    transition: background 0.2s ease;
+    background: transparent;
+}
+
+.document-list-item:last-child {
+    border-bottom: none;
+}
+
+.document-list-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.document-list-item:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.document-name-btn-cancel:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+}
+
+.document-name-btn-confirm {
+    background: linear-gradient(135deg, #4A9EFF 0%, #6BB0FF 100%);
+    color: white;
+}
+
+.document-name-btn-confirm:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(74, 158, 255, 0.4);
+}
+
+.document-name-btn-confirm:active {
+    transform: translateY(0);
+}
+
+/* Output Toolbar Styles - matches overlay style */
+.output-toolbar {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+    padding: 4px 8px;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    z-index: 10005;
+    animation: fadeInToolbar 0.2s ease;
+}
+
+@keyframes fadeInToolbar {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.toolbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    position: relative;
+}
+
+.toolbar-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 1);
+}
+
+.toolbar-btn:active {
+    transform: scale(0.92);
+}
+
+.toolbar-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Copy success animation */
+.toolbar-btn.copied {
+    color: #4CAF50;
+}
+
+.toolbar-btn.copied::after {
+    content: 'Copied!';
+    position: absolute;
+    top: -28px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    color: #4CAF50;
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    animation: fadeInOut 1.5s ease forwards;
+}
+
+@keyframes fadeInOut {
+    0% { opacity: 0; transform: translateX(-50%) translateY(5px); }
+    20% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    80% { opacity: 1; }
+    100% { opacity: 0; }
 }

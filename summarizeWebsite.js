@@ -32,7 +32,7 @@ async function summarizeWebsite(providedUrl = null, fullMessage = null, apiProxy
                 body: JSON.stringify({
                     provider: 'perplexity',
                     payload: {
-                        model: 'sonar',
+                        model: 'sonar-pro',
                         messages: [
                             { role: 'system', content: systemPrompt },
                             { role: 'user', content: userPrompt }

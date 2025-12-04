@@ -63,6 +63,7 @@ class SecureConfig {
                 exa: productionConfig.exa,
                 claude: productionConfig.claude || { apiKey: '' },
                 perplexity: productionConfig.perplexity || { apiKey: '' },
+                openrouter: productionConfig.openrouter || { apiKey: '' },
                 app: {
                     environment: 'production',
                     isProduction: true
@@ -98,6 +99,18 @@ class SecureConfig {
 
     getPerplexityConfig() {
         return this.config.perplexity || { apiKey: '' };
+    }
+
+    getOpenRouterConfig() {
+        return this.config.openrouter || { apiKey: '' };
+    }
+
+    getGoogleConfig() {
+        // Return Google OAuth credentials from environment variables
+        return {
+            clientId: process.env.GOOGLE_CLIENT_ID || '',
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET || ''
+        };
     }
 
     getSupabaseApiProxyUrl() {

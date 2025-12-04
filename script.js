@@ -10,6 +10,10 @@ class JarvisOverlay {
         this.loadingMessageInterval = null; // Track message rotation interval
         this.currentLoadingMessage = null; // Current loading message being displayed
         this.loadingMessageIndex = 0; // Index for rotating loading messages
+        this.selectedModel = 'default'; // Track selected AI model
+        this.selectedModelName = 'Jarvis'; // Track displayed model name
+        this.hasBeenPositioned = false; // Track if overlay has been positioned (to avoid recentering)
+        this.stealthModeEnabled = false; // Track stealth mode state
         
         // Load conversation history from localStorage
         try {
@@ -57,13 +61,24 @@ class JarvisOverlay {
                         this.apiKey = apiKeys.openai;
                         this.perplexityApiKey = apiKeys.perplexity;
                         this.claudeApiKey = apiKeys.claude;
+                        this.openrouterApiKey = apiKeys.openrouter;
                         this.apiProxyUrl = apiKeys.apiProxyUrl;
                         this.supabaseAnonKey = apiKeys.supabaseAnonKey;
                         console.log('✅ API keys loaded from main process');
                         console.log('OpenAI key present:', !!this.apiKey);
                         console.log('Perplexity key present:', !!this.perplexityApiKey);
                         console.log('Claude key present:', !!this.claudeApiKey);
+                        console.log('OpenRouter key present:', !!this.openrouterApiKey);
                         console.log('API Proxy URL:', this.apiProxyUrl || 'NOT CONFIGURED (using direct API calls)');
+                        console.log('Supabase Anon Key present:', !!this.supabaseAnonKey);
+                        console.log('Supabase Anon Key value:', this.supabaseAnonKey ? this.supabaseAnonKey.substring(0, 30) + '...' : 'MISSING');
+                        console.log('Has Perplexity access:', !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || !!(this.apiProxyUrl && this.supabaseAnonKey));
+                        
+                        // Verify the anon key matches what we expect
+                        const expectedAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
+                        if (this.supabaseAnonKey && this.supabaseAnonKey !== expectedAnonKey) {
+                            console.warn('⚠️ Supabase anon key does not match expected value!');
+                        }
                         // Rebuild tools array now that API keys are loaded
                         this.rebuildToolsArray();
                         return;
@@ -77,6 +92,7 @@ class JarvisOverlay {
             this.apiKey = process.env.OPENAI_API_KEY;
             this.perplexityApiKey = process.env.PPLX_API_KEY;
             this.claudeApiKey = process.env.CLAUDE_API_KEY;
+            this.openrouterApiKey = process.env.OPENROUTER_API_KEY;
             
             // API keys must be set via environment variables or IPC
             if (!this.apiKey) {
@@ -88,11 +104,15 @@ class JarvisOverlay {
             if (!this.claudeApiKey) {
                 console.warn('⚠️ No Claude API key found in environment or IPC.');
             }
+            if (!this.openrouterApiKey) {
+                console.warn('⚠️ No OpenRouter API key found in environment or IPC.');
+            }
             
             console.log('✅ API keys loaded (fallback method)');
             console.log('OpenAI key present:', !!this.apiKey);
             console.log('Perplexity key present:', !!this.perplexityApiKey);
             console.log('Claude key present:', !!this.claudeApiKey);
+            console.log('OpenRouter key present:', !!this.openrouterApiKey);
             // Rebuild tools array now that API keys are loaded
             this.rebuildToolsArray();
         } catch (error) {
@@ -119,26 +139,35 @@ class JarvisOverlay {
             }
         ];
         
-        // Add web search tool if Perplexity API key is available (check for truthy and non-empty string)
-        if (this.perplexityApiKey && this.perplexityApiKey.trim() !== '') {
+        // Add web search tool if Perplexity API is available (either direct key or proxy)
+        const hasPerplexityAccess = (this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || 
+                                     (this.apiProxyUrl && this.supabaseAnonKey);
+        
+        if (hasPerplexityAccess) {
             this.tools.push({
                 type: "function",
-                name: "searchweb",
-                description: "Searches the web using Perplexity AI to get current, up-to-date information. Use this when you need real-time data, current events, recent information, or anything beyond your knowledge cutoff.",
+                name: "web_search",
+                description: "Search the web using Perplexity",
                 parameters: {
                     type: "object",
                     properties: {
                         query: {
                             type: "string",
-                            description: "The search query to find information about"
+                            description: "The search string"
                         }
                     },
                     required: ["query"]
                 }
             });
-            console.log('✅ Perplexity web search tool added');
+            console.log('✅ Perplexity web search tool added', {
+                usingProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
+                hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '')
+            });
         } else {
-            console.warn('⚠️ Perplexity API key not available - web search tool not added');
+            console.warn('⚠️ Perplexity API not available - web search tool not added', {
+                hasDirectKey: !!(this.perplexityApiKey),
+                hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey)
+            });
         }
         
         // Add Claude tool if API key is available (check for truthy and non-empty string)
@@ -205,6 +234,9 @@ class JarvisOverlay {
                 
                 // Update message counter display
                 this.updateMessageCounter();
+                
+                // Update premium features visibility
+                this.updatePremiumFeaturesVisibility();
             }
         } catch (error) {
             console.error('Failed to check license:', error);
@@ -212,6 +244,33 @@ class JarvisOverlay {
             this.features = {};
             // Still update message counter even on error
             this.updateMessageCounter();
+            this.updatePremiumFeaturesVisibility();
+        }
+    }
+    
+    updatePremiumFeaturesVisibility() {
+        const hasPremium = this.hasPremiumAccess();
+        
+        // Model switcher is always visible in hamburger menu, but we check premium access when clicked
+        // Reset to default model if not premium (only if a non-default model was selected)
+        if (!hasPremium && this.selectedModel && this.selectedModel !== 'default') {
+            console.log(`🤖 [MODEL SWITCHER] Resetting to default - premium required for ${this.selectedModel}`);
+            this.selectedModel = 'default';
+            this.selectedModelName = 'Jarvis';
+            if (this.currentModelDisplay) {
+                this.currentModelDisplay.textContent = 'Jarvis';
+            }
+        }
+        
+        // Disable stealth mode toggle for free users
+        if (this.stealthModeToggle) {
+            if (hasPremium) {
+                this.stealthModeToggle.style.opacity = '1';
+                this.stealthModeToggle.style.pointerEvents = 'auto';
+            } else {
+                this.stealthModeToggle.style.opacity = '0.5';
+                this.stealthModeToggle.style.pointerEvents = 'auto'; // Still allow clicks to show upgrade message
+            }
         }
     }
 
@@ -234,9 +293,7 @@ class JarvisOverlay {
 
         const { ipcRenderer } = window.require('electron');
 
-        /* Voice recording temporarily disabled
-        // Request microphone permission
-        this.requestMicrophonePermission();
+        // Don't request microphone permission on startup - only when user tries to use voice recording
 
         // Listen for voice recording events from main process
         ipcRenderer.on('voice-recording-started', () => {
@@ -254,7 +311,6 @@ class JarvisOverlay {
         ipcRenderer.on('voice-recording-error', (event, error) => {
             this.showVoiceError(error);
         });
-        */
 
         // Listen for subscription cancellation
         ipcRenderer.on('subscription-cancelled', () => {
@@ -278,7 +334,7 @@ class JarvisOverlay {
             stream.getTracks().forEach(track => track.stop());
         } catch (error) {
             console.error('Microphone permission denied:', error);
-            this.showNotification('Microphone permission required for voice recording', 'error');
+            // Don't show notification on startup - only show when user actually tries to record
         }
     }
 
@@ -304,9 +360,204 @@ class JarvisOverlay {
 
     handleVoiceTranscription(text) {
         if (text && text.trim()) {
+            const trimmedText = text.trim();
+            const lowerText = trimmedText.toLowerCase();
+            
+            // Check for screenshot voice command "6-7" or variations
+            const screenshotPatterns = [
+                '6-7', '67', '6 7', 'six seven', 'six-seven',
+                'take screenshot', 'take a screenshot', 'screenshot',
+                'capture screen', 'screen capture'
+            ];
+            
+            const isScreenshotCommand = screenshotPatterns.some(pattern => 
+                lowerText.includes(pattern) || lowerText === pattern
+            );
+            
+            if (isScreenshotCommand) {
+                // Clear input since we're executing a command
+                if (this.textInput) this.textInput.value = '';
+                // Take screenshot and analyze
+                this.takeScreenshotAndAnalyze();
+                return;
+            }
+            
+            // Check for voice commands to write to docs (including /docs command)
+            const docsCommandPatterns = [
+                '/docs',
+                'add to docs',
+                'write to docs',
+                'write on docs',
+                'write on my doc',
+                'write to my doc',
+                'add to my doc',
+                'write on my docs',
+                'write to my docs',
+                'add to my docs',
+                'save to docs',
+                'save to my doc',
+                'save to my docs',
+                'put this in my doc',
+                'put this in docs',
+                'write this to my doc',
+                'write this in my doc'
+            ];
+            
+            // Check for exact match or contains pattern
+            const isDocsCommand = docsCommandPatterns.some(pattern => {
+                if (pattern === '/docs') {
+                    // Exact match for /docs command
+                    return lowerText === '/docs' || lowerText.startsWith('/docs ');
+                }
+                return lowerText.includes(pattern);
+            });
+            
+            if (isDocsCommand) {
+                // Clear input since we're executing a command
+                if (this.textInput) this.textInput.value = '';
+                // Check if it's paste mode (user said "paste" in the command)
+                const isPasteMode = lowerText.includes('paste') || lowerText.startsWith('/docs paste');
+                // Trigger write to docs
+                this.writeToDocs(isPasteMode);
+                return;
+            }
+            
+            // Check for Gmail voice commands
+            const emailPatterns = [
+                'what are my emails',
+                'check my emails',
+                'check my email',
+                'show my emails',
+                'show my email',
+                'any emails',
+                'any new emails',
+                'emails today',
+                'today\'s emails',
+                'todays emails',
+                'important emails',
+                'any important emails',
+                'unread emails',
+                'new emails',
+                'check gmail',
+                'open gmail',
+                'what\'s in my inbox',
+                'whats in my inbox',
+                'show inbox'
+            ];
+            
+            const isEmailCommand = emailPatterns.some(pattern => lowerText.includes(pattern));
+            
+            if (isEmailCommand) {
+                // Clear input since we're executing a command
+                if (this.textInput) this.textInput.value = '';
+                
+                // Determine which type of emails to fetch
+                if (lowerText.includes('important')) {
+                    this.getImportantEmails();
+                } else if (lowerText.includes('unread') || lowerText.includes('new')) {
+                    this.getUnreadEmails();
+                } else {
+                    this.getTodaysEmails();
+                }
+                return;
+            }
+            
+            // Check for Calendar view commands
+            const calendarViewPatterns = [
+                'what\'s on my calendar',
+                'whats on my calendar',
+                'what is on my calendar',
+                'show my calendar',
+                'show calendar',
+                'check my calendar',
+                'check calendar',
+                'my schedule',
+                'upcoming events',
+                'upcoming meetings',
+                'what do i have today',
+                'what do i have this week',
+                'any meetings',
+                'any events'
+            ];
+            
+            const isCalendarViewCommand = calendarViewPatterns.some(pattern => lowerText.includes(pattern));
+            
+            if (isCalendarViewCommand) {
+                // Clear input since we're executing a command
+                if (this.textInput) this.textInput.value = '';
+                this.getUpcomingEvents();
+                return;
+            }
+            
+            // Check for Calendar add/create commands
+            const calendarPatterns = [
+                'add to calendar',
+                'add to my calendar',
+                'add this to calendar',
+                'add this to my calendar',
+                'schedule',
+                'create event',
+                'create a meeting',
+                'create meeting',
+                'book a meeting',
+                'book meeting',
+                'set a reminder',
+                'set reminder',
+                'add event',
+                'calendar event',
+                'put on my calendar',
+                'put this on my calendar'
+            ];
+            
+            const isCalendarCommand = calendarPatterns.some(pattern => lowerText.includes(pattern));
+            
+            if (isCalendarCommand) {
+                // Clear input since we're executing a command
+                if (this.textInput) this.textInput.value = '';
+                
+                // Check if they want to add from screenshot
+                if (lowerText.includes('this') || lowerText.includes('screen') || this.currentScreenCapture) {
+                    this.createCalendarEventFromScreenshot();
+                } else {
+                    // Try to extract event from the text itself
+                    this.createCalendarEventFromText(trimmedText);
+                }
+                return;
+            }
+            
             // Set the input value and send the transcribed text to the API
-            this.textInput.value = text.trim();
+            this.textInput.value = trimmedText;
             this.sendMessage();
+        }
+    }
+    
+    async takeScreenshotAndAnalyze() {
+        try {
+            this.showNotification('📸 Taking screenshot...', 'info');
+            
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                const screenshot = await ipcRenderer.invoke('take-screenshot');
+                
+                if (screenshot) {
+                    // Store the screenshot
+                    this.currentScreenCapture = screenshot;
+                    
+                    // Show the screenshot in the UI and prompt for analysis
+                    this.showNotification('Screenshot captured! Ask a question about it.', 'success');
+                    
+                    // Focus the input
+                    if (this.textInput) {
+                        this.textInput.focus();
+                        this.textInput.placeholder = 'Ask about the screenshot...';
+                    }
+                } else {
+                    this.showNotification('Failed to capture screenshot', 'error');
+                }
+            }
+        } catch (error) {
+            console.error('Screenshot error:', error);
+            this.showNotification('Screenshot failed: ' + error.message, 'error');
         }
     }
 
@@ -396,6 +647,9 @@ class JarvisOverlay {
         
         // Update account info to reflect new subscription status
         this.updateAccountInfo();
+        
+        // Update premium features visibility
+        this.updatePremiumFeaturesVisibility();
         
         // Set up a periodic check to ensure subscription status is updated (in case webhook is delayed)
         let checkCount = 0;
@@ -523,32 +777,68 @@ class JarvisOverlay {
         this.instructions = document.getElementById('instructions');
         this.activationIndicator = document.getElementById('activation-indicator');
         this.textInput = document.getElementById('text-input');
-        this.sendBtn = document.getElementById('send-btn');
         this.dragOutput = document.getElementById('drag-output');
         this.dragHandle = document.getElementById('drag-handle');
         this.closeOutputBtn = document.getElementById('close-output');
         this.closeOutputFloating = document.getElementById('close-output-floating');
         this.answerThisBtn = document.getElementById('answer-this-btn');
+        this.actionButtonsContainer = document.getElementById('action-buttons-container');
         this.humanizeBtn = document.getElementById('humanize-btn');
+        this.documentNameModal = document.getElementById('document-name-modal');
+        this.documentNameInput = document.getElementById('document-name-input');
+        this.documentNameConfirm = document.getElementById('document-name-confirm');
+        this.documentNameCancel = document.getElementById('document-name-cancel');
+        this.documentSelectionModal = document.getElementById('document-selection-modal');
+        this.documentList = document.getElementById('document-list');
+        this.documentListLoading = document.getElementById('document-list-loading');
+        this.documentSelectionCancel = document.getElementById('document-selection-cancel');
+        this.documentSelectionNew = document.getElementById('document-selection-new');
+        this.docsWritingIndicator = document.getElementById('docs-writing-indicator');
+        this.docsDoneIndicator = document.getElementById('docs-done-indicator');
+        this.docsOpenBtn = document.getElementById('docs-open-btn');
+        this.docsDismissBtn = document.getElementById('docs-dismiss-btn');
         this.startBtn = document.getElementById('start-jarvis');
         this.resizeHandle = document.getElementById('resize-handle');
         this.settingsBtn = document.getElementById('settings-btn');
         this.settingsMenu = document.getElementById('settings-menu');
-        this.addFileBtn = document.getElementById('add-file-btn');
+        this.fileBtn = document.getElementById('file-btn');
         this.clearChatBtn = document.getElementById('clear-chat-btn');
         this.settingsCloseBtn = document.getElementById('settings-close-btn');
         this.accountInfoBtn = document.getElementById('account-info-btn');
+        this.stealthModeToggle = document.getElementById('stealth-mode-toggle');
+        this.stealthModeCheckbox = document.getElementById('stealth-mode-checkbox');
         this.fileInput = document.getElementById('file-input');
         this.accountModal = document.getElementById('account-modal');
         this.accountModalClose = document.getElementById('account-modal-close');
         this.accountModalOk = document.getElementById('account-modal-ok');
         this.userEmailElement = document.getElementById('user-email');
         this.premiumStatusElement = document.getElementById('premium-status');
+        this.featureListElement = document.getElementById('feature-list');
         this.messageCounter = document.getElementById('message-counter');
         this.messageCountText = document.getElementById('message-count-text');
         this.attachmentsBar = document.getElementById('attachments-bar');
         this.messagesContainer = document.getElementById('messages-container');
         this.revealHistoryBtn = document.getElementById('reveal-history-btn');
+        this.modelSwitcherBtn = document.getElementById('model-switcher-btn');
+        this.modelSubmenu = document.getElementById('model-submenu');
+        this.currentModelDisplay = document.getElementById('current-model-display');
+        
+        // Output Toolbar elements
+        this.outputToolbar = document.getElementById('output-toolbar');
+        this.toolbarCopyBtn = document.getElementById('toolbar-copy-btn');
+        this.toolbarDocsBtn = document.getElementById('toolbar-docs-btn');
+        this.toolbarRetryBtn = document.getElementById('toolbar-retry-btn');
+        
+        // Track the last user query for retry functionality
+        this.lastUserQuery = '';
+        
+        // Initialize first model as active by default
+        if (this.modelSubmenu) {
+            const firstModel = this.modelSubmenu.querySelector('.model-item[data-model="default"]');
+            if (firstModel) {
+                firstModel.classList.add('active');
+            }
+        }
         
         // Set up MutationObserver to keep scroll at bottom when content changes
         this.setupScrollObserver();
@@ -559,7 +849,7 @@ class JarvisOverlay {
         this.isDraggingOutput = false; // Track if output element is being dragged
         this.pendingAttachments = [];
         
-        this.currentModel = 'gpt-5-mini';
+        this.currentModel = 'gpt-5.1';
         // API keys will be loaded via loadApiKeys() method
         this.apiKey = null;
         this.perplexityApiKey = null;
@@ -576,7 +866,6 @@ class JarvisOverlay {
 
     setupEventListeners() {
         if (this.startBtn) this.startBtn.addEventListener('click', () => this.startJarvis());
-        this.sendBtn.addEventListener('click', () => this.sendMessage());
         this.textInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();
         });
@@ -595,13 +884,60 @@ class JarvisOverlay {
             this.answerThisBtn.addEventListener('click', () => this.answerThis());
         }
         
+        // Also handle the moved answer button in the container
+        const answerBtnMoved = document.getElementById('answer-this-btn-moved');
+        if (answerBtnMoved) {
+            answerBtnMoved.addEventListener('click', () => this.answerThis());
+        }
+        
         if (this.humanizeBtn) {
             this.humanizeBtn.addEventListener('click', () => this.humanize());
+        }
+        
+        // Output Toolbar event listeners
+        this.initializeOutputToolbar();
+        
+        if (this.docsOpenBtn) {
+            this.docsOpenBtn.addEventListener('click', () => this.openGoogleDoc());
+        }
+        
+        if (this.docsDismissBtn) {
+            this.docsDismissBtn.addEventListener('click', () => this.hideDocsDoneIndicator());
         }
         
         // Reveal history button event listener
         if (this.revealHistoryBtn) {
             this.revealHistoryBtn.addEventListener('click', () => this.toggleChatHistory());
+        }
+        
+        // Model switcher in hamburger menu
+        if (this.modelSwitcherBtn) {
+            this.modelSwitcherBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                // Check if user has premium access before showing model options
+                if (!this.hasPremiumAccess()) {
+                    this.showNotification('🔒 OpenRouter models require Jarvis Premium. Upgrade to access GPT-5.1, Claude, Gemini, and more!', false);
+                    this.showUpgradePrompt();
+                    return;
+                }
+                
+                this.toggleModelSubmenu();
+            });
+        }
+        
+        // Model selection event listeners
+        if (this.modelSubmenu) {
+            const modelItems = this.modelSubmenu.querySelectorAll('.model-item');
+            modelItems.forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const model = item.getAttribute('data-model');
+                    const modelName = item.querySelector('.model-name').textContent;
+                    this.selectModel(model, modelName);
+                    this.hideModelSubmenu();
+                });
+            });
         }
         
         // Settings button event listeners
@@ -612,25 +948,53 @@ class JarvisOverlay {
             });
         }
         
-        // Add File menu item -> trigger hidden file input
-        if (this.addFileBtn && this.fileInput) {
-            this.addFileBtn.addEventListener('click', (e) => {
+        const handleFileInputChange = async (e) => {
+            console.log('📂 File input changed');
+            const files = Array.from(e.target.files || []);
+            console.log('📄 Selected files:', files.length);
+            if (files.length > 0) {
+                await this.handleSelectedFiles(files);
+                this.hideSettingsMenu();
+            }
+        };
+
+        if (this.fileBtn && this.fileInput) {
+            console.log('✅ File button and file input found, setting up listeners');
+            this.fileBtn.addEventListener('click', (e) => {
+                console.log('🖱️ File button clicked');
                 e.stopPropagation();
                 this.fileInput.value = '';
                 this.fileInput.click();
+                console.log('📁 File input clicked');
             });
-            this.fileInput.addEventListener('change', async (e) => {
-                const files = Array.from(e.target.files || []);
-                if (files.length > 0) {
-                    await this.handleSelectedFiles(files);
-                    this.hideSettingsMenu();
-                }
+        } else {
+            console.warn('⚠️ File button or file input not found', {
+                fileBtn: !!this.fileBtn,
+                fileInput: !!this.fileInput
             });
+        }
+
+        if (this.fileInput) {
+            this.fileInput.addEventListener('change', handleFileInputChange);
+        } else {
+            console.warn('⚠️ File input element missing');
         }
         
         if (this.clearChatBtn) {
             this.clearChatBtn.addEventListener('click', () => this.clearChatHistory());
         }
+        
+        // Check for updates button
+        const checkUpdatesBtn = document.getElementById('check-updates-btn');
+        if (checkUpdatesBtn) {
+            checkUpdatesBtn.addEventListener('click', () => {
+                this.checkForUpdates();
+                this.showNotification('Checking for updates...', 'info');
+            });
+        }
+        
+        // Load and display current app version
+        this.loadAppVersion();
         
         if (this.settingsCloseBtn) {
             this.settingsCloseBtn.addEventListener('click', () => {
@@ -651,6 +1015,68 @@ class JarvisOverlay {
             this.accountInfoBtn.addEventListener('click', () => this.showAccountWindow());
         }
         
+        // Stealth Mode toggle
+        if (this.stealthModeCheckbox) {
+            // Load saved preference (default to true/ON if not set)
+            const savedPreference = localStorage.getItem('stealth_mode_enabled');
+            const stealthModeEnabled = savedPreference === null ? true : savedPreference === 'true';
+            this.stealthModeEnabled = stealthModeEnabled; // Initialize state
+            this.stealthModeCheckbox.checked = stealthModeEnabled;
+            console.log('🔧 Initial stealth mode state:', stealthModeEnabled);
+            
+            // Apply on load (with a small delay to ensure Electron is ready)
+            setTimeout(() => {
+                this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
+            }, 500);
+            
+            // Listen for checkbox changes - this is the main handler
+            // This will fire when checkbox is clicked directly OR when label is clicked
+            this.stealthModeCheckbox.addEventListener('change', (e) => {
+                const enabled = e.target.checked;
+                console.log('🔧 Checkbox changed event fired! New state:', enabled);
+                localStorage.setItem('stealth_mode_enabled', enabled.toString());
+                this.toggleStealthMode(enabled, true); // true = show notification
+            });
+            
+            // Also listen for click events as a backup
+            this.stealthModeCheckbox.addEventListener('click', (e) => {
+                console.log('🔧 Checkbox clicked! Current checked state:', this.stealthModeCheckbox.checked);
+                // Don't prevent default - let checkbox toggle naturally
+            });
+            
+            // Handle click on the entire toggle item area
+            // Always manually toggle to ensure it works reliably
+            if (this.stealthModeToggle) {
+                this.stealthModeToggle.addEventListener('click', (e) => {
+                    // Stop propagation so menu doesn't close
+                    e.stopPropagation();
+                    
+                    // Check if user has premium access
+                    if (!this.hasPremiumAccess()) {
+                        this.showNotification('🔒 Stealth Mode requires Jarvis Premium. Upgrade to hide Jarvis from screen recordings!', false);
+                        this.showUpgradePrompt();
+                        return;
+                    }
+                    
+                    // Prevent default label behavior to avoid double-toggle
+                    // We'll handle the toggle manually
+                    if (e.target.closest('label') || e.target.closest('.toggle-switch')) {
+                        e.preventDefault();
+                    }
+                    
+                    // Always toggle the checkbox manually to ensure it works
+                    const currentState = this.stealthModeCheckbox.checked;
+                    console.log('🔧 Toggle item clicked, current state:', currentState);
+                    this.stealthModeCheckbox.checked = !currentState;
+                    console.log('🔧 Toggled to:', this.stealthModeCheckbox.checked);
+                    
+                    // Trigger change event to fire all handlers (including IPC call)
+                    const changeEvent = new Event('change', { bubbles: true, cancelable: true });
+                    this.stealthModeCheckbox.dispatchEvent(changeEvent);
+                });
+            }
+        }
+        
         if (this.accountModalClose) {
             this.accountModalClose.addEventListener('click', () => this.hideAccountModal());
         }
@@ -668,43 +1094,87 @@ class JarvisOverlay {
                 }
             });
         }
+
+        // Initialize Google Services buttons
+        this.setupGoogleServices();
         
         // Close settings menu when clicking outside
         document.addEventListener('click', (e) => {
+            // Close settings menu when clicking outside (but not if clicking on model submenu)
             if (this.settingsMenu && !this.settingsMenu.contains(e.target) && !this.settingsBtn.contains(e.target)) {
                 this.hideSettingsMenu();
+                this.hideModelSubmenu();
             }
         });
         
-        // Make overlay interactive when hovering over input area
+        // Make overlay interactive when needed, but allow clicks to work
         if (this.overlay) {
+            let clickThroughTimeout = null;
+            let isCurrentlyInteractive = false;
+            
+            // Make overlay interactive when mouse enters overlay area
             this.overlay.addEventListener('mouseenter', () => {
                 if (this.isElectron) {
+                    clearTimeout(clickThroughTimeout);
                     const { ipcRenderer } = require('electron');
-                    ipcRenderer.invoke('make-interactive');
+                    ipcRenderer.invoke('make-interactive').catch(() => {});
+                    isCurrentlyInteractive = true;
                 }
             });
             
+            // Handle mouse leave - go back to click-through after delay
             this.overlay.addEventListener('mouseleave', () => {
-                // Don't set click-through if dragging output or resizing
-                if (this.isDraggingOutput || this.isResizing) {
-                    return;
-                }
-                if (this.isElectron) {
-                    const { ipcRenderer } = require('electron');
-                    ipcRenderer.invoke('make-click-through');
+                if (this.isElectron && isCurrentlyInteractive) {
+                    // Don't set click-through if dragging output or resizing
+                    if (this.isDraggingOutput || this.isResizing) {
+                        return;
+                    }
+                    
+                    // Delay going back to click-through
+                    clearTimeout(clickThroughTimeout);
+                    clickThroughTimeout = setTimeout(() => {
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-click-through').catch(() => {});
+                        isCurrentlyInteractive = false;
+                    }, 500); // 500ms delay before going click-through
                 }
             });
             
-            // Windows-specific: Request focus when clicking on overlay
-            // This ensures the window can receive keyboard input
-            this.overlay.addEventListener('mousedown', () => {
+            // Handle clicks on overlay - always make interactive
+            this.overlay.addEventListener('mousedown', (e) => {
                 if (this.isElectron) {
+                    clearTimeout(clickThroughTimeout);
                     const { ipcRenderer } = require('electron');
+                    // Make interactive when clicking anywhere on overlay
+                    ipcRenderer.invoke('make-interactive').catch(() => {});
+                    isCurrentlyInteractive = true;
                     // Request focus to ensure window can receive input
                     ipcRenderer.invoke('request-focus').catch(() => {});
                 }
             });
+            
+            // Keep overlay interactive while mouse is down (for dragging)
+            this.overlay.addEventListener('mousemove', (e) => {
+                if (this.isElectron && e.buttons > 0) {
+                    // Mouse is being held down, keep interactive
+                    clearTimeout(clickThroughTimeout);
+                    if (!isCurrentlyInteractive) {
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                }
+            });
+            
+            // Ensure overlay starts in click-through mode
+            if (this.isElectron) {
+                const { ipcRenderer } = require('electron');
+                // Set initial state to click-through after overlay is ready
+                setTimeout(() => {
+                    ipcRenderer.invoke('make-click-through').catch(() => {});
+                    isCurrentlyInteractive = false;
+                }, 1000); // Delay to allow overlay to fully initialize
+            }
         }
         
         if (this.closeOutputBtn) {
@@ -765,7 +1235,11 @@ class JarvisOverlay {
     setupElectronIntegration() {
         if (!this.isElectron) return;
         
-            const { ipcRenderer } = require('electron');
+        const { ipcRenderer } = require('electron');
+        
+        // Track update state
+        this.pendingUpdate = null;
+        this.updateReadyToInstall = false;
             
         ipcRenderer.on('toggle-overlay', () => {
             this.toggleOverlay();
@@ -778,67 +1252,210 @@ class JarvisOverlay {
         ipcRenderer.on('hide-overlay', () => {
             this.hideOverlay();
         });
+        
+        // Auto-update handlers
+        ipcRenderer.on('update-available', (event, info) => {
+            console.log('📦 Update available:', info);
+            this.pendingUpdate = info;
+            this.updateReadyToInstall = false;
+            this.showUpdateInMenu(info.version, 'available');
+        });
+        
+        ipcRenderer.on('update-download-progress', (event, progress) => {
+            console.log('📥 Download progress:', progress.percent);
+            this.showUpdateInMenu(null, 'downloading', progress.percent);
+        });
+        
+        ipcRenderer.on('update-downloaded', (event, info) => {
+            console.log('✅ Update downloaded:', info);
+            this.pendingUpdate = info;
+            this.updateReadyToInstall = true;
+            this.showUpdateInMenu(info.version, 'ready');
+        });
+        
+        ipcRenderer.on('update-error', (event, error) => {
+            console.error('❌ Update error:', error);
+            // If code signature error, offer to open download page
+            if (error && error.includes('code signature')) {
+                this.showNotification('Opening download page...', 'info');
+                // Open the GitHub releases page
+                const { shell } = require('electron');
+                shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
+            } else {
+                this.showNotification('Update error: ' + error, 'error');
+            }
+        });
+        
+        ipcRenderer.on('update-not-available', (event) => {
+            console.log('✅ App is up to date');
+            this.showNotification("You're up to date! ✅", 'success');
+        });
+    }
+    
+    showUpdateInMenu(version, status, progress = 0) {
+        const menuItem = document.getElementById('update-available-menu-item');
+        if (!menuItem) return;
+        
+        menuItem.classList.remove('hidden');
+        
+        if (status === 'available') {
+            menuItem.innerHTML = `<span>🔄 Update v${version}</span><span class="update-badge">Download</span>`;
+            menuItem.onclick = () => this.downloadUpdate();
+        } else if (status === 'downloading') {
+            menuItem.innerHTML = `<span>⬇️ Downloading...</span><span class="update-badge">${Math.round(progress)}%</span>`;
+            menuItem.onclick = null;
+        } else if (status === 'ready') {
+            menuItem.innerHTML = `<span>✅ Update Ready</span><span class="update-badge">Install</span>`;
+            menuItem.onclick = () => this.installUpdate();
+        }
+    }
+    
+    async downloadUpdate() {
+        try {
+            this.showNotification('Starting download...', 'info');
+            const { ipcRenderer } = require('electron');
+            const result = await ipcRenderer.invoke('download-update');
+            if (!result.success) {
+                // Check for code signature error - open download page instead
+                if (result.error && result.error.includes('code signature')) {
+                    this.showNotification('Opening download page...', 'info');
+                    const { shell } = require('electron');
+                    shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
+                } else {
+                    this.showNotification('Download failed: ' + result.error, 'error');
+                }
+            }
+        } catch (error) {
+            console.error('Download error:', error);
+            // Check for code signature error
+            if (error.message && error.message.includes('code signature')) {
+                this.showNotification('Opening download page...', 'info');
+                const { shell } = require('electron');
+                shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
+            } else {
+                this.showNotification('Download failed: ' + error.message, 'error');
+            }
+        }
+    }
+    
+    async installUpdate() {
+        try {
+            this.showNotification('Installing update and restarting...', 'info');
+            const { ipcRenderer } = require('electron');
+            await ipcRenderer.invoke('install-update');
+        } catch (error) {
+            console.error('Install error:', error);
+            // Check for code signature error
+            if (error.message && error.message.includes('code signature')) {
+                this.showNotification('Opening download page...', 'info');
+                const { shell } = require('electron');
+                shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
+            } else {
+                this.showNotification('Install failed: ' + error.message, 'error');
+            }
+        }
+    }
+    
+    async checkForUpdates() {
+        try {
+            const { ipcRenderer } = require('electron');
+            const result = await ipcRenderer.invoke('check-for-updates');
+            if (!result.success) {
+                this.showNotification('Update check failed: ' + result.error, 'error');
+            }
+        } catch (error) {
+            console.error('Update check error:', error);
+            this.showNotification('Update check failed: ' + error.message, 'error');
+        }
+    }
+    
+    async loadAppVersion() {
+        try {
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                const version = await ipcRenderer.invoke('get-app-version');
+                const versionDisplay = document.getElementById('app-version-display');
+                if (versionDisplay && version) {
+                    versionDisplay.textContent = 'v' + version;
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load app version:', error);
+        }
     }
 
     setupDragFunctionality() {
         if (!this.dragHandle) return;
         
-        // Add double-click handler to move to top middle
-        this.dragHandle.addEventListener('dblclick', () => {
-            this.moveToTopMiddle();
-        });
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
         
         this.dragHandle.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
             
-            // Get the actual visual position of the overlay (accounting for transform)
+            // Get current position
             const rect = this.overlay.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
             
-            // Calculate offset from mouse position to overlay's top-left corner
-            this.dragOffset.x = e.clientX - rect.left;
-            this.dragOffset.y = e.clientY - rect.top;
-            
-            // If overlay is still using transform, convert to absolute positioning
-            const computedStyle = window.getComputedStyle(this.overlay);
-            if (computedStyle.transform !== 'none' || computedStyle.left === '50%' || computedStyle.top === '50%') {
-                // Convert from centered position to absolute
-                const currentLeft = rect.left;
-                const currentTop = rect.top;
-                this.overlay.style.left = `${currentLeft}px`;
-                this.overlay.style.top = `${currentTop}px`;
-                this.overlay.style.transform = 'none';
-            }
-            
-            this.isDragging = true;
             this.overlay.style.cursor = 'grabbing';
-            this.overlay.classList.add('dragging');
+            e.preventDefault();
         });
         
         document.addEventListener('mousemove', (e) => {
-            if (!this.isDragging) return;
+            if (!isDragging) return;
             
-            // Calculate new position based on mouse position minus offset
-            const newX = e.clientX - this.dragOffset.x;
-            const newY = e.clientY - this.dragOffset.y;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
             
-            // Constrain to viewport bounds
-            const overlayWidth = this.overlay.offsetWidth || 400;
-            const overlayHeight = this.overlay.offsetHeight || 100;
-            const maxX = window.innerWidth - overlayWidth;
-            const maxY = window.innerHeight - overlayHeight;
+            // Get overlay dimensions
+            const overlayRect = this.overlay.getBoundingClientRect();
+            const overlayWidth = overlayRect.width;
+            const overlayHeight = overlayRect.height;
             
-            this.overlay.style.left = `${Math.max(0, Math.min(newX, maxX))}px`;
-            this.overlay.style.top = `${Math.max(0, Math.min(newY, maxY))}px`;
+            // Get viewport dimensions
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            
+            // Calculate new position
+            let newLeft = initialLeft + dx;
+            let newTop = initialTop + dy;
+            
+            // Constrain to screen bounds
+            // Keep at least 10px of the overlay visible on each edge
+            const minVisible = 10;
+            const maxLeft = viewportWidth - minVisible;
+            const maxTop = viewportHeight - minVisible;
+            const minLeft = -(overlayWidth - minVisible);
+            const minTop = -(overlayHeight - minVisible);
+            
+            // Clamp values to bounds
+            newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
+            newTop = Math.max(minTop, Math.min(maxTop, newTop));
+            
+            this.overlay.style.left = `${newLeft}px`;
+            this.overlay.style.top = `${newTop}px`;
             this.overlay.style.transform = 'none';
         });
         
         document.addEventListener('mouseup', () => {
-            if (this.isDragging) {
-                this.isDragging = false;
+            if (isDragging) {
+                isDragging = false;
                 this.overlay.style.cursor = 'default';
-                this.overlay.classList.remove('dragging');
             }
+        });
+        
+        // Double-click to center at top
+        this.dragHandle.addEventListener('dblclick', () => {
+            const overlayWidth = this.overlay.offsetWidth || 400;
+            const overlayHeight = this.overlay.offsetHeight || 200;
+            const centerX = Math.max(0, (window.innerWidth - overlayWidth) / 2);
+            const topY = Math.max(0, Math.min(20, window.innerHeight - overlayHeight - 20));
+            this.overlay.style.left = `${centerX}px`;
+            this.overlay.style.top = `${topY}px`;
+            this.overlay.style.transform = 'none';
         });
     }
 
@@ -865,6 +1482,9 @@ class JarvisOverlay {
     async showOverlay() {
         if (!this.overlay) return;
         
+        // Reset cursor
+        this.overlay.style.cursor = 'default';
+        
         // Re-check subscription status when overlay is shown
         await this.checkLicense();
         
@@ -884,7 +1504,13 @@ class JarvisOverlay {
         
         this.overlay.classList.remove('hidden');
         this.instructions.classList.add('hidden');
-        this.recenterOverlay();
+        
+        // DISABLED: No automatic recentering - position is set by CSS
+        // if (!this.hasBeenPositioned) {
+        //     this.recenterOverlay();
+        //     this.hasBeenPositioned = true;
+        // }
+        
         this.isActive = true;
         this.textInput.focus();
         
@@ -896,9 +1522,21 @@ class JarvisOverlay {
 
     recenterOverlay() {
         if (!this.overlay) return;
-        this.overlay.style.left = '50%';
-        this.overlay.style.top = '50%';
-        this.overlay.style.transform = 'translate(-50%, -50%)';
+        
+        const overlayWidth = this.overlay.offsetWidth || 400;
+        const overlayHeight = this.overlay.offsetHeight || 200;
+        const centerX = Math.max(0, (window.innerWidth - overlayWidth) / 2);
+        const centerY = Math.max(0, (window.innerHeight - overlayHeight) / 2);
+        
+        // Ensure overlay stays within bounds
+        const maxLeft = window.innerWidth - 10;
+        const maxTop = window.innerHeight - 10;
+        const finalX = Math.min(maxLeft, Math.max(-(overlayWidth - 10), centerX));
+        const finalY = Math.min(maxTop, Math.max(-(overlayHeight - 10), centerY));
+        
+        this.overlay.style.left = `${finalX}px`;
+        this.overlay.style.top = `${finalY}px`;
+        this.overlay.style.transform = 'none';
         this.overlay.style.position = 'fixed';
     }
 
@@ -982,7 +1620,11 @@ class JarvisOverlay {
             const analysis = this.extractText(data) || 'Unable to analyze';
             
             this.conversationHistory.push({ role: 'user', content: prompt });
-            this.conversationHistory.push({ role: 'assistant', content: analysis });
+            this.conversationHistory.push({ 
+                role: 'assistant', 
+                content: analysis,
+                model: this.selectedModelName || 'Jarvis'
+            });
             
             if (this.conversationHistory.length > 30) {
                 this.conversationHistory = this.conversationHistory.slice(-30);
@@ -1097,7 +1739,18 @@ class JarvisOverlay {
             }
             
             this.showLoadingNotification();
-            const response = await this.callChatGPT(message);
+            
+            // Route to OpenRouter if a specific model is selected, otherwise use default ChatGPT
+            let response;
+            if (this.selectedModel && this.selectedModel !== 'default') {
+                console.log(`🤖 [MODEL SWITCHER] Using OpenRouter model: ${this.selectedModel} (${this.selectedModelName})`);
+                console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
+                response = await this.callOpenRouter(message, this.selectedModel);
+            } else {
+                console.log(`🤖 [MODEL SWITCHER] Using default Responses API (currentModel: ${this.currentModel})`);
+                response = await this.callChatGPT(message);
+            }
+            
             this.showNotification(response, true);
             
             // Increment message count for free users
@@ -1132,12 +1785,21 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
 
             const inputContent = [{ type: 'input_text', text: message }];
-            const webSearchHint = this.perplexityApiKey ? ' Use searchweb for current events.' : '';
+            const hasPerplexityAccess = (this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || 
+                                         (this.apiProxyUrl && this.supabaseAnonKey);
+            const webSearchHint = hasPerplexityAccess ? ' Use web_search for current events.' : '';
             const claudeHint = this.claudeApiKey ? ' Use the askclaude tool for complex analytical questions, deep reasoning, philosophical questions, or when you need more thorough analysis.' : '';
             const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${conversationContext}${documentContext}`;
 
             // Debug: Log available tools
-            console.log('Available tools:', this.tools.map(t => t.name));
+            console.log('🔧 Available tools:', this.tools.map(t => t.name));
+            console.log('🔧 Has web_search tool:', this.tools.some(t => t.name === 'web_search'));
+            console.log('🔧 Perplexity access check:', {
+                hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== ''),
+                hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
+                apiProxyUrl: this.apiProxyUrl || 'NOT SET',
+                supabaseAnonKey: this.supabaseAnonKey ? 'SET' : 'NOT SET'
+            });
             console.log('Claude tool registered:', this.tools.some(t => t.name === 'askclaude'));
             
             const requestPayload = {
@@ -1151,44 +1813,80 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
             this.showLoadingNotification();
             
-            // Use Edge Function proxy if available, otherwise direct API call
+            // Use IPC to main process (most reliable in Electron)
             let response;
-            if (this.apiProxyUrl && this.supabaseAnonKey) {
-                // Use Supabase Edge Function proxy (secure - no API keys in app)
-                console.log('🔒 Using Supabase Edge Function proxy for OpenAI');
-                response = await fetch(this.apiProxyUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        provider: 'openai',
-                        endpoint: 'responses',
-                        payload: requestPayload
-                    })
-                });
-            } else {
-                // Fallback to direct API call (requires API key)
-                console.log('⚠️ Using direct OpenAI API call (API key required)');
-                response = await fetch('https://api.openai.com/v1/responses', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestPayload)
-                });
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    console.log('🔒 Using IPC to main process for OpenAI API');
+                    const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
+                    
+                    if (result && result.ok && result.data) {
+                        console.log('✅ Main process OpenAI call succeeded');
+                        // Create a mock response object that looks like a fetch response
+                        response = {
+                            ok: true,
+                            status: result.status,
+                            json: async () => result.data,
+                            text: async () => JSON.stringify(result.data),
+                            clone: function() { return this; },
+                            headers: new Map()
+                        };
+                    } else {
+                        console.error('❌ Main process OpenAI call failed:', result);
+                        // Create error response
+                        response = {
+                            ok: false,
+                            status: result?.status || 500,
+                            text: async () => JSON.stringify(result?.data || { error: 'IPC call failed' }),
+                            clone: function() { return this; },
+                            headers: new Map()
+                        };
+                    }
+                } catch (ipcError) {
+                    console.error('❌ IPC OpenAI call failed, falling back to fetch:', ipcError);
+                    // Fall through to fetch backup below
+                    response = null;
+                }
+            }
+            
+            // Fallback to fetch if IPC didn't work
+            if (!response) {
+                if (this.apiProxyUrl && this.supabaseAnonKey) {
+                    console.log('🔒 Using fetch to Supabase Edge Function proxy for OpenAI');
+                    response = await fetch(this.apiProxyUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            provider: 'openai',
+                            endpoint: 'responses',
+                            payload: requestPayload
+                        })
+                    });
+                } else {
+                    console.log('⚠️ Using direct OpenAI API call (API key required)');
+                    response = await fetch('https://api.openai.com/v1/responses', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestPayload)
+                    });
+                }
             }
             
             if (!response.ok) {
-                // Clone the response so we can read it multiple times if needed
-                const responseClone = response.clone();
                 let errorText;
                 try {
                     errorText = await response.text();
                     console.error('Raw error response:', errorText);
-                    console.error('Response headers:', Object.fromEntries(response.headers.entries()));
+                    if (response.headers && response.headers.entries) {
+                        console.error('Response headers:', Object.fromEntries(response.headers.entries()));
+                    }
                     
                     let errorData;
                     try {
@@ -1209,15 +1907,20 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     // If 401 and using proxy, it's likely a Supabase Secrets issue
                     if (response.status === 401 && this.apiProxyUrl) {
                         const details = errorData.details || errorData.error?.message || errorData.message || errorText;
+                        const fullError = `Status: ${response.status}\nUsing Proxy: YES\nProxy URL: ${this.apiProxyUrl}\nAnon Key: ${this.supabaseAnonKey ? 'Present' : 'MISSING'}\n\nError Details:\n${details}`;
+                        alert(`❌ 401 ERROR DEBUG INFO:\n\n${fullError}`);
                         throw new Error(`Unauthorized (401): API keys may be missing or invalid in Supabase Secrets. Details: ${details}`);
                     }
                     
                     // Check if it's a Supabase Edge Function error
                     if (errorData.error || errorData.details) {
                         const errorMsg = errorData.error?.message || errorData.details || errorData.message || JSON.stringify(errorData);
+                        alert(`❌ API ERROR ${response.status}:\n\n${errorMsg}`);
                         throw new Error(`API error: ${response.status} - ${errorMsg}`);
                     }
-                    throw new Error(`API error: ${response.status} - ${errorData.error?.message || errorData.message || errorText}`);
+                    const finalError = errorData.error?.message || errorData.message || errorText;
+                    alert(`❌ ERROR ${response.status}:\n\n${finalError}`);
+                    throw new Error(`API error: ${response.status} - ${finalError}`);
                 } catch (parseError) {
                     console.error('OpenAI API Error (parse failed):', {
                         status: response.status,
@@ -1358,14 +2061,21 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                 inputContent.push({ type: 'input_text', text: `Screenshot: ${result}` });
                                 this.showNotification('✅ Step 7a complete: Screenshot processed');
                             }
-                        } else if (toolCall.name === 'searchweb') {
+                        } else if (toolCall.name === 'web_search') {
+                            console.log('🔍 Web_search tool called!', {
+                                arguments: toolCall.arguments,
+                                hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
+                                hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '')
+                            });
                             const query = toolCall.arguments?.query || toolCall.arguments?.query_string || '';
                             if (!query) {
-                                console.error('SearchWeb tool called without query:', toolCall.arguments);
+                                console.error('❌ Web_search tool called without query:', toolCall.arguments);
                                 inputContent.push({ type: 'input_text', text: 'Web search: No query provided' });
                                 this.showNotification('⚠️ Step 7b: No search query provided');
                             } else {
+                                console.log('🔍 Executing web search with query:', query);
                                 const result = await this.executeSearchWeb(query);
+                                console.log('✅ Web search completed, result length:', result?.length || 0);
                                 inputContent.push({ type: 'input_text', text: `Web search: ${result}` });
                             }
                         } else if (toolCall.name === 'askclaude') {
@@ -1399,26 +2109,66 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     ? `You are Jarvis. Claude has provided a detailed analysis. Present Claude's analysis clearly and comprehensively. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Don't summarize or shorten it unless the user asks.${conversationContext}`
                     : `You are Jarvis. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}`;
                 
-                console.log('Making second API call with tool results. Has Claude response:', hasClaudeResponse);
+                console.log('🔄 Making second API call with tool results. Has Claude response:', hasClaudeResponse);
+                console.log('🔄 isElectron:', this.isElectron, 'hasRequire:', !!window.require);
                 
-                response = await fetch('https://api.openai.com/v1/responses', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: this.currentModel,
-                        instructions: finalInstructions,
-                        input: [{ role: 'user', content: inputContent }]
-                    })
-                });
+                const secondCallPayload = {
+                    model: this.currentModel,
+                    instructions: finalInstructions,
+                    input: [{ role: 'user', content: inputContent }]
+                };
                 
-                if (!response.ok) {
-                    throw new Error(`API error: ${response.status}`);
+                // Use IPC for second call too
+                if (this.isElectron && window.require) {
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        console.log('🔒 SECOND CALL: Using IPC for second OpenAI call (with tool results)');
+                        console.log('📤 SECOND CALL: Invoking call-openai-api via IPC...');
+                        const result = await ipcRenderer.invoke('call-openai-api', secondCallPayload);
+                        console.log('📥 SECOND CALL: IPC result:', { ok: result?.ok, status: result?.status });
+                        
+                        if (result && result.ok && result.data) {
+                            console.log('✅ Second OpenAI call via IPC succeeded');
+                            data = result.data;
+                        } else {
+                            console.error('❌ Second OpenAI call via IPC failed:', result);
+                            throw new Error(`API error: ${result?.status || 500} - ${result?.data?.error || 'IPC call failed'}`);
+                        }
+                    } catch (ipcError) {
+                        console.error('❌ IPC second call failed, falling back to fetch:', ipcError);
+                        // Fall through to fetch below
+                        response = await fetch('https://api.openai.com/v1/responses', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.apiKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(secondCallPayload)
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`API error: ${response.status}`);
+                        }
+                        
+                        data = await response.json();
+                    }
+                } else {
+                    // Not in Electron, use fetch
+                    response = await fetch('https://api.openai.com/v1/responses', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.apiKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(secondCallPayload)
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`API error: ${response.status}`);
+                    }
+                    
+                    data = await response.json();
                 }
-                
-                data = await response.json();
             }
             
             const finalResponse = this.extractText(data);
@@ -1427,7 +2177,11 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const safeResponse = typeof finalResponse === 'string' ? finalResponse : String(finalResponse || 'No response');
             
             this.conversationHistory.push({ role: 'user', content: message });
-            this.conversationHistory.push({ role: 'assistant', content: safeResponse });
+            this.conversationHistory.push({ 
+                role: 'assistant', 
+                content: safeResponse,
+                model: this.selectedModelName || 'Jarvis'
+            });
             
             if (this.conversationHistory.length > 30) {
                 this.conversationHistory = this.conversationHistory.slice(-30);
@@ -1461,10 +2215,16 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
     }
     
     async executeSearchWeb(query) {
-        // Check if Perplexity API key is available (check for truthy and non-empty string)
-        if (!this.perplexityApiKey || this.perplexityApiKey.trim() === '') {
-            console.warn('⚠️ Perplexity API key not available for web search');
-            return `Web search is not available. To enable web search, set the PPLX_API_KEY environment variable with your Perplexity API key.`;
+        // Check if Perplexity API is available (either direct key or proxy)
+        const hasPerplexityAccess = (this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || 
+                                     (this.apiProxyUrl && this.supabaseAnonKey);
+        
+        if (!hasPerplexityAccess) {
+            console.warn('⚠️ Perplexity API not available for web search', {
+                hasDirectKey: !!(this.perplexityApiKey),
+                hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey)
+            });
+            return `Web search is not available. To enable web search, configure the Perplexity API key (either via PPLX_API_KEY environment variable or Supabase Secrets).`;
         }
 
         try {
@@ -1473,92 +2233,342 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             
             // Use Edge Function proxy if available, otherwise direct API call
             let perplexityResponse;
-            if (this.apiProxyUrl && this.supabaseAnonKey) {
-                // Use Supabase Edge Function proxy (secure - no API keys in app)
-                console.log('🔒 Using Supabase Edge Function proxy for Perplexity');
-                perplexityResponse = await fetch(this.apiProxyUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                        'Content-Type': 'application/json'
+            const requestPayload = {
+                model: 'sonar-pro',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'Be precise and concise. Provide the most relevant and up-to-date information.'
                     },
-                    body: JSON.stringify({
-                        provider: 'perplexity',
-                        payload: {
-                            model: 'sonar',
-                            messages: [
-                                {
-                                    role: 'system',
-                                    content: 'Be precise and concise. Provide the most relevant and up-to-date information.'
-                                },
-                                {
-                                    role: 'user',
-                                    content: query
-                                }
-                            ]
-                        }
-                    })
-                });
-            } else {
-                // Fallback to direct API call (requires API key)
-                console.log('⚠️ Using direct Perplexity API call (API key required)');
-                perplexityResponse = await fetch('https://api.perplexity.ai/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.perplexityApiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: 'sonar-pro',
-                        messages: [
-                            {
-                                role: 'system',
-                                content: 'Be precise and concise. Provide the most relevant and up-to-date information.'
-                            },
-                            {
-                                role: 'user',
-                                content: query
+                    {
+                        role: 'user',
+                        content: query
+                    }
+                ]
+            };
+            
+            // ALWAYS use hardcoded values - exact same as test script that works
+            const SUPABASE_URL = 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+            const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
+            const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+            
+            // Force use of hardcoded values (ignore loaded values since test script works)
+            console.log('🔒 Using Supabase Edge Function proxy for Perplexity (hardcoded values from test script)');
+            console.log('📤 Request details:', {
+                url: PROXY_URL,
+                anonKeyPrefix: SUPABASE_ANON_KEY.substring(0, 30) + '...',
+                isElectron: this.isElectron
+            });
+            
+            // Try using main process IPC first (more reliable in Electron)
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    console.log('📤 Making Perplexity API call via main process IPC');
+                    console.log('📤 Request payload:', JSON.stringify(requestPayload, null, 2));
+                    
+                    const result = await ipcRenderer.invoke('call-perplexity-api', requestPayload);
+                    console.log('📥 IPC result received (FULL):', JSON.stringify(result, null, 2));
+                    console.log('📥 IPC result received (summary):', {
+                        ok: result.ok,
+                        status: result.status,
+                        hasData: !!result.data,
+                        resultType: typeof result,
+                        hasChoices: result.data?.choices ? 'YES' : 'NO'
+                    });
+                    
+                    if (result && result.ok && result.data) {
+                        console.log('✅ Main process API call succeeded');
+                        // Handle success - extract content directly
+                        const perplexityData = result.data;
+                        
+                        // Check if response has the expected structure
+                        if (perplexityData.choices && perplexityData.choices[0] && perplexityData.choices[0].message) {
+                            const content = perplexityData.choices[0].message.content;
+                            if (content) {
+                                this.showLoadingNotification(null, 'default');
+                                return content;
                             }
-                        ]
-                    })
-                });
+                        }
+                        
+                        // If structure is wrong, treat as error
+                        const errorMsg = `Web search failed: Invalid response structure from Perplexity API.`;
+                        this.stopLoadingAnimation();
+                        this.showNotification(`❌ ${errorMsg}`, false);
+                        return errorMsg;
+                    } else if (result) {
+                        console.error('❌ Main process API call failed:', result);
+                        this.stopLoadingAnimation();
+                        const errorData = result.data || {};
+                        const errorMsg = errorData.error?.message || errorData.details || errorData.error || `HTTP ${result.status}: ${result.statusText}`;
+                        const fullError = `Web search failed: ${errorMsg}`;
+                        this.showNotification(`❌ ${fullError}`, false);
+                        return fullError;
+                    } else {
+                        throw new Error('IPC returned null/undefined');
+                    }
+                } catch (ipcError) {
+                    console.error('❌ IPC call failed:', ipcError);
+                    this.showNotification(`❌ IPC call failed: ${ipcError.message}. Trying direct fetch...`, false);
+                    // Fall through to direct fetch
+                }
             }
+            
+            // Fallback to direct fetch if IPC didn't work or not in Electron
+            if (!perplexityResponse) {
+                try {
+                    console.log('📤 Making fetch request to:', PROXY_URL);
+                    perplexityResponse = await fetch(PROXY_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY
+                        },
+                        body: JSON.stringify({
+                            provider: 'perplexity',
+                            payload: requestPayload
+                        })
+                    });
+                    console.log('✅ Fetch request completed, status:', perplexityResponse.status);
+                } catch (fetchError) {
+                    console.error('❌ Fetch request failed:', fetchError);
+                    this.stopLoadingAnimation();
+                    const errorMsg = `Web search failed: Network error - ${fetchError.message}. This might be a CORS issue or the Edge Function is not accessible.`;
+                    this.showNotification(`❌ ${errorMsg}`, false);
+                    return errorMsg;
+                }
+            }
+            
+            // If we got a successful response from IPC, we already returned above
+            // Only continue here if we're using direct fetch
+            if (!perplexityResponse) {
+                const errorMsg = 'Web search failed: No response received.';
+                this.stopLoadingAnimation();
+                this.showNotification(`❌ ${errorMsg}`, false);
+                return errorMsg;
+            }
+            
+            console.log('📥 Perplexity response status:', perplexityResponse.status, perplexityResponse.statusText);
             
             if (!perplexityResponse.ok) {
                 const errorText = await perplexityResponse.text().catch(() => 'Unknown error');
-                console.error('Raw Perplexity error response:', errorText);
+                console.error('❌ Raw Perplexity error response:', errorText);
                 let errorData;
                 try {
                     errorData = JSON.parse(errorText);
                 } catch {
                     errorData = { error: { message: errorText } };
                 }
-                console.error('Perplexity API Error:', {
+                
+                // Show FULL error details in notification so user can see it
+                const fullErrorDetails = JSON.stringify({
                     status: perplexityResponse.status,
                     statusText: perplexityResponse.statusText,
                     error: errorData,
-                    usingProxy: !!(this.apiProxyUrl && this.supabaseAnonKey)
-                });
+                    errorText: errorText.substring(0, 500)
+                }, null, 2);
+                
+                console.error('❌ Perplexity API Error Details:', fullErrorDetails);
+                
+                // Show detailed error in notification
+                const errorSummary = `Status: ${perplexityResponse.status}\nError: ${errorData.error?.message || errorData.details || errorText.substring(0, 200)}`;
+                this.showNotification(`❌ Web search failed!\n\n${errorSummary}`, false);
                 this.stopLoadingAnimation();
                 
-                // If 401 and using proxy, suggest checking Supabase Secrets
-                if (perplexityResponse.status === 401 && this.apiProxyUrl) {
-                    return `Web search failed: Unauthorized (401). Check if PPLX_API_KEY is set in Supabase Secrets.`;
+                // Provide helpful error messages based on status code
+                let errorMessage;
+                if (perplexityResponse.status === 401) {
+                    if (this.apiProxyUrl) {
+                        // Check if it's a Supabase auth error or Perplexity API error
+                        const isSupabaseError = errorText.includes('Missing Authorization') || 
+                                               errorText.includes('Unauthorized') ||
+                                               errorData.error?.message?.includes('Missing Authorization');
+                        
+                        // Check if anon key is missing
+                        const anonKeyMissing = !this.supabaseAnonKey || this.supabaseAnonKey.trim() === '';
+                        
+                        // Parse error to determine the source
+                        const errorDetails = errorData.error?.message || errorData.details || errorText || '';
+                        const isMissingAuth = errorDetails.includes('Missing Authorization') || errorDetails.includes('Unauthorized');
+                        const isPerplexityError = errorDetails.includes('Perplexity') || errorDetails.includes('PPLX');
+                        
+                        if (anonKeyMissing) {
+                            errorMessage = `❌ Web search failed (401): Supabase anon key is missing! Please restart the app.`;
+                        } else if (isMissingAuth && !isPerplexityError) {
+                            errorMessage = `❌ Web search failed (401): Edge Function authentication failed. The function may need to be made public in Supabase Dashboard.`;
+                        } else if (isPerplexityError || errorDetails.includes('not configured')) {
+                            errorMessage = `❌ Web search failed (401): Perplexity API key missing in Supabase Secrets. Go to Dashboard → Settings → Edge Functions → Secrets and verify PPLX_API_KEY is set.`;
+                        } else {
+                            errorMessage = `❌ Web search failed (401): Authentication error. Error: ${errorDetails.substring(0, 100)}`;
+                        }
+                    } else {
+                        errorMessage = `❌ Web search failed (401): Perplexity API key invalid. Error: ${errorText.substring(0, 150)}`;
+                    }
+                } else if (perplexityResponse.status === 400) {
+                    const errorMsg = errorData.error?.message || errorData.details || errorData.message || 'Bad request';
+                    errorMessage = `Web search failed: Invalid request (400). ${errorMsg}`;
+                } else if (perplexityResponse.status === 429) {
+                    errorMessage = `Web search failed: Rate limit exceeded (429). Please try again later.`;
+                } else if (perplexityResponse.status === 500) {
+                    errorMessage = `Web search failed: Server error (500). The Perplexity API may be experiencing issues. Error: ${errorText.substring(0, 200)}`;
+                } else {
+                    errorMessage = errorData.error?.message || errorData.details || errorData.message || `HTTP ${perplexityResponse.status}: ${perplexityResponse.statusText}`;
+                    errorMessage = `Web search failed: ${errorMessage}`;
                 }
                 
-                const errorMessage = errorData.error?.message || errorData.details || errorData.message || `HTTP ${perplexityResponse.status}: ${perplexityResponse.statusText}`;
-                return `Web search failed: ${errorMessage}`;
+                // Show error notification
+                this.showNotification(`❌ ${errorMessage}`, false);
+                return errorMessage;
             }
             
-            const perplexityData = await perplexityResponse.json();
+            let perplexityData;
+            try {
+                perplexityData = await perplexityResponse.json();
+            } catch (jsonError) {
+                const textResponse = await perplexityResponse.text().catch(() => 'Unable to read response');
+                this.stopLoadingAnimation();
+                const errorMsg = `Web search failed: Invalid JSON response from Perplexity API. Status: ${perplexityResponse.status}. Response: ${textResponse.substring(0, 300)}`;
+                this.showNotification(`❌ ${errorMsg}`, false);
+                return errorMsg;
+            }
+            
+            // Check if response has an error field (proxy might return errors in different format)
+            if (perplexityData.error) {
+                this.stopLoadingAnimation();
+                const errorMsg = perplexityData.error.message || perplexityData.error.details || JSON.stringify(perplexityData.error);
+                const fullError = `Web search failed: ${errorMsg}`;
+                this.showNotification(`❌ ${fullError}`, false);
+                return fullError;
+            }
+            
+            // Check if response has the expected structure
+            if (!perplexityData.choices || !Array.isArray(perplexityData.choices) || perplexityData.choices.length === 0) {
+                this.stopLoadingAnimation();
+                const errorMsg = `Web search failed: Invalid response structure from Perplexity API (no choices array). Response keys: ${Object.keys(perplexityData).join(', ')}`;
+                this.showNotification(`❌ ${errorMsg}`, false);
+                return errorMsg;
+            }
+            
+            if (!perplexityData.choices[0] || !perplexityData.choices[0].message) {
+                this.stopLoadingAnimation();
+                const errorMsg = `Web search failed: Invalid response structure from Perplexity API (no message). Response: ${JSON.stringify(perplexityData).substring(0, 200)}`;
+                this.showNotification(`❌ ${errorMsg}`, false);
+                return errorMsg;
+            }
+            
+            const content = perplexityData.choices[0].message.content;
+            if (!content || content.trim() === '') {
+                this.stopLoadingAnimation();
+                const errorMsg = `Web search failed: No content returned from Perplexity API. Full response: ${JSON.stringify(perplexityData).substring(0, 300)}`;
+                this.showNotification(`❌ ${errorMsg}`, false);
+                return errorMsg;
+            }
+            
             // Don't stop loading here - it will continue through the synthesis phase
             // Switch to default loading context for the synthesis phase
             this.showLoadingNotification(null, 'default');
-            return perplexityData.choices[0].message.content;
+            return content;
         } catch (error) {
-            console.error('Web search error:', error);
             this.stopLoadingAnimation();
-            return `Web search error: ${error.message}`;
+            const errorMsg = `Web search error: ${error.message}`;
+            this.showNotification(`❌ ${errorMsg}`, false);
+            return errorMsg;
+        }
+    }
+
+    async callOpenRouter(message, model) {
+        try {
+            if (!this.openrouterApiKey || this.openrouterApiKey.trim() === '') {
+                console.warn('⚠️ OpenRouter API key not available');
+                return `OpenRouter is not available. Please check your OpenRouter API key configuration.`;
+            }
+
+            // Build conversation context
+            let conversationContext = '';
+            if (this.conversationHistory.length > 0) {
+                conversationContext = '\n\nPREVIOUS CONVERSATION (remember this context):\n' + 
+                    this.conversationHistory.slice(-10).map((msg, idx) => 
+                        `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.substring(0, 300)}`
+                    ).join('\n');
+            }
+
+            // Add document context if available
+            let documentContext = '';
+            if (this.currentDocument) {
+                documentContext = `\n\nCURRENT DOCUMENT CONTEXT:
+Title: ${this.currentDocument.title}
+URL: ${this.currentDocument.url}
+Content: ${this.currentDocument.content.substring(0, 2000)}...`;
+            }
+
+            const instructions = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}`;
+
+            console.log(`🤖 Calling OpenRouter with model: ${model}`);
+            
+            // Build message content - include screenshot if available
+            let userContent;
+            if (this.currentScreenCapture) {
+                userContent = [
+                    { type: 'text', text: message },
+                    { type: 'image_url', image_url: { url: this.currentScreenCapture } }
+                ];
+                console.log('📸 Including screenshot in OpenRouter request');
+                // Clear screenshot after using it
+                this.currentScreenCapture = null;
+            } else {
+                userContent = message;
+            }
+            
+            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.openrouterApiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://jarvis-ai.app', // Optional but recommended
+                    'X-Title': 'Jarvis AI' // Optional but recommended
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [
+                        { role: 'system', content: instructions },
+                        { role: 'user', content: userContent }
+                    ]
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('OpenRouter API error:', errorText);
+                throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+            }
+
+            const data = await response.json();
+            
+            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                throw new Error('Invalid response structure from OpenRouter');
+            }
+
+            const content = data.choices[0].message.content;
+            
+            // Update conversation history
+            this.conversationHistory.push({ role: 'user', content: message });
+            this.conversationHistory.push({ 
+                role: 'assistant', 
+                content: content,
+                model: this.selectedModelName || 'Jarvis'
+            });
+            
+            if (this.conversationHistory.length > 30) {
+                this.conversationHistory = this.conversationHistory.slice(-30);
+            }
+            
+            this.saveConversationHistory();
+            
+            return content;
+        } catch (error) {
+            console.error('OpenRouter API error:', error);
+            throw error;
         }
     }
 
@@ -1823,9 +2833,99 @@ ${currentQuestion}`;
         const message = (this.textInput?.value || '').trim();
         if (!message && (!this.pendingAttachments || this.pendingAttachments.length === 0)) return;
 
+        // Check for /docs command
+        if (message.toLowerCase() === '/docs' || message.toLowerCase().startsWith('/docs ')) {
+            // Clear input
+            if (this.textInput) this.textInput.value = '';
+            // Check if it's paste mode
+            const isPasteMode = message.toLowerCase().startsWith('/docs paste');
+            // Trigger write to docs with paste mode flag
+            await this.writeToDocs(isPasteMode);
+            return;
+        }
+
+        // Check for /calendar command or calendar-related phrases
+        const lowerMessage = message.toLowerCase();
+        const isCalendarCommand = lowerMessage === '/calendar' || lowerMessage.startsWith('/calendar ');
+        
+        // Detect calendar VIEW phrases
+        const calendarViewPhrases = [
+            'what\'s on my calendar', 'whats on my calendar', 'what is on my calendar',
+            'show my calendar', 'show calendar', 'check my calendar', 'check calendar',
+            'my schedule', 'upcoming events', 'upcoming meetings', 
+            'what do i have today', 'what do i have this week', 'any meetings', 'any events'
+        ];
+        const isCalendarViewPhrase = calendarViewPhrases.some(phrase => lowerMessage.includes(phrase));
+        
+        if (isCalendarViewPhrase) {
+            // Clear input
+            if (this.textInput) this.textInput.value = '';
+            await this.getUpcomingEvents();
+            return;
+        }
+        
+        // Detect calendar event creation phrases
+        const calendarKeywords = ['add', 'schedule', 'create', 'set', 'book', 'plan'];
+        const calendarContexts = ['calendar', 'event', 'meeting', 'appointment', 'reminder'];
+        const hasCalendarKeyword = calendarKeywords.some(keyword => lowerMessage.includes(keyword));
+        const hasCalendarContext = calendarContexts.some(context => lowerMessage.includes(context)) || 
+                                   lowerMessage.includes('at ') || 
+                                   lowerMessage.includes('tomorrow') ||
+                                   lowerMessage.includes('today') ||
+                                   lowerMessage.includes('tonight') ||
+                                   lowerMessage.match(/\d{1,2}(:\d{2})?\s*(am|pm|AM|PM)/);
+        
+        const isCalendarPhrase = hasCalendarKeyword && hasCalendarContext;
+        const isAddToCalendarPhrase = lowerMessage.includes('add') && (lowerMessage.includes('calendar') || lowerMessage.includes('to my calendar') || lowerMessage.includes('to calendar'));
+        
+        if (isCalendarCommand || isCalendarPhrase || isAddToCalendarPhrase) {
+            // Clear input
+            if (this.textInput) this.textInput.value = '';
+            
+            if (isAddToCalendarPhrase && lowerMessage.includes('this') || lowerMessage.includes('screenshot')) {
+                // Take screenshot and extract event details
+                await this.createCalendarEventFromScreenshot();
+            } else if (isCalendarPhrase || isAddToCalendarPhrase) {
+                // Extract event details from natural language
+                await this.createCalendarEventFromText(message);
+            } else {
+                // Regular /calendar command - show modal
+                await this.createCalendarEvent();
+            }
+            return;
+        }
+
+        // Check for Gmail-related queries
+        const isGmailQuery = lowerMessage.includes('email') || lowerMessage.includes('gmail') || 
+                            lowerMessage.includes('inbox') || lowerMessage.includes('messages');
+        const isTodaysEmails = lowerMessage.includes('today') && isGmailQuery;
+        const isImportantEmails = (lowerMessage.includes('important') || lowerMessage.includes('priority')) && isGmailQuery;
+        const isUnreadEmails = (lowerMessage.includes('unread') || lowerMessage.includes('new')) && isGmailQuery;
+        
+        if (isGmailQuery) {
+            // Clear input
+            if (this.textInput) this.textInput.value = '';
+            
+            if (isTodaysEmails) {
+                await this.getTodaysEmails();
+            } else if (isImportantEmails) {
+                await this.getImportantEmails();
+            } else if (isUnreadEmails) {
+                await this.getUnreadEmails();
+            } else {
+                // General email query - show today's emails
+                await this.getTodaysEmails();
+            }
+            return;
+        }
+
+        // Store the last user query for retry functionality
+        if (message) {
+            this.lastUserQuery = message;
+        }
+        
         // Immediately clear UI input so text disappears as soon as user sends
         if (this.textInput) this.textInput.value = '';
-        if (this.sendBtn) this.sendBtn.disabled = true;
 
         try {
             if (this.pendingAttachments && this.pendingAttachments.length > 0) {
@@ -1842,8 +2942,8 @@ ${currentQuestion}`;
             } else {
                 await this.processMessage(message);
             }
-        } finally {
-            if (this.sendBtn) this.sendBtn.disabled = false;
+        } catch (error) {
+            console.error('sendMessage failed:', error);
         }
     }
 
@@ -1878,6 +2978,11 @@ ${currentQuestion}`;
         currentOutput.title = 'Drag me to drop text into apps';
         currentOutput.innerHTML = processedContent;
         
+        // Render math with KaTeX after content is inserted (with delay to ensure DOM and KaTeX are ready)
+        setTimeout(() => {
+            this.renderMath(currentOutput);
+        }, 200);
+        
         // Add resize handle
         const resizeHandle = document.createElement('div');
         resizeHandle.id = 'resize-handle';
@@ -1885,7 +2990,8 @@ ${currentQuestion}`;
         resizeHandle.title = 'Drag to resize';
         currentOutput.appendChild(resizeHandle);
         
-        currentOutput.dataset.fullText = content.replace(/<[^>]*>/g, '');
+        // Store clean text without markdown or HTML for dragging
+        currentOutput.dataset.fullText = this.stripMarkdown(content).replace(/<[^>]*>/g, '');
         currentOutput.classList.remove('hidden');
         
         // Move drag-output into messages-container or replace if already there
@@ -1981,10 +3087,19 @@ ${currentQuestion}`;
         // Ensure scroll stays at bottom after all rendering is complete
         this.scrollToBottom();
         
-        // Show answer this button
+        // Show action buttons container first
+        if (this.actionButtonsContainer) {
+            this.actionButtonsContainer.classList.remove('hidden');
+        }
+        
+        // Hide default answer button (under HUD) and show moved version in container
         if (this.answerThisBtn) {
-            this.answerThisBtn.classList.remove('hidden');
-            this.answerThisBtn.classList.remove('answer-this-default');
+            this.answerThisBtn.classList.add('hidden');
+            // Show the moved version in the container
+            const answerBtnMoved = document.getElementById('answer-this-btn-moved');
+            if (answerBtnMoved) {
+                answerBtnMoved.classList.remove('hidden');
+            }
         }
         
         // Show humanize button
@@ -2054,6 +3169,11 @@ ${currentQuestion}`;
             loadingContainer.id = 'drag-output';
             loadingContainer.innerHTML = processedContent;
             
+            // Render math with KaTeX (with delay to ensure DOM and KaTeX are ready)
+            setTimeout(() => {
+                this.renderMath(loadingContainer);
+            }, 200);
+            
             // Replace or add loading container
             if (this.messagesContainer) {
                 if (this.dragOutput && this.dragOutput.parentNode === this.messagesContainer) {
@@ -2104,6 +3224,9 @@ ${currentQuestion}`;
         // Hide buttons during loading
         if (this.answerThisBtn) {
             this.answerThisBtn.classList.add('hidden');
+        }
+        if (this.actionButtonsContainer) {
+            this.actionButtonsContainer.classList.add('hidden');
         }
         if (this.humanizeBtn) {
             this.humanizeBtn.classList.add('hidden');
@@ -2160,6 +3283,55 @@ ${currentQuestion}`;
         if (this.settingsMenu) {
             this.settingsMenu.classList.add('hidden');
         }
+    }
+
+    toggleModelSubmenu() {
+        if (this.modelSubmenu) {
+            const isHidden = this.modelSubmenu.classList.contains('hidden');
+            if (isHidden) {
+                this.modelSubmenu.classList.remove('hidden');
+            } else {
+                this.modelSubmenu.classList.add('hidden');
+            }
+        }
+    }
+
+    hideModelSubmenu() {
+        if (this.modelSubmenu) {
+            this.modelSubmenu.classList.add('hidden');
+        }
+    }
+
+    selectModel(model, modelName) {
+        console.log(`🤖 [MODEL SWITCHER] selectModel called: ${modelName} (${model})`);
+        console.log(`🤖 [MODEL SWITCHER] Previous model: ${this.selectedModel} (${this.selectedModelName})`);
+        console.log(`🤖 [MODEL SWITCHER] Has premium: ${this.hasPremiumAccess()}`);
+        console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
+        
+        this.selectedModel = model;
+        this.selectedModelName = modelName;
+        
+        // Update the display in the hamburger menu
+        if (this.currentModelDisplay) {
+            this.currentModelDisplay.textContent = modelName;
+            console.log(`🤖 [MODEL SWITCHER] Updated display to: ${modelName}`);
+        } else {
+            console.warn(`🤖 [MODEL SWITCHER] currentModelDisplay element not found!`);
+        }
+        
+        // Update active state
+        if (this.modelSubmenu) {
+            const modelItems = this.modelSubmenu.querySelectorAll('.model-item');
+            modelItems.forEach(item => {
+                if (item.getAttribute('data-model') === model) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+        
+        console.log(`🤖 [MODEL SWITCHER] Successfully switched to ${modelName} (${model})`);
     }
 
     clearChatHistory() {
@@ -2256,23 +3428,136 @@ ${currentQuestion}`;
     }
 
     showAccountModal() {
-        if (this.isElectron && window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.invoke('open-account-window');
+        if (this.accountModal) {
+            this.updateAccountInfo();
+            this.updateGoogleServicesStatus();
+            this.accountModal.classList.remove('hidden');
             this.hideSettingsMenu();
-        } else {
-            // Fallback for web version
-            if (this.accountModal) {
-                this.updateAccountInfo();
-                this.accountModal.classList.remove('hidden');
-                this.hideSettingsMenu();
-            }
         }
     }
 
     hideAccountModal() {
         if (this.accountModal) {
             this.accountModal.classList.add('hidden');
+        }
+    }
+    
+    toggleStealthMode(enabled, showNotification = true) {
+        if (!this.isElectron || !window.require) {
+            console.warn('Stealth mode toggle: Not in Electron environment');
+            return;
+        }
+        
+        // Update stealth mode state
+        this.stealthModeEnabled = enabled;
+        
+        // Apply CSS to disable click sounds when stealth mode is enabled
+        this.applyStealthModeStyles(enabled);
+        
+        try {
+            const { ipcRenderer } = window.require('electron');
+            console.log(`🔄 Calling IPC to toggle stealth mode to: ${enabled}`);
+            ipcRenderer.invoke('toggle-stealth-mode', enabled).then((success) => {
+                console.log(`✅ Stealth mode IPC result: ${success}, enabled: ${enabled}`);
+                if (success && showNotification) {
+                    const message = enabled ? 'Stealth Mode: ON 🥷 (Hidden from screen share, sounds disabled)' : 'Stealth Mode: OFF 👁️ (Visible in screen share)';
+                    this.showNotification(message, true);
+                } else if (!success) {
+                    console.error('❌ IPC returned false');
+                    if (showNotification) {
+                        this.showNotification('Failed to toggle stealth mode', false);
+                    }
+                }
+            }).catch((error) => {
+                console.error('❌ IPC call failed:', error);
+                if (showNotification) {
+                    this.showNotification('Failed to toggle stealth mode: ' + error.message, false);
+                }
+            });
+        } catch (error) {
+            console.error('❌ Error in toggleStealthMode:', error);
+            if (showNotification) {
+                this.showNotification('Error toggling stealth mode: ' + error.message, false);
+            }
+        }
+    }
+    
+    applyStealthModeStyles(enabled) {
+        // Add or remove CSS to disable click sounds and visual feedback
+        const styleId = 'stealth-mode-styles';
+        let styleElement = document.getElementById(styleId);
+        
+        if (enabled) {
+            // Create style element to disable sounds and reduce click feedback
+            if (!styleElement) {
+                styleElement = document.createElement('style');
+                styleElement.id = styleId;
+                document.head.appendChild(styleElement);
+            }
+            
+            styleElement.textContent = `
+                /* Disable system click sounds and reduce visual feedback in stealth mode */
+                button, .file-btn, .settings-btn, .model-item, .settings-item, 
+                .drag-handle, .answer-this-btn, .humanize-btn, .close-output-floating {
+                    -webkit-tap-highlight-color: transparent !important;
+                    tap-highlight-color: transparent !important;
+                    outline: none !important;
+                }
+                
+                /* Prevent audio playback */
+                audio {
+                    display: none !important;
+                }
+            `;
+            
+            // Override Audio constructor to prevent sound playback in stealth mode
+            if (!window._originalAudio) {
+                window._originalAudio = window.Audio;
+                window.Audio = function(...args) {
+                    const audio = new window._originalAudio(...args);
+                    const originalPlay = audio.play.bind(audio);
+                    audio.play = function() {
+                        console.log('🔇 Audio playback blocked in stealth mode');
+                        return Promise.resolve(); // Return resolved promise to prevent errors
+                    };
+                    return audio;
+                };
+            }
+            
+            // Disable system beep/alert sounds via Electron IPC if available
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('disable-system-sounds', true).catch(() => {
+                        // Ignore if IPC handler doesn't exist
+                    });
+                } catch (e) {
+                    // Ignore errors
+                }
+            }
+        } else {
+            // Remove stealth mode styles
+            if (styleElement) {
+                styleElement.remove();
+            }
+            
+            // Restore original Audio constructor
+            if (window._originalAudio) {
+                window.Audio = window._originalAudio;
+                delete window._originalAudio;
+            }
+            
+            // Re-enable system sounds
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('disable-system-sounds', false).catch(() => {
+                        // Ignore if IPC handler doesn't exist
+                    });
+                } catch (e) {
+                    // Ignore errors
+                }
+            }
         }
     }
 
@@ -2525,24 +3810,123 @@ ${currentQuestion}`;
                     content.push({ type: 'input_text', text: `\n\n[Attachment: ${file.name} (${file.mimeType || 'unknown type'})]` });
                 }
             }
-            const response = await fetch('https://api.openai.com/v1/responses', {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            let analysis;
+            
+            // If using OpenRouter model, send to OpenRouter with file attachments
+            if (this.selectedModel && this.selectedModel !== 'default') {
+                // Build message for OpenRouter chat format
+                const messages = [
+                    { role: 'system', content: 'Analyze the provided files and respond to the user succinctly and clearly.' }
+                ];
+                
+                // Convert content to OpenRouter format
+                let textParts = [];
+                let imageUrls = [];
+                for (const item of content) {
+                    if (item.type === 'input_text') {
+                        textParts.push(item.text);
+                    } else if (item.type === 'input_image') {
+                        imageUrls.push(item.image_url);
+                    }
+                }
+                
+                // Build user message with text and images
+                if (imageUrls.length > 0) {
+                    const userContent = [
+                        { type: 'text', text: textParts.join('\n') }
+                    ];
+                    imageUrls.forEach(url => {
+                        userContent.push({ type: 'image_url', image_url: { url } });
+                    });
+                    messages.push({ role: 'user', content: userContent });
+                } else {
+                    messages.push({ role: 'user', content: textParts.join('\n') });
+                }
+                
+                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.openrouterApiKey}`,
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://jarvis-ai.app',
+                        'X-Title': 'Jarvis AI'
+                    },
+                    body: JSON.stringify({
+                        model: this.selectedModel,
+                        messages: messages
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+                }
+                
+                const data = await response.json();
+                analysis = data.choices[0].message.content;
+            } else {
+                // Use default Jarvis model (GPT-5 Mini via IPC or proxy)
+                const requestPayload = {
                     model: this.currentModel,
                     instructions: 'Analyze the provided files and respond to the user succinctly and clearly.',
                     input: [{ role: 'user', content }]
-                })
-            });
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error?.message || `API error: ${response.status}`);
+                };
+                
+                let response;
+                // Try IPC first (most reliable in Electron)
+                if (this.isElectron && window.require) {
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        console.log('🔒 Using IPC to main process for file analysis');
+                        const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
+                        
+                        if (result && result.ok && result.data) {
+                            console.log('✅ Main process file analysis succeeded');
+                            analysis = this.extractText(result.data) || 'Unable to analyze files';
+                        } else {
+                            throw new Error(`IPC call failed: ${JSON.stringify(result)}`);
+                        }
+                    } catch (ipcError) {
+                        console.error('❌ IPC file analysis failed, falling back to proxy:', ipcError);
+                        response = null;
+                    }
+                }
+                
+                // Fallback to API proxy if IPC didn't work
+                if (!analysis && !response) {
+                    if (this.apiProxyUrl && this.supabaseAnonKey) {
+                        console.log('🔒 Using Supabase proxy for file analysis');
+                        response = await fetch(this.apiProxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                provider: 'openai',
+                                endpoint: 'responses',
+                                payload: requestPayload
+                            })
+                        });
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json().catch(() => ({}));
+                            throw new Error(errorData.error?.message || `API error: ${response.status}`);
+                        }
+                        const data = await response.json();
+                        analysis = this.extractText(data) || 'Unable to analyze files';
+                    } else {
+                        throw new Error('No API access method available. Please ensure the app is properly configured.');
+                    }
+                }
             }
-            const data = await response.json();
-            const analysis = this.extractText(data) || 'Unable to analyze files';
             const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
             this.conversationHistory.push({ role: 'user', content: userMessage });
-            this.conversationHistory.push({ role: 'assistant', content: analysis });
+            this.conversationHistory.push({ 
+                role: 'assistant', 
+                content: analysis,
+                model: this.selectedModelName || 'Jarvis'
+            });
             if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
             this.saveConversationHistory();
             if (!this.hasPremiumAccess()) this.incrementMessageCount();
@@ -2621,6 +4005,228 @@ ${currentQuestion}`;
             return freeAccess === 'true';
         } catch (e) {
             return false;
+        }
+    }
+
+    setupGoogleServices() {
+        if (!this.isElectron || !window.require) return;
+
+        const { ipcRenderer } = window.require('electron');
+
+        // Docs
+        const docsConnectBtn = document.getElementById('docs-connect-btn');
+        const docsDisconnectBtn = document.getElementById('docs-disconnect-btn');
+        if (docsConnectBtn) {
+            docsConnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-docs-authenticate');
+                    if (result.success) {
+                        this.showNotification('✅ Connected to Google Docs!', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error connecting to Google Docs: ${error.message}`, false);
+                }
+            });
+        }
+        if (docsDisconnectBtn) {
+            docsDisconnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-docs-sign-out');
+                    if (result.success) {
+                        this.showNotification('✅ Disconnected from Google Docs', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
+                }
+            });
+        }
+
+        // Sheets (shares auth with Docs)
+        const sheetsConnectBtn = document.getElementById('sheets-connect-btn');
+        const sheetsDisconnectBtn = document.getElementById('sheets-disconnect-btn');
+        if (sheetsConnectBtn) {
+            sheetsConnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-docs-authenticate');
+                    if (result.success) {
+                        this.showNotification('✅ Connected to Google Sheets!', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error connecting to Google Sheets: ${error.message}`, false);
+                }
+            });
+        }
+        if (sheetsDisconnectBtn) {
+            sheetsDisconnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-docs-sign-out');
+                    if (result.success) {
+                        this.showNotification('✅ Disconnected from Google Sheets', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
+                }
+            });
+        }
+
+        // Drive (shares auth with Docs)
+        const driveConnectBtn = document.getElementById('drive-connect-btn');
+        const driveDisconnectBtn = document.getElementById('drive-disconnect-btn');
+        if (driveConnectBtn) {
+            driveConnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-docs-authenticate');
+                    if (result.success) {
+                        this.showNotification('✅ Connected to Google Drive!', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error connecting to Google Drive: ${error.message}`, false);
+                }
+            });
+        }
+        if (driveDisconnectBtn) {
+            driveDisconnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-docs-sign-out');
+                    if (result.success) {
+                        this.showNotification('✅ Disconnected from Google Drive', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
+                }
+            });
+        }
+
+        // Gmail
+        const gmailConnectBtn = document.getElementById('gmail-connect-btn');
+        const gmailDisconnectBtn = document.getElementById('gmail-disconnect-btn');
+        if (gmailConnectBtn) {
+            gmailConnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('gmail-authenticate');
+                    if (result.success) {
+                        this.showNotification('✅ Connected to Gmail!', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error connecting to Gmail: ${error.message}`, false);
+                }
+            });
+        }
+        if (gmailDisconnectBtn) {
+            gmailDisconnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('gmail-sign-out');
+                    if (result.success) {
+                        this.showNotification('✅ Disconnected from Gmail', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
+                }
+            });
+        }
+
+        // Calendar
+        const calendarConnectBtn = document.getElementById('calendar-connect-btn');
+        const calendarDisconnectBtn = document.getElementById('calendar-disconnect-btn');
+        if (calendarConnectBtn) {
+            calendarConnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-calendar-authenticate');
+                    if (result.success) {
+                        this.showNotification('✅ Connected to Google Calendar!', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error connecting to Google Calendar: ${error.message}`, false);
+                }
+            });
+        }
+        if (calendarDisconnectBtn) {
+            calendarDisconnectBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ipcRenderer.invoke('google-calendar-sign-out');
+                    if (result.success) {
+                        this.showNotification('✅ Disconnected from Google Calendar', true);
+                        this.updateGoogleServicesStatus();
+                    } else {
+                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
+                }
+            });
+        }
+    }
+
+    async updateGoogleServicesStatus() {
+        if (!this.isElectron || !window.require) return;
+
+        const { ipcRenderer } = window.require('electron');
+
+        try {
+            // Check Docs status
+            const docsStatus = await ipcRenderer.invoke('google-docs-auth-status');
+            this.updateServiceStatus('docs', docsStatus.authenticated);
+
+            // Check Drive/Sheets status (shares tokens with Docs)
+            const driveStatus = await ipcRenderer.invoke('google-drive-auth-status');
+            this.updateServiceStatus('drive', driveStatus.authenticated);
+            this.updateServiceStatus('sheets', driveStatus.authenticated);
+
+            // Check Gmail status
+            const gmailStatus = await ipcRenderer.invoke('gmail-auth-status');
+            this.updateServiceStatus('gmail', gmailStatus.authenticated);
+
+            // Check Calendar status
+            const calendarStatus = await ipcRenderer.invoke('google-calendar-auth-status');
+            this.updateServiceStatus('calendar', calendarStatus.authenticated);
+        } catch (error) {
+            console.error('Error updating Google Services status:', error);
+        }
+    }
+
+    updateServiceStatus(service, isConnected) {
+        const statusElement = document.getElementById(`${service}-status`);
+        const connectBtn = document.getElementById(`${service}-connect-btn`);
+        const disconnectBtn = document.getElementById(`${service}-disconnect-btn`);
+
+        if (statusElement) {
+            statusElement.textContent = isConnected ? 'Connected' : 'Not connected';
+            statusElement.style.color = isConnected ? '#4CAF50' : '#888';
+        }
+
+        if (connectBtn) {
+            connectBtn.classList.toggle('hidden', isConnected);
+        }
+
+        if (disconnectBtn) {
+            disconnectBtn.classList.toggle('hidden', !isConnected);
         }
     }
 
@@ -3138,35 +4744,353 @@ User Question: ${question}`;
         this.addMessage('Jarvis', 'Free access granted! All Pro features are now unlocked! 🎉', 'assistant');
     }
 
+    stripMarkdown(text) {
+        // Remove markdown formatting for plain text (used for dragging)
+        let clean = text;
+        
+        // Remove headers (keep the text, remove markers)
+        clean = clean.replace(/^### (.+)$/gm, '$1');
+        clean = clean.replace(/^## (.+)$/gm, '$1');
+        clean = clean.replace(/^# (.+)$/gm, '$1');
+        
+        // Remove bold (**text** and __text__)
+        clean = clean.replace(/\*\*(.+?)\*\*/g, '$1');
+        clean = clean.replace(/__(.+?)__/g, '$1');
+        
+        // Remove italic (*text* or _text_) - do this AFTER bold
+        clean = clean.replace(/\*(.+?)\*/g, '$1');
+        clean = clean.replace(/_(.+?)_/g, '$1');
+        
+        // Remove code blocks
+        clean = clean.replace(/```[^\n]*\n([^`]+)```/g, '$1');
+        
+        // Remove inline code
+        clean = clean.replace(/`([^`]+)`/g, '$1');
+        
+        // Remove links [text](url) -> text
+        clean = clean.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1');
+        
+        // Remove images ![alt](url)
+        clean = clean.replace(/!\[([^\]]*)\]\([^\)]+\)/g, '');
+        
+        // Clean bullet points - convert markdown bullets to simple bullet
+        clean = clean.replace(/^[\-\*]\s+/gm, '• ');
+        
+        // Preserve paragraph breaks - ensure double newlines stay as double newlines
+        // This is important for maintaining spacing between paragraphs
+        clean = clean.replace(/\n{3,}/g, '\n\n'); // Normalize excessive breaks but keep double
+        
+        // Process markdown tables - convert to tab-separated format for better transferability
+        // Match table pattern: header row, separator row, data rows
+        clean = clean.replace(/(\|[^\n]+\|\n\|[:\-\s\|]+\|\n(?:\|[^\n]+\|\n?)+)/g, (match) => {
+            const lines = match.trim().split('\n');
+            if (lines.length < 2) return match;
+            
+            // Parse header row
+            const headerRow = lines[0].split('|').map(cell => cell.trim()).filter(cell => cell);
+            // Skip separator row (line 1)
+            // Parse data rows
+            const dataRows = lines.slice(2).map(line => 
+                line.split('|').map(cell => cell.trim()).filter(cell => cell)
+            );
+            
+            // Build tab-separated table (works well when copied to Google Docs)
+            let tableText = '\n';
+            // Header row
+            if (headerRow.length > 0) {
+                tableText += headerRow.join('\t') + '\n';
+            }
+            // Data rows
+            dataRows.forEach(row => {
+                // Pad row to match header length
+                while (row.length < headerRow.length) {
+                    row.push('');
+                }
+                tableText += row.slice(0, headerRow.length).join('\t') + '\n';
+            });
+            tableText += '\n';
+            return tableText;
+        });
+        
+        // Clean up multiple consecutive spaces (but NOT newlines)
+        clean = clean.replace(/ {2,}/g, ' ');
+        
+        // Clean up excessive line breaks (more than 2 consecutive)
+        clean = clean.replace(/\n{3,}/g, '\n\n');
+        
+        // Remove HTML tags if any leaked through
+        clean = clean.replace(/<[^>]*>/g, '');
+        
+        // Remove leading/trailing whitespace
+        clean = clean.trim();
+        
+        return clean;
+    }
+
     processContent(content, isHTML) {
         let processed = content;
         
+        // Process markdown formatting FIRST (before other replacements)
+        // Headers (## or ###)
+        processed = processed.replace(/^### (.+)$/gm, '<h3 style="font-size: 1.1em; font-weight: 600; margin: 0.8em 0 0.4em 0;">$1</h3>');
+        processed = processed.replace(/^## (.+)$/gm, '<h2 style="font-size: 1.2em; font-weight: 600; margin: 1em 0 0.5em 0;">$1</h2>');
+        processed = processed.replace(/^# (.+)$/gm, '<h1 style="font-size: 1.3em; font-weight: 600; margin: 1em 0 0.5em 0;">$1</h1>');
+        
+        // Bold text (**text**)
+        processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        
+        // Italic text (*text* or _text_)
+        processed = processed.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        processed = processed.replace(/_(.+?)_/g, '<em>$1</em>');
+        
+        // Code blocks (```code```)
+        processed = processed.replace(/```([^`]+)```/g, '<code style="display: block; background: rgba(255,255,255,0.1); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace; white-space: pre-wrap;">$1</code>');
+        
+        // Inline code (`code`)
+        processed = processed.replace(/`([^`]+)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>');
+        
+        // Bullet lists (- item or * item)
+        processed = processed.replace(/^[•\-\*] (.+)$/gm, '<div style="margin-left: 1.2em; margin-top: 0.3em;">• $1</div>');
+        
+        // Process paragraphs - convert double newlines to paragraph tags with blank lines between
+        // But preserve tables and other block elements
+        // First, temporarily mark tables to protect them
+        const tablePlaceholders = [];
+        let tableIndex = 0;
+        processed = processed.replace(/<table[\s\S]*?<\/table>/gi, (match) => {
+            const placeholder = `__TABLE_PLACEHOLDER_${tableIndex}__`;
+            tablePlaceholders.push(match);
+            tableIndex++;
+            return placeholder;
+        });
+        
+        // Now process paragraphs (tables are protected)
+        // Split by double newlines and wrap each paragraph
+        // Also handle single newlines that might separate paragraphs in the original text
+        let paragraphBreaks = processed.split(/\n\s*\n/);
+        
+        // If we only got one paragraph, check for single newlines that might indicate paragraph breaks
+        // (but not within code blocks or tables)
+        if (paragraphBreaks.length === 1) {
+            // Try splitting by single newlines, but be careful not to break code blocks
+            const lines = processed.split('\n');
+            const newParagraphs = [];
+            let currentParagraph = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+                
+                // Skip empty lines - they indicate paragraph breaks
+                if (trimmed === '' && currentParagraph.length > 0) {
+                    newParagraphs.push(currentParagraph.join('\n'));
+                    currentParagraph = [];
+                } else if (trimmed !== '' || currentParagraph.length > 0) {
+                    currentParagraph.push(line);
+                }
+            }
+            
+            if (currentParagraph.length > 0) {
+                newParagraphs.push(currentParagraph.join('\n'));
+            }
+            
+            if (newParagraphs.length > 1) {
+                paragraphBreaks = newParagraphs;
+            }
+        }
+        
+        const paragraphs = paragraphBreaks.filter(p => p.trim());
+        if (paragraphs.length > 1) {
+            // Wrap each paragraph in <p> tags - separate block elements, no <br> needed
+            processed = paragraphs.map(p => {
+                const trimmed = p.trim();
+                // Don't wrap if already wrapped or if it's a placeholder/other block element
+                if (trimmed.includes('__TABLE_PLACEHOLDER_') || 
+                    (trimmed.startsWith('<') && (trimmed.startsWith('<p') || trimmed.startsWith('<div') || trimmed.startsWith('<h')))) {
+                    return trimmed;
+                }
+                return `<p style="line-height: 1.6; margin: 0; padding: 0; display: block;">${trimmed}</p>`;
+            }).join('\n'); // Use newline between paragraphs, not <br>
+        } else if (paragraphs.length === 1 && !paragraphs[0].includes('<p') && !paragraphs[0].includes('<div') && !paragraphs[0].includes('<h') && !paragraphs[0].includes('__TABLE_PLACEHOLDER_')) {
+            // Single paragraph that's not already wrapped - wrap it
+            processed = `<p style="line-height: 1.6; margin: 0; padding: 0; display: block;">${paragraphs[0].trim()}</p>`;
+        }
+        
+        // Restore tables
+        tablePlaceholders.forEach((table, idx) => {
+            processed = processed.replace(`__TABLE_PLACEHOLDER_${idx}__`, table);
+        });
+        
         // Make URLs clickable
-        processed = processed.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color: #4A9EFF; text-decoration: underline;">$1</a>');
+        processed = processed.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color: #4A9EFF; text-decoration: underline;">$1</a>');
         
-        // Format powers
-        processed = processed.replace(/([a-zA-Z])\^(\d+)/g, '$1<sup>$2</sup>');
-        processed = processed.replace(/\^(\d+)/g, '<sup>$1</sup>');
+        // Process LaTeX math blocks first (\[ ... \] or $$ ... $$)
+        // These should be rendered as display math - keep delimiters for auto-render
+        processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, '<div class="math-display">\\[$1\\]</div>');
+        processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, '<div class="math-display">$$$1$$</div>');
         
-        // Format simple fractions
-        processed = processed.replace(/(\d+)\/(\d+)/g, '<span style="display: inline-block; vertical-align: middle; text-align: center; margin: 0 2px;"><span style="border-bottom: 1px solid; padding-bottom: 1px;">$1</span><br><span>$2</span></span>');
+        // Process inline LaTeX math (\( ... \) or $ ... $)
+        // Use a more careful regex that doesn't match inside code blocks
+        processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, '<span class="math-inline">\\($1\\)</span>');
+        // Match $...$ but not $$...$$ (inline math) - be careful not to match inside code blocks
+        processed = processed.replace(/(?<!`)(?<!\$)(?<!\\)\$([^$\n\\`]+?)\$(?!\$)(?!`)/g, '<span class="math-inline">$$1$</span>');
         
-        // Format common math symbols
-        processed = processed.replace(/\bpi\b/g, 'π');
-        processed = processed.replace(/\binfinity\b/g, '∞');
-        processed = processed.replace(/\balpha\b/g, 'α');
-        processed = processed.replace(/\bbeta\b/g, 'β');
-        processed = processed.replace(/\bgamma\b/g, 'γ');
-        processed = processed.replace(/\bdelta\b/g, 'δ');
-        processed = processed.replace(/\btheta\b/g, 'θ');
-        processed = processed.replace(/\blambda\b/g, 'λ');
-        processed = processed.replace(/\bmu\b/g, 'μ');
-        processed = processed.replace(/\bsigma\b/g, 'σ');
+        // Format powers (only if not already in LaTeX)
+        processed = processed.replace(/(?<!\\[()])([a-zA-Z])\^(\d+)(?![\\[()])/g, '$1<sup>$2</sup>');
+        processed = processed.replace(/(?<!\\[()])\^(\d+)(?![\\[()])/g, '<sup>$1</sup>');
         
-        // Format multiplication symbols
-        processed = processed.replace(/\*/g, '×');
+        // Format simple fractions (only if not already in LaTeX)
+        // Don't replace fractions that are inside LaTeX blocks
+        processed = processed.replace(/(?<!\\[()])(\d+)\/(\d+)(?![\\[()])/g, '<span style="display: inline-block; vertical-align: middle; text-align: center; margin: 0 2px;"><span style="border-bottom: 1px solid; padding-bottom: 1px;">$1</span><br><span>$2</span></span>');
+        
+        // Process markdown tables (| col1 | col2 | col3 |)
+        // Match table pattern: header row, separator row, data rows
+        processed = processed.replace(/(\|[^\n]+\|\n\|[:\-\s\|]+\|\n(?:\|[^\n]+\|\n?)+)/g, (match) => {
+            const lines = match.trim().split('\n');
+            if (lines.length < 2) return match;
+            
+            // Helper function to process cell content (without recursion)
+            const processCell = (cell) => {
+                let cellContent = cell;
+                // Process bold
+                cellContent = cellContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                // Process italic
+                cellContent = cellContent.replace(/\*(.+?)\*/g, '<em>$1</em>');
+                // Process inline code
+                cellContent = cellContent.replace(/`([^`]+)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; font-family: monospace;">$1</code>');
+                return cellContent;
+            };
+            
+            // Parse header row
+            const headerRow = lines[0].split('|').map(cell => cell.trim()).filter(cell => cell);
+            // Skip separator row (line 1)
+            // Parse data rows
+            const dataRows = lines.slice(2).map(line => 
+                line.split('|').map(cell => cell.trim()).filter(cell => cell)
+            );
+            
+            // Build HTML table
+            let html = '<table style="border-collapse: collapse; width: 100%; margin: 1em 0; border: 1px solid rgba(255,255,255,0.2);">';
+            
+            // Header row
+            if (headerRow.length > 0) {
+                html += '<thead><tr style="background: rgba(255,255,255,0.1);">';
+                headerRow.forEach(cell => {
+                    html += `<th style="border: 1px solid rgba(255,255,255,0.2); padding: 10px 12px; text-align: left; font-weight: 600;">${processCell(cell)}</th>`;
+                });
+                html += '</tr></thead>';
+            }
+            
+            // Data rows
+            if (dataRows.length > 0) {
+                html += '<tbody>';
+                dataRows.forEach(row => {
+                    html += '<tr>';
+                    row.forEach((cell, idx) => {
+                        const cellContent = idx < headerRow.length ? cell : '';
+                        html += `<td style="border: 1px solid rgba(255,255,255,0.2); padding: 10px 12px; text-align: left;">${processCell(cellContent)}</td>`;
+                    });
+                    html += '</tr>';
+                });
+                html += '</tbody>';
+            }
+            
+            html += '</table>';
+            return html;
+        });
+        
+        // Format common math symbols (only if not in LaTeX)
+        processed = processed.replace(/(?<!\\[()])\bpi\b(?![\\[()])/g, 'π');
+        processed = processed.replace(/(?<!\\[()])\binfinity\b(?![\\[()])/g, '∞');
+        processed = processed.replace(/(?<!\\[()])\balpha\b(?![\\[()])/g, 'α');
+        processed = processed.replace(/(?<!\\[()])\bbeta\b(?![\\[()])/g, 'β');
+        processed = processed.replace(/(?<!\\[()])\bgamma\b(?![\\[()])/g, 'γ');
+        processed = processed.replace(/(?<!\\[()])\bdelta\b(?![\\[()])/g, 'δ');
+        processed = processed.replace(/(?<!\\[()])\btheta\b(?![\\[()])/g, 'θ');
+        processed = processed.replace(/(?<!\\[()])\blambda\b(?![\\[()])/g, 'λ');
+        processed = processed.replace(/(?<!\\[()])\bmu\b(?![\\[()])/g, 'μ');
+        processed = processed.replace(/(?<!\\[()])\bsigma\b(?![\\[()])/g, 'σ');
         
         return processed;
+    }
+
+    renderMath(element) {
+        if (!element) return;
+        
+        // Wait for KaTeX to load - check multiple times with increasing delays
+        if (typeof window.katex === 'undefined') {
+            setTimeout(() => this.renderMath(element), 200);
+            return;
+        }
+
+        try {
+            // Use auto-render first - it's the most reliable method
+            if (typeof window.renderMathInElement !== 'undefined') {
+                try {
+                    window.renderMathInElement(element, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '$', right: '$', display: false},
+                            {left: '\\(', right: '\\)', display: false}
+                        ],
+                        throwOnError: false,
+                        strict: false,
+                        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+                    });
+                } catch (e) {
+                    console.warn('Auto-render error:', e);
+                }
+            }
+
+            // Also manually render wrapped math elements as backup
+            const displayMathElements = element.querySelectorAll('.math-display');
+            displayMathElements.forEach(el => {
+                // Skip if already rendered by auto-render (has katex class)
+                if (el.querySelector('.katex')) return;
+                
+                let mathText = el.textContent.trim();
+                // Remove delimiters if present
+                mathText = mathText.replace(/^\\\[|\\\]$/g, '').replace(/^\$\$|\$\$$/g, '').trim();
+                if (mathText) {
+                    try {
+                        // Clear the element first
+                        el.textContent = '';
+                        window.katex.render(mathText, el, {
+                            displayMode: true,
+                            throwOnError: false
+                        });
+                    } catch (e) {
+                        console.warn('KaTeX render error:', e, mathText);
+                    }
+                }
+            });
+
+            // Render inline math (\( ... \) or $ ... $)
+            const inlineMathElements = element.querySelectorAll('.math-inline');
+            inlineMathElements.forEach(el => {
+                // Skip if already rendered by auto-render (has katex class)
+                if (el.querySelector('.katex')) return;
+                
+                let mathText = el.textContent.trim();
+                // Remove delimiters if present
+                mathText = mathText.replace(/^\\\(|\\\)$/g, '').replace(/^\$|\$$/g, '').trim();
+                if (mathText) {
+                    try {
+                        // Clear the element first
+                        el.textContent = '';
+                        window.katex.render(mathText, el, {
+                            displayMode: false,
+                            throwOnError: false
+                        });
+                    } catch (e) {
+                        console.warn('KaTeX render error:', e, mathText);
+                    }
+                }
+            });
+        } catch (error) {
+            console.warn('Error rendering math:', error);
+        }
     }
 
     showChunkedResponse(content, isHTML = false) {
@@ -3178,7 +5102,12 @@ User Question: ${question}`;
         const processedFirstChunk = this.processContent(firstChunk, isHTML);
         
         this.dragOutput.innerHTML = processedFirstChunk;
-        this.dragOutput.dataset.fullText = firstChunk.replace(/<[^>]*>/g, '');
+        this.dragOutput.dataset.fullText = this.stripMarkdown(firstChunk).replace(/<[^>]*>/g, '');
+        
+        // Render math with KaTeX (with delay to ensure DOM and KaTeX are ready)
+        setTimeout(() => {
+            this.renderMath(this.dragOutput);
+        }, 200);
         
         this.dragOutput.classList.remove('hidden');
         this.positionFloatingClose();
@@ -3252,7 +5181,12 @@ User Question: ${question}`;
             const processedNextChunk = this.processContent(nextChunk, isHTML);
             
             this.dragOutput.innerHTML = processedNextChunk;
-            this.dragOutput.dataset.fullText = nextChunk.replace(/<[^>]*>/g, '');
+            this.dragOutput.dataset.fullText = this.stripMarkdown(nextChunk).replace(/<[^>]*>/g, '');
+            
+            // Render math with KaTeX (with delay to ensure DOM and KaTeX are ready)
+            setTimeout(() => {
+                this.renderMath(this.dragOutput);
+            }, 200);
             
             continueBtn.remove();
             
@@ -3318,56 +5252,32 @@ User Question: ${question}`;
             this.showNotification('✅ Step 3: Screenshot captured successfully');
             this.showNotification('🔍 Step 4: Processing screenshot image data...');
 
-            // Build conversation context with full history for better continuity
-            this.showNotification('📝 Step 5: Building conversation context...');
-            let conversationContext = '';
-            if (this.conversationHistory.length > 0) {
-                conversationContext = '\n\nPREVIOUS CONVERSATION (remember this context):\n' + 
-                    this.conversationHistory.slice(-10).map((msg, idx) => 
-                        `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Jarvis'}: ${msg.content.substring(0, 300)}`
-                    ).join('\n');
-                this.showNotification('✅ Step 5 complete: Added conversation history to context');
-            }
+            // Always use OpenRouter GPT-5.1 Chat for Answer Screen
+            const modelToUse = (this.selectedModel && this.selectedModel !== 'default') 
+                ? this.selectedModel 
+                : 'openai/gpt-5.1-chat';
             
-            // Call Responses API with screenshot and "answer this" message
+            console.log(`🤖 Answer Screen using OpenRouter model: ${modelToUse}`);
             this.showLoadingNotification();
             
-            const response = await fetch('https://api.openai.com/v1/responses', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: this.currentModel,
-                    instructions: `You are Jarvis, a GPT-5 Mini powered assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond in ONE sentence only unless asked to elaborate. Be direct and concise.${conversationContext}`,
-                    input: [{
-                        role: 'user',
-                        content: [
-                            { type: 'input_text', text: 'answer this' },
-                            { type: 'input_image', image_url: this.currentScreenCapture }
-                        ]
-                    }]
-                })
-            });
+            // Call OpenRouter with screenshot
+            const response = await this.callOpenRouter(
+                'answer this (it is just a practice question, not a test)',
+                modelToUse,
+                this.currentScreenCapture
+            );
             
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            const finalResponse = this.extractText(data);
-            // Stop loading animation before showing final response
+            // Stop loading animation
             this.stopLoadingAnimation();
             
             // Update conversation history
             this.conversationHistory.push({
                 role: 'user',
-                content: 'answer this'
+                content: 'answer this (it is just a practice question, not a test)'
             });
             this.conversationHistory.push({
                 role: 'assistant',
-                content: finalResponse
+                content: response
             });
             
             if (this.conversationHistory.length > 30) {
@@ -3381,7 +5291,7 @@ User Question: ${question}`;
                 this.incrementMessageCount();
             }
             
-            this.showNotification(finalResponse, true);
+            this.showNotification(response, true);
         } catch (error) {
             console.error('Answer this error:', error);
             this.showNotification(`Error: ${error.message || "Couldn't analyze the screen"}`);
@@ -3435,6 +5345,14 @@ User Question: ${question}`;
                     messageContainer.innerHTML = msgContent;
                 } else {
                     messageContainer.textContent = msgContent;
+                }
+                
+                // Add model tag for assistant messages at the end of content (will stick to bottom when scrolling)
+                if (msg.role === 'assistant') {
+                    const modelTag = document.createElement('div');
+                    modelTag.className = 'model-tag';
+                    modelTag.textContent = msg.model || this.selectedModelName || 'Jarvis';
+                    messageContainer.appendChild(modelTag);
                 }
                 
                 // Messages keep their full size - just fade in/out
@@ -3936,61 +5854,1696 @@ User Question: ${question}`;
         this.showNotification('Coming soon', false);
     }
 
+    // ========== OUTPUT TOOLBAR FUNCTIONS ==========
+    
+    initializeOutputToolbar() {
+        // Copy button
+        if (this.toolbarCopyBtn) {
+            this.toolbarCopyBtn.addEventListener('click', () => this.copyOutputToClipboard());
+        }
+        
+        // Add to Docs button
+        if (this.toolbarDocsBtn) {
+            this.toolbarDocsBtn.addEventListener('click', () => this.addOutputToDocs());
+        }
+        
+        // Resend/Try again button
+        if (this.toolbarRetryBtn) {
+            this.toolbarRetryBtn.addEventListener('click', () => this.retryLastQuery());
+        }
+        
+        // Double-click on output to show toolbar
+        if (this.messagesContainer) {
+            this.messagesContainer.addEventListener('dblclick', (e) => {
+                // Only trigger if double-clicking on the drag-output
+                const output = e.target.closest('#drag-output');
+                if (output) {
+                    this.toggleOutputToolbar();
+                }
+            });
+        }
+        
+        // Hide toolbar when clicking outside
+        document.addEventListener('click', (e) => {
+            if (this.outputToolbar && !this.outputToolbar.classList.contains('hidden')) {
+                if (!e.target.closest('#output-toolbar') && !e.target.closest('#drag-output')) {
+                    this.hideOutputToolbar();
+                }
+            }
+        });
+    }
+    
+    toggleOutputToolbar() {
+        if (!this.outputToolbar) return;
+        
+        if (this.outputToolbar.classList.contains('hidden')) {
+            this.showOutputToolbar();
+        } else {
+            this.hideOutputToolbar();
+        }
+    }
+    
+    showOutputToolbar() {
+        if (!this.outputToolbar || !this.messagesContainer) return;
+        
+        // Position the toolbar below the messages container
+        const containerRect = this.messagesContainer.getBoundingClientRect();
+        const overlayRect = this.overlay.getBoundingClientRect();
+        
+        // Position relative to overlay
+        this.outputToolbar.style.top = `${containerRect.bottom - overlayRect.top + 8}px`;
+        this.outputToolbar.style.left = '50%';
+        this.outputToolbar.style.transform = 'translateX(-50%)';
+        
+        this.outputToolbar.classList.remove('hidden');
+    }
+    
+    hideOutputToolbar() {
+        if (this.outputToolbar) {
+            this.outputToolbar.classList.add('hidden');
+        }
+    }
+    
+    async copyOutputToClipboard() {
+        if (!this.dragOutput) return;
+        
+        try {
+            // Get the text content from the output
+            const text = this.dragOutput.dataset.fullText || this.dragOutput.innerText || '';
+            
+            let success = false;
+            
+            // Use Electron IPC to copy (most reliable in Electron apps)
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                success = await ipcRenderer.invoke('copy-to-clipboard', text);
+            } else {
+                // Fallback to web clipboard API
+                await navigator.clipboard.writeText(text);
+                success = true;
+            }
+            
+            if (success) {
+                // Show visual feedback
+                if (this.toolbarCopyBtn) {
+                    this.toolbarCopyBtn.classList.add('copied');
+                    setTimeout(() => {
+                        this.toolbarCopyBtn.classList.remove('copied');
+                    }, 1500);
+                }
+            } else {
+                throw new Error('IPC copy failed');
+            }
+        } catch (error) {
+            console.error('Failed to copy:', error);
+            this.showNotification('Failed to copy to clipboard', false);
+        }
+    }
+    
+    async retryLastQuery() {
+        if (!this.lastUserQuery) {
+            this.showNotification('No previous query to retry', false);
+            return;
+        }
+        
+        // Hide toolbar before resending
+        this.hideOutputToolbar();
+        
+        // Re-send the last query
+        if (this.textInput) {
+            this.textInput.value = this.lastUserQuery;
+        }
+        await this.sendMessage();
+    }
+    
+    async addOutputToDocs() {
+        if (!this.dragOutput) {
+            this.showNotification('No output to add to docs', false);
+            return;
+        }
+        
+        // Hide toolbar
+        this.hideOutputToolbar();
+        
+        // Get the content from the output
+        const htmlContent = this.dragOutput.innerHTML;
+        const textContent = this.dragOutput.dataset.fullText || this.dragOutput.innerText || '';
+        
+        // Use existing writeToDocs method (same as /docs command)
+        if (typeof this.writeToDocs === 'function') {
+            await this.writeToDocs(false); // false = not paste mode, use realistic typing
+        } else {
+            this.showNotification('Google Docs integration not available', false);
+        }
+    }
+    
+    // ========== END OUTPUT TOOLBAR FUNCTIONS ==========
+
+    /**
+     * Show document name modal and return promise with document name
+     */
+    async promptDocumentName(defaultName = '') {
+        return new Promise((resolve) => {
+            if (!this.documentNameModal || !this.documentNameInput) {
+                resolve(defaultName);
+                return;
+            }
+
+            // Make window interactive when showing modal
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                ipcRenderer.invoke('make-interactive').catch(() => {});
+            }
+
+            // Set default value
+            this.documentNameInput.value = defaultName || `Jarvis Output - ${new Date().toLocaleDateString()}`;
+            
+            // Update modal title and button text
+            const modalTitle = this.documentNameModal.querySelector('h3');
+            const confirmBtn = this.documentNameConfirm;
+            if (modalTitle) modalTitle.textContent = 'Name Your Google Doc';
+            if (confirmBtn) confirmBtn.textContent = 'Create';
+            
+            // Show modal
+            this.documentNameModal.classList.remove('hidden');
+            this.documentNameInput.focus();
+            this.documentNameInput.select();
+
+            // Handle confirm
+            const handleConfirm = () => {
+                const name = this.documentNameInput.value.trim() || defaultName;
+                this.documentNameModal.classList.add('hidden');
+                cleanup();
+                resolve(name);
+            };
+
+            // Handle cancel
+            const handleCancel = () => {
+                this.documentNameModal.classList.add('hidden');
+                cleanup();
+                resolve(null);
+            };
+
+            // Handle Enter key
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter') {
+                    handleConfirm();
+                } else if (e.key === 'Escape') {
+                    handleCancel();
+                }
+            };
+
+            // Cleanup function
+            const cleanup = () => {
+                this.documentNameConfirm.removeEventListener('click', handleConfirm);
+                this.documentNameCancel.removeEventListener('click', handleCancel);
+                this.documentNameInput.removeEventListener('keydown', handleKeyPress);
+            };
+
+            // Add event listeners
+            this.documentNameConfirm.addEventListener('click', handleConfirm);
+            this.documentNameCancel.addEventListener('click', handleCancel);
+            this.documentNameInput.addEventListener('keydown', handleKeyPress);
+        });
+    }
+
+
+    async promptDocumentId() {
+        return new Promise(async (resolve) => {
+            // Re-query elements if they're not found (in case DOM wasn't ready during initialization)
+            if (!this.documentSelectionModal) {
+                this.documentSelectionModal = document.getElementById('document-selection-modal');
+            }
+            if (!this.documentList) {
+                this.documentList = document.getElementById('document-list');
+            }
+            if (!this.documentListLoading) {
+                this.documentListLoading = document.getElementById('document-list-loading');
+            }
+            if (!this.documentSelectionCancel) {
+                this.documentSelectionCancel = document.getElementById('document-selection-cancel');
+            }
+            if (!this.documentSelectionNew) {
+                this.documentSelectionNew = document.getElementById('document-selection-new');
+            }
+            
+            // Debug: Log what elements were found
+            console.log('Document selection modal elements:', {
+                modal: !!this.documentSelectionModal,
+                list: !!this.documentList,
+                loading: !!this.documentListLoading,
+                cancel: !!this.documentSelectionCancel,
+                new: !!this.documentSelectionNew
+            });
+            
+            if (!this.documentSelectionModal || !this.documentList || !this.documentListLoading) {
+                // Fallback to manual input if modal elements still don't exist
+                console.error('Document selection modal elements not found, falling back to manual input', {
+                    modal: !!this.documentSelectionModal,
+                    list: !!this.documentList,
+                    loading: !!this.documentListLoading
+                });
+                resolve(await this.promptDocumentIdManual());
+                return;
+            }
+
+            // Make window interactive when showing modal - do this BEFORE showing modal
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                // Force window to be interactive and focused
+                ipcRenderer.invoke('make-interactive').catch(() => {});
+                // Also ensure focus after a brief delay to make sure it sticks
+                setTimeout(() => {
+                    ipcRenderer.invoke('make-interactive').catch(() => {});
+                }, 50);
+            }
+
+            // Show loading state
+            this.documentListLoading.style.display = 'block';
+            this.documentList.style.display = 'none';
+            this.documentSelectionModal.classList.remove('hidden');
+            
+            // Ensure window stays interactive when modal is visible
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                // Keep window interactive while modal is open
+                const keepInteractive = setInterval(() => {
+                    ipcRenderer.invoke('make-interactive').catch(() => {});
+                }, 100);
+                
+                // Store interval ID for cleanup
+                this._documentModalInterval = keepInteractive;
+            }
+
+            // Load documents
+            let documents = [];
+            try {
+                if (this.isElectron && window.require) {
+                    const { ipcRenderer } = window.require('electron');
+                    const result = await ipcRenderer.invoke('list-google-docs');
+                    if (result.success && result.documents) {
+                        documents = result.documents;
+                    } else {
+                        throw new Error(result.error || 'Failed to load documents');
+                    }
+                } else {
+                    throw new Error('Not in Electron environment');
+                }
+            } catch (error) {
+                console.error('Error loading documents:', error);
+                // Don't fallback to manual input - show error in modal instead
+                this.documentListLoading.style.display = 'none';
+                this.documentList.style.display = 'block';
+                this.documentList.innerHTML = `<div style="text-align: center; padding: 40px; color: #ef4444;">
+                    <div style="margin-bottom: 10px;">⚠️ Failed to load documents</div>
+                    <div style="font-size: 12px; color: #888;">${error.message || 'Unknown error'}</div>
+                    <div style="margin-top: 20px; font-size: 12px; color: #888;">You can still create a new document</div>
+                </div>`;
+                // Continue showing the modal with "New Doc" button available
+                // Don't fallback to manual input - let user use "New Doc" button
+            }
+
+            // Hide loading, show list
+            this.documentListLoading.style.display = 'none';
+            this.documentList.style.display = 'block';
+
+            // Clear previous list
+            this.documentList.innerHTML = '';
+
+            if (documents.length === 0) {
+                this.documentList.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No documents found</div>';
+            } else {
+                // Create list items
+                documents.forEach((doc) => {
+                    const item = document.createElement('div');
+                    item.className = 'document-list-item';
+                    
+                    const name = document.createElement('div');
+                    name.style.cssText = 'font-weight: 500; color: #fff; margin-bottom: 4px;';
+                    name.textContent = doc.name;
+                    
+                    const date = document.createElement('div');
+                    date.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.5);';
+                    if (doc.modifiedTime) {
+                        const modifiedDate = new Date(doc.modifiedTime);
+                        date.textContent = `Modified: ${modifiedDate.toLocaleDateString()} ${modifiedDate.toLocaleTimeString()}`;
+                    }
+                    
+                    item.appendChild(name);
+                    item.appendChild(date);
+                    
+                    // Handle click
+                    item.addEventListener('click', () => {
+                        this.documentSelectionModal.classList.add('hidden');
+                        // Clear interval when modal closes
+                        if (this._documentModalInterval) {
+                            clearInterval(this._documentModalInterval);
+                            this._documentModalInterval = null;
+                        }
+                        cleanup();
+                        // Note: Don't restore click-through here - window needs to stay interactive
+                        // during the writing process. It will be restored after writing completes.
+                        resolve(doc.id);
+                    });
+                    
+                    this.documentList.appendChild(item);
+                });
+            }
+
+            // Handle new document
+            const handleNew = () => {
+                this.documentSelectionModal.classList.add('hidden');
+                // Clear interval when modal closes
+                if (this._documentModalInterval) {
+                    clearInterval(this._documentModalInterval);
+                    this._documentModalInterval = null;
+                }
+                cleanup();
+                // Note: Don't restore click-through here - window needs to stay interactive
+                // during the writing process. It will be restored after writing completes.
+                // Return special value to indicate new document
+                resolve('__NEW_DOC__');
+            };
+
+            // Handle cancel
+            const handleCancel = () => {
+                this.documentSelectionModal.classList.add('hidden');
+                // Clear interval when modal closes - do this immediately
+                if (this._documentModalInterval) {
+                    clearInterval(this._documentModalInterval);
+                    this._documentModalInterval = null;
+                }
+                cleanup();
+                // Restore click-through mode immediately and multiple times to ensure it sticks
+                if (this.isElectron && window.require) {
+                    const { ipcRenderer } = window.require('electron');
+                    // Restore click-through immediately
+                    ipcRenderer.invoke('make-click-through').catch(() => {});
+                    // Also restore after delays to ensure it sticks
+                    setTimeout(() => {
+                        ipcRenderer.invoke('make-click-through').catch(() => {});
+                    }, 50);
+                    setTimeout(() => {
+                        ipcRenderer.invoke('make-click-through').catch(() => {});
+                    }, 200);
+                }
+                resolve(null);
+            };
+
+            // Handle Escape key
+            const handleKeyPress = (e) => {
+                if (e.key === 'Escape') {
+                    handleCancel();
+                }
+            };
+
+            // Cleanup function
+            const cleanup = () => {
+                // Clear interval if still running
+                if (this._documentModalInterval) {
+                    clearInterval(this._documentModalInterval);
+                    this._documentModalInterval = null;
+                }
+                if (this.documentSelectionNew) {
+                    this.documentSelectionNew.removeEventListener('click', handleNew);
+                }
+                if (this.documentSelectionCancel) {
+                    this.documentSelectionCancel.removeEventListener('click', handleCancel);
+                }
+                document.removeEventListener('keydown', handleKeyPress);
+            };
+
+            // Check if cancel button exists - if not, log warning but continue (user can use Escape key)
+            if (!this.documentSelectionCancel) {
+                console.warn('document-selection-cancel button not found, but continuing - user can use Escape key');
+            }
+
+            // Add event listeners
+            if (this.documentSelectionNew) {
+                this.documentSelectionNew.addEventListener('click', handleNew);
+            }
+            if (this.documentSelectionCancel) {
+                this.documentSelectionCancel.addEventListener('click', handleCancel);
+            }
+            document.addEventListener('keydown', handleKeyPress);
+        });
+    }
+
+    async promptDocumentIdManual() {
+        return new Promise((resolve) => {
+            if (!this.documentNameModal || !this.documentNameInput) {
+                resolve(null);
+                return;
+            }
+
+            // Make window interactive when showing modal
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                ipcRenderer.invoke('make-interactive').catch(() => {});
+            }
+
+            // Update modal title and button text
+            const modalTitle = this.documentNameModal.querySelector('h3');
+            const confirmBtn = this.documentNameConfirm;
+            if (modalTitle) modalTitle.textContent = 'Enter Google Doc ID or URL';
+            if (confirmBtn) confirmBtn.textContent = 'Add to Doc';
+            
+            // Set placeholder
+            this.documentNameInput.placeholder = 'Paste document ID or full URL...';
+            this.documentNameInput.value = '';
+            
+            // Show modal
+            this.documentNameModal.classList.remove('hidden');
+            this.documentNameInput.focus();
+
+            // Handle confirm
+            const handleConfirm = () => {
+                const input = this.documentNameInput.value.trim();
+                this.documentNameModal.classList.add('hidden');
+                cleanup();
+                
+                if (!input) {
+                    resolve(null);
+                    return;
+                }
+                
+                // Extract document ID from URL if needed
+                const docId = this.extractDocumentId(input);
+                resolve(docId);
+            };
+
+            // Handle cancel
+            const handleCancel = () => {
+                this.documentNameModal.classList.add('hidden');
+                cleanup();
+                resolve(null);
+            };
+
+            // Handle Enter key
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter') {
+                    handleConfirm();
+                } else if (e.key === 'Escape') {
+                    handleCancel();
+                }
+            };
+
+            // Cleanup function
+            const cleanup = () => {
+                this.documentNameConfirm.removeEventListener('click', handleConfirm);
+                this.documentNameCancel.removeEventListener('click', handleCancel);
+                this.documentNameInput.removeEventListener('keydown', handleKeyPress);
+                // Reset placeholder
+                this.documentNameInput.placeholder = 'Enter document name...';
+            };
+
+            // Add event listeners
+            this.documentNameConfirm.addEventListener('click', handleConfirm);
+            this.documentNameCancel.addEventListener('click', handleCancel);
+            this.documentNameInput.addEventListener('keydown', handleKeyPress);
+        });
+    }
+
+    extractDocumentId(input) {
+        // If it's a URL, extract the document ID
+        if (input.includes('docs.google.com')) {
+            // Match patterns like:
+            // https://docs.google.com/document/d/DOCUMENT_ID/edit
+            // https://docs.google.com/document/d/DOCUMENT_ID
+            const match = input.match(/\/document\/d\/([a-zA-Z0-9-_]+)/);
+            if (match && match[1]) {
+                return match[1];
+            }
+        }
+        // Otherwise assume it's already a document ID
+        return input;
+    }
+
+    showDocsWritingIndicator() {
+        if (this.docsWritingIndicator) {
+            this.docsWritingIndicator.classList.remove('hidden');
+        }
+        if (this.docsDoneIndicator) {
+            this.docsDoneIndicator.classList.add('hidden');
+        }
+    }
+
+    hideDocsWritingIndicator() {
+        if (this.docsWritingIndicator) {
+            this.docsWritingIndicator.classList.add('hidden');
+        }
+    }
+
+    showDocsDoneIndicator(documentUrl) {
+        if (this.docsDoneIndicator) {
+            // Store document URL for the open button
+            this.docsDoneIndicator.dataset.documentUrl = documentUrl || '';
+            this.docsDoneIndicator.classList.remove('hidden');
+        }
+        if (this.docsWritingIndicator) {
+            this.docsWritingIndicator.classList.add('hidden');
+        }
+    }
+
+    hideDocsDoneIndicator() {
+        if (this.docsDoneIndicator) {
+            this.docsDoneIndicator.classList.add('hidden');
+        }
+    }
+
+    openGoogleDoc() {
+        if (this.docsDoneIndicator && this.docsDoneIndicator.dataset.documentUrl) {
+            const url = this.docsDoneIndicator.dataset.documentUrl;
+            if (this.isElectron && window.require) {
+                const { shell } = window.require('electron');
+                shell.openExternal(url);
+            } else {
+                window.open(url, '_blank');
+            }
+            // Hide the indicator after opening
+            this.hideDocsDoneIndicator();
+        }
+    }
+
+    async writeToDocs(usePasteMode = false) {
+        if (!this.dragOutput || this.dragOutput.classList.contains('hidden')) {
+            this.showNotification('No content to write to Docs', false);
+            return;
+        }
+
+        // Get HTML content to preserve table structure
+        const htmlContent = this.dragOutput.innerHTML || '';
+        
+        // Get clean text from the output (without HTML/markdown) for fallback
+        const cleanText = this.dragOutput.dataset.fullText || 
+                         this.dragOutput.textContent || 
+                         this.stripMarkdown(this.dragOutput.innerHTML).replace(/<[^>]*>/g, '').trim();
+
+        if (!cleanText || cleanText.length === 0) {
+            this.showNotification('No content available to write', false);
+            return;
+        }
+
+        if (!this.isElectron || !window.require) {
+            // Fallback: copy to clipboard
+            try {
+                await navigator.clipboard.writeText(cleanText);
+                this.showNotification('Content copied to clipboard! Paste it into Google Docs.', false);
+            } catch (error) {
+                this.showNotification('Failed to copy content. Please copy manually.', false);
+            }
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Show document selection modal directly (with New Doc button)
+            console.log('Calling promptDocumentId() to show document selection modal');
+            let documentId = await this.promptDocumentId();
+            
+            if (!documentId) {
+                // User cancelled - click-through should already be restored by cancel handler
+                console.log('User cancelled document selection');
+                return;
+            }
+            
+            let documentName = null;
+            
+            // Check if user clicked "New Doc" button
+            if (documentId === '__NEW_DOC__') {
+                // Prompt for document name
+                documentName = await this.promptDocumentName(`Jarvis Output - ${new Date().toLocaleDateString()}`);
+                
+                if (documentName === null) {
+                    // User cancelled
+                    return;
+                }
+                documentId = null; // Will create new document
+            }
+            
+            // Check authentication status first
+            const authStatus = await ipcRenderer.invoke('google-docs-auth-status');
+            
+            if (!authStatus.authenticated) {
+                // Not authenticated - prompt user to authenticate
+                const shouldAuthenticate = confirm(
+                    'Google Docs authentication required.\n\n' +
+                    'Click OK to authenticate with Google Docs.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Google Docs...', false);
+                const authResult = await ipcRenderer.invoke('google-docs-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            // Show writing indicator
+            this.showDocsWritingIndicator();
+            
+            // Prepare options
+            const options = {};
+            if (documentId) {
+                options.documentId = documentId;
+            } else {
+                options.title = documentName || `Jarvis Output - ${new Date().toLocaleString()}`;
+            }
+            
+            // Write to Google Docs (with or without realistic typing based on mode)
+            // Pass HTML content to preserve table structure
+            const writeMethod = usePasteMode ? 'write-to-docs' : 'write-to-docs-realistic';
+            ipcRenderer.invoke(writeMethod, htmlContent || cleanText, options).then(result => {
+                // Hide writing indicator
+                this.hideDocsWritingIndicator();
+                
+                if (result && result.success) {
+                    // Always show done indicator with open button if we have a URL
+                    const documentUrl = result.documentUrl || (result.documentId ? `https://docs.google.com/document/d/${result.documentId}` : null);
+                    if (documentUrl) {
+                        this.showDocsDoneIndicator(documentUrl);
+                    } else {
+                        // Fallback: show notification if no URL available
+                        const successMsg = usePasteMode 
+                            ? '✅ Document created successfully!' 
+                            : '✅ Document typed successfully!';
+                        this.showNotification(successMsg, false);
+                    }
+                } else {
+                    const errorMsg = result?.error || result?.message || 'Failed to write to Google Docs';
+                    
+                    // Check if re-authentication is required
+                    if (result?.requiresReauth || errorMsg.includes('insufficient authentication scopes') || errorMsg.includes('Insufficient Permission')) {
+                        // Show notification
+                        this.showNotification(`⚠️ Re-authentication required for Google Docs.\n\nOpening Account settings...`, false);
+                        // Clear authentication status to force re-auth
+                        ipcRenderer.invoke('google-docs-sign-out').catch(() => {});
+                        // Open account window after a short delay
+                        setTimeout(() => {
+                            this.showAccountWindow();
+                        }, 1000);
+                    } else if (errorMsg.includes('OAuth') || errorMsg.includes('credentials') || errorMsg.includes('not configured')) {
+                        this.showNotification(`❌ ${errorMsg}\n\nPlease check your Google OAuth credentials.`, false);
+                    } else if (errorMsg.includes('not found') || errorMsg.includes('permission')) {
+                        this.showNotification(`❌ ${errorMsg}\n\nPlease check that the document ID is correct and you have access to it.`, false);
+                    } else {
+                        this.showNotification(`❌ ${errorMsg}`, false);
+                    }
+                }
+            }).catch(error => {
+                // Hide writing indicator on error
+                this.hideDocsWritingIndicator();
+                console.error('Error writing to Docs:', error);
+                // Don't show error notifications for charBuffer or internal variable names
+                const errorMsg = error?.message || String(error) || '';
+                const lowerErrorMsg = errorMsg.toLowerCase();
+                // Filter out internal variable errors
+                if (!lowerErrorMsg.includes('charbuffer') && 
+                    !lowerErrorMsg.includes('charbuffer is not defined') &&
+                    !lowerErrorMsg.includes('bufferindex') &&
+                    !lowerErrorMsg.includes('currentindex')) {
+                    this.showNotification(`❌ Error: ${errorMsg}`, false);
+                } else {
+                    // If it's an internal error but writing might have succeeded, try to show success
+                    console.warn('Internal error detected, but writing may have completed:', errorMsg);
+                }
+            });
+            
+        } catch (error) {
+            console.error('Error writing to Docs:', error);
+            this.hideDocsWritingIndicator();
+            // Don't show error notifications for charBuffer or internal variable names
+            const errorMsg = error?.message || String(error);
+            if (!errorMsg.toLowerCase().includes('charbuffer')) {
+                this.showNotification(`❌ Error: ${errorMsg}`, false);
+            }
+        }
+    }
+
+    async createCalendarEventFromText(text) {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Calendar integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status first
+            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
+            
+            if (!authStatus.authenticated) {
+                const shouldAuthenticate = confirm(
+                    'Google Calendar authentication required.\n\n' +
+                    'Click OK to authenticate with Google Calendar.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Google Calendar...', false);
+                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            // Extract event details from text using AI
+            this.showNotification('Extracting event details...', false);
+            const eventData = await this.extractEventDetailsFromText(text);
+            
+            if (!eventData) {
+                this.showNotification('Could not extract event details. Please try the /calendar command to create an event manually.', false);
+                return;
+            }
+            
+            // Show confirmation modal with extracted details
+            const confirmedEventData = await this.promptCalendarEvent(eventData);
+            
+            if (!confirmedEventData) {
+                // User cancelled
+                return;
+            }
+            
+            // Create the event
+            this.showNotification('Creating calendar event...', false);
+            const result = await ipcRenderer.invoke('create-calendar-event', confirmedEventData);
+            
+            if (result && result.success) {
+                const eventLink = result.htmlLink || '';
+                const successMsg = eventLink 
+                    ? `✅ Event created! <a href="${eventLink}" target="_blank" style="color: #4A9EFF; text-decoration: underline;">Open in Calendar</a>`
+                    : '✅ Event created successfully!';
+                this.showNotification(successMsg, true);
+            } else {
+                const errorMsg = result?.error || 'Failed to create calendar event';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error creating calendar event from text:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async extractEventDetailsFromText(text) {
+        try {
+            const now = new Date();
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+            const currentDateStr = now.toLocaleDateString('en-US', { timeZone: timezone });
+            const currentTimeStr = now.toLocaleTimeString('en-US', { timeZone: timezone, hour12: false });
+            
+            const prompt = `Extract calendar event information from this text: "${text}"
+
+Look for:
+- Event title/name
+- Date and time (relative dates like "today", "tomorrow", "tonight" should be converted to actual dates)
+- Duration or end time
+- Location (if mentioned)
+- Description/details
+
+Return ONLY a JSON object with this exact structure (use null for missing fields):
+{
+  "summary": "Event title",
+  "startDateTime": "2024-01-15T20:00:00" (ISO format in LOCAL timezone, NOT UTC),
+  "endDateTime": "2024-01-15T21:00:00" (ISO format in LOCAL timezone, default to 1 hour after start if not specified),
+  "location": "Location if found",
+  "description": "Description if found"
+}
+
+CRITICAL TIME CONVERSION RULES:
+- "8pm" or "8 pm" = 20:00 (8 PM) in 24-hour format
+- "8:30pm" = 20:30 (8:30 PM)
+- "2pm" = 14:00 (2 PM)
+- "10am" = 10:00 (10 AM)
+- "midnight" = 00:00 (12:00 AM)
+- "noon" = 12:00 (12:00 PM)
+
+DATE CONVERSION:
+- "today" = ${currentDateStr}
+- "tomorrow" = tomorrow's date
+- "tonight" = ${currentDateStr} with evening time (after 6pm)
+- If only time is given (e.g., "8pm"), use ${currentDateStr} as the date
+
+Current reference:
+- Date: ${currentDateStr}
+- Time: ${currentTimeStr}
+- Timezone: ${timezone}
+
+IMPORTANT: When creating the ISO string, use the LOCAL date and time. For example:
+- If user says "dinner 8pm" and today is ${currentDateStr}, return: "${now.toISOString().split('T')[0]}T20:00:00"
+- The time should be in 24-hour format: 8pm = 20:00, NOT 08:00
+
+If you cannot find clear event information, return null. Be precise with dates and times.`;
+
+            // Use IPC to call OpenAI API
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                
+                const requestPayload = {
+                    model: this.currentModel,
+                    instructions: 'Extract calendar event details from the text. Return ONLY valid JSON or null.',
+                    input: [{
+                        role: 'user',
+                        content: [
+                            { type: 'input_text', text: prompt }
+                        ]
+                    }]
+                };
+                
+                const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
+                
+                if (result && result.ok && result.data) {
+                    const responseText = this.extractText(result.data) || '';
+                    
+                    // Try to extract JSON from the response
+                    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        try {
+                            const eventData = JSON.parse(jsonMatch[0]);
+                            
+                            // Validate and format the event data
+                            if (eventData.summary && eventData.startDateTime) {
+                                // Ensure endDateTime exists, default to 1 hour after start
+                                if (!eventData.endDateTime && eventData.startDateTime) {
+                                    const start = new Date(eventData.startDateTime);
+                                    start.setHours(start.getHours() + 1);
+                                    eventData.endDateTime = start.toISOString();
+                                }
+                                
+                                // Validate dates
+                                const startDate = new Date(eventData.startDateTime);
+                                const endDate = new Date(eventData.endDateTime);
+                                
+                                if (isNaN(startDate.getTime())) {
+                                    console.error('Invalid start date:', eventData.startDateTime);
+                                    return null;
+                                }
+                                
+                                if (isNaN(endDate.getTime())) {
+                                    endDate.setTime(startDate.getTime() + 60 * 60 * 1000); // 1 hour default
+                                    eventData.endDateTime = endDate.toISOString();
+                                }
+                                
+                                // Add timezone
+                                eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+                                
+                                return eventData;
+                            }
+                        } catch (parseError) {
+                            console.error('Failed to parse event JSON:', parseError);
+                            console.error('Response text:', responseText);
+                        }
+                    }
+                }
+            }
+            
+            // Fallback: try direct API call
+            const response = await fetch('https://api.openai.com/v1/responses', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: this.currentModel,
+                    instructions: 'Extract calendar event details from the text. Return ONLY valid JSON or null.',
+                    input: [{
+                        role: 'user',
+                        content: [
+                            { type: 'input_text', text: prompt }
+                        ]
+                    }]
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const responseText = this.extractText(data) || '';
+            
+            // Try to extract JSON from the response
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const eventData = JSON.parse(jsonMatch[0]);
+                    
+                    if (eventData.summary && eventData.startDateTime) {
+                        if (!eventData.endDateTime && eventData.startDateTime) {
+                            const start = new Date(eventData.startDateTime);
+                            start.setHours(start.getHours() + 1);
+                            eventData.endDateTime = start.toISOString();
+                        }
+                        
+                        // Validate dates
+                        const startDate = new Date(eventData.startDateTime);
+                        const endDate = new Date(eventData.endDateTime);
+                        
+                        if (isNaN(startDate.getTime())) {
+                            return null;
+                        }
+                        
+                        if (isNaN(endDate.getTime())) {
+                            endDate.setTime(startDate.getTime() + 60 * 60 * 1000);
+                            eventData.endDateTime = endDate.toISOString();
+                        }
+                        
+                        eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+                        
+                        return eventData;
+                    }
+                } catch (parseError) {
+                    console.error('Failed to parse event JSON:', parseError);
+                }
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('Error extracting event details:', error);
+            return null;
+        }
+    }
+
+    async createCalendarEventFromScreenshot() {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Calendar integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status first
+            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
+            
+            if (!authStatus.authenticated) {
+                const shouldAuthenticate = confirm(
+                    'Google Calendar authentication required.\n\n' +
+                    'Click OK to authenticate with Google Calendar.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Google Calendar...', false);
+                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            // Take screenshot
+            this.showNotification('Taking screenshot...', false);
+            await this.captureScreen();
+            
+            if (!this.currentScreenCapture) {
+                this.showNotification('Failed to capture screenshot', false);
+                return;
+            }
+            
+            // Extract event details from screenshot using AI
+            this.showNotification('Analyzing screenshot for event details...', false);
+            const eventData = await this.extractEventDetailsFromScreenshot(this.currentScreenCapture);
+            
+            if (!eventData) {
+                this.showNotification('Could not extract event details from screenshot. Please try the /calendar command to create an event manually.', false);
+                return;
+            }
+            
+            // Show confirmation modal with extracted details
+            const confirmedEventData = await this.promptCalendarEvent(eventData);
+            
+            if (!confirmedEventData) {
+                // User cancelled
+                return;
+            }
+            
+            // Create the event
+            this.showNotification('Creating calendar event...', false);
+            const result = await ipcRenderer.invoke('create-calendar-event', confirmedEventData);
+            
+            if (result && result.success) {
+                const eventLink = result.htmlLink || '';
+                const successMsg = eventLink 
+                    ? `✅ Event created! <a href="${eventLink}" target="_blank" style="color: #4A9EFF; text-decoration: underline;">Open in Calendar</a>`
+                    : '✅ Event created successfully!';
+                this.showNotification(successMsg, true);
+            } else {
+                const errorMsg = result?.error || 'Failed to create calendar event';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error creating calendar event from screenshot:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async extractEventDetailsFromScreenshot(imageUrl) {
+        try {
+            const prompt = `Analyze this screenshot and extract calendar event information. Look for:
+- Event title/name
+- Date and time
+- Duration or end time
+- Location (if mentioned)
+- Description/details
+
+Return ONLY a JSON object with this exact structure (use null for missing fields):
+{
+  "summary": "Event title",
+  "startDateTime": "2024-01-15T10:00:00" (ISO format),
+  "endDateTime": "2024-01-15T11:00:00" (ISO format),
+  "location": "Location if found",
+  "description": "Description if found"
+}
+
+If you cannot find clear event information, return null. Be precise with dates and times.`;
+
+            // Use IPC to call OpenAI API with vision
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                
+                const requestPayload = {
+                    model: this.currentModel,
+                    instructions: 'Extract calendar event details from the screenshot. Return ONLY valid JSON or null.',
+                    input: [{
+                        role: 'user',
+                        content: [
+                            { type: 'input_text', text: prompt },
+                            { type: 'input_image', image_url: imageUrl }
+                        ]
+                    }]
+                };
+                
+                const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
+                
+                if (result && result.ok && result.data) {
+                    const responseText = this.extractText(result.data) || '';
+                    
+                    // Try to extract JSON from the response
+                    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        try {
+                            const eventData = JSON.parse(jsonMatch[0]);
+                            
+                            // Validate and format the event data
+                            if (eventData.summary && eventData.startDateTime) {
+                                // Ensure endDateTime exists, default to 1 hour after start
+                                if (!eventData.endDateTime && eventData.startDateTime) {
+                                    const start = new Date(eventData.startDateTime);
+                                    start.setHours(start.getHours() + 1);
+                                    eventData.endDateTime = start.toISOString();
+                                }
+                                
+                                // Add timezone
+                                eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+                                
+                                return eventData;
+                            }
+                        } catch (parseError) {
+                            console.error('Failed to parse event JSON:', parseError);
+                        }
+                    }
+                }
+            }
+            
+            // Fallback: try direct API call
+            const response = await fetch('https://api.openai.com/v1/responses', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: this.currentModel,
+                    instructions: 'Extract calendar event details from the screenshot. Return ONLY valid JSON or null.',
+                    input: [{
+                        role: 'user',
+                        content: [
+                            { type: 'input_text', text: prompt },
+                            { type: 'input_image', image_url: imageUrl }
+                        ]
+                    }]
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const responseText = this.extractText(data) || '';
+            
+            // Try to extract JSON from the response
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const eventData = JSON.parse(jsonMatch[0]);
+                    
+                    if (eventData.summary && eventData.startDateTime) {
+                        if (!eventData.endDateTime && eventData.startDateTime) {
+                            const start = new Date(eventData.startDateTime);
+                            start.setHours(start.getHours() + 1);
+                            eventData.endDateTime = start.toISOString();
+                        }
+                        
+                        eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+                        
+                        return eventData;
+                    }
+                } catch (parseError) {
+                    console.error('Failed to parse event JSON:', parseError);
+                }
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('Error extracting event details:', error);
+            return null;
+        }
+    }
+
+    async createCalendarEvent() {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Calendar integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status first
+            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
+            
+            if (!authStatus.authenticated) {
+                // Not authenticated - prompt user to authenticate
+                const shouldAuthenticate = confirm(
+                    'Google Calendar authentication required.\n\n' +
+                    'Click OK to authenticate with Google Calendar.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Google Calendar...', false);
+                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            // Show calendar event modal
+            const eventData = await this.promptCalendarEvent();
+            
+            if (!eventData) {
+                // User cancelled
+                return;
+            }
+            
+            // Create the event
+            this.showNotification('Creating calendar event...', false);
+            const result = await ipcRenderer.invoke('create-calendar-event', eventData);
+            
+            if (result && result.success) {
+                const eventLink = result.htmlLink || '';
+                const successMsg = eventLink 
+                    ? `✅ Event created! <a href="${eventLink}" target="_blank" style="color: #4A9EFF; text-decoration: underline;">Open in Calendar</a>`
+                    : '✅ Event created successfully!';
+                this.showNotification(successMsg, true);
+            } else {
+                const errorMsg = result?.error || 'Failed to create calendar event';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error creating calendar event:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async promptCalendarEvent(prefilledData = null) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('calendar-event-modal');
+            const titleInput = document.getElementById('calendar-event-title');
+            const datetimeInput = document.getElementById('calendar-event-datetime');
+            const durationInput = document.getElementById('calendar-event-duration');
+            const descriptionInput = document.getElementById('calendar-event-description');
+            const locationInput = document.getElementById('calendar-event-location');
+            const confirmBtn = document.getElementById('calendar-event-confirm');
+            const cancelBtn = document.getElementById('calendar-event-cancel');
+            
+            // Fill in prefilled data if provided, otherwise use defaults
+            if (prefilledData) {
+                titleInput.value = prefilledData.summary || '';
+                if (prefilledData.startDateTime) {
+                    const startDate = new Date(prefilledData.startDateTime);
+                    // Convert to local time for datetime-local input (format: YYYY-MM-DDTHH:mm)
+                    const year = startDate.getFullYear();
+                    const month = String(startDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(startDate.getDate()).padStart(2, '0');
+                    const hours = String(startDate.getHours()).padStart(2, '0');
+                    const minutes = String(startDate.getMinutes()).padStart(2, '0');
+                    datetimeInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+                    
+                    // Calculate duration
+                    if (prefilledData.endDateTime) {
+                        const endDate = new Date(prefilledData.endDateTime);
+                        const durationHours = (endDate - startDate) / (1000 * 60 * 60);
+                        durationInput.value = durationHours.toFixed(1);
+                    } else {
+                        durationInput.value = '1';
+                    }
+                } else {
+                    // Set default datetime to next hour
+                    const now = new Date();
+                    now.setHours(now.getHours() + 1);
+                    now.setMinutes(0);
+                    datetimeInput.value = now.toISOString().slice(0, 16);
+                    durationInput.value = '1';
+                }
+                descriptionInput.value = prefilledData.description || '';
+                locationInput.value = prefilledData.location || '';
+            } else {
+                // Set default datetime to next hour
+                const now = new Date();
+                now.setHours(now.getHours() + 1);
+                now.setMinutes(0);
+                datetimeInput.value = now.toISOString().slice(0, 16);
+                
+                // Clear inputs
+                titleInput.value = '';
+                durationInput.value = '1';
+                descriptionInput.value = '';
+                locationInput.value = '';
+            }
+            
+            // Show modal
+            modal.classList.remove('hidden');
+            
+            // Focus title input
+            setTimeout(() => titleInput.focus(), 100);
+            
+            const handleConfirm = () => {
+                const title = titleInput.value.trim();
+                const datetime = datetimeInput.value;
+                const duration = parseFloat(durationInput.value) || 1;
+                const description = descriptionInput.value.trim();
+                const location = locationInput.value.trim();
+                
+                if (!title) {
+                    alert('Please enter an event title');
+                    return;
+                }
+                
+                if (!datetime) {
+                    alert('Please select a date and time');
+                    return;
+                }
+                
+                // Convert datetime to ISO format
+                const startDateTime = new Date(datetime).toISOString();
+                const endDateTime = new Date(new Date(datetime).getTime() + duration * 60 * 60 * 1000).toISOString();
+                
+                // Clean up listeners
+                confirmBtn.removeEventListener('click', handleConfirm);
+                cancelBtn.removeEventListener('click', handleCancel);
+                
+                modal.classList.add('hidden');
+                
+                resolve({
+                    summary: title,
+                    description: description,
+                    startDateTime: startDateTime,
+                    endDateTime: endDateTime,
+                    location: location,
+                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'
+                });
+            };
+            
+            const handleCancel = () => {
+                // Clean up listeners
+                confirmBtn.removeEventListener('click', handleConfirm);
+                cancelBtn.removeEventListener('click', handleCancel);
+                
+                modal.classList.add('hidden');
+                resolve(null);
+            };
+            
+            // Handle Enter key on title input
+            const handleTitleKeyPress = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleConfirm();
+                }
+            };
+            
+            titleInput.addEventListener('keypress', handleTitleKeyPress);
+            confirmBtn.addEventListener('click', handleConfirm);
+            cancelBtn.addEventListener('click', handleCancel);
+        });
+    }
+
+    async getTodaysEmails() {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Gmail integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status
+            const authStatus = await ipcRenderer.invoke('gmail-auth-status');
+            
+            if (!authStatus.authenticated) {
+                const shouldAuthenticate = confirm(
+                    'Gmail authentication required.\n\n' +
+                    'Click OK to authenticate with Gmail.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Gmail...', false);
+                const authResult = await ipcRenderer.invoke('gmail-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            this.showNotification('Fetching today\'s emails...', false);
+            const result = await ipcRenderer.invoke('gmail-todays-emails', 20);
+            
+            if (result && result.success) {
+                await this.displayEmails(result.emails, 'Today\'s Emails');
+            } else {
+                const errorMsg = result?.error || 'Failed to fetch emails';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error getting today\'s emails:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async getImportantEmails() {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Gmail integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status
+            const authStatus = await ipcRenderer.invoke('gmail-auth-status');
+            
+            if (!authStatus.authenticated) {
+                const shouldAuthenticate = confirm(
+                    'Gmail authentication required.\n\n' +
+                    'Click OK to authenticate with Gmail.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Gmail...', false);
+                const authResult = await ipcRenderer.invoke('gmail-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            this.showNotification('Fetching important emails...', false);
+            const result = await ipcRenderer.invoke('gmail-important-emails', 10);
+            
+            if (result && result.success) {
+                await this.displayEmails(result.emails, 'Important Emails');
+            } else {
+                const errorMsg = result?.error || 'Failed to fetch emails';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error getting important emails:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async getUnreadEmails() {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Gmail integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status
+            const authStatus = await ipcRenderer.invoke('gmail-auth-status');
+            
+            if (!authStatus.authenticated) {
+                const shouldAuthenticate = confirm(
+                    'Gmail authentication required.\n\n' +
+                    'Click OK to authenticate with Gmail.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Gmail...', false);
+                const authResult = await ipcRenderer.invoke('gmail-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            this.showNotification('Fetching unread emails...', false);
+            const result = await ipcRenderer.invoke('gmail-unread-emails', 20);
+            
+            if (result && result.success) {
+                await this.displayEmails(result.emails, 'Unread Emails');
+            } else {
+                const errorMsg = result?.error || 'Failed to fetch emails';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error getting unread emails:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async displayEmails(emails, title) {
+        if (!emails || emails.length === 0) {
+            this.showNotification(`No emails found.`, false);
+            return;
+        }
+
+        let emailHtml = `<h3 style="margin-bottom: 15px; color: #fff;">${title} (${emails.length})</h3>`;
+        
+        emails.forEach((email, index) => {
+            const fromName = email.from.split('<')[0].trim() || email.from;
+            const fromEmail = email.from.match(/<(.+)>/)?.[1] || email.from;
+            const date = new Date(email.date).toLocaleString();
+            const isUnread = email.isUnread ? 'font-weight: bold;' : '';
+            const importantBadge = email.isImportant ? '<span style="color: #ff6b6b; margin-left: 8px;">⭐ Important</span>' : '';
+            
+            emailHtml += `
+                <div style="margin-bottom: 20px; padding: 12px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; border-left: 3px solid ${email.isUnread ? '#4A9EFF' : 'transparent'};">
+                    <div style="${isUnread} color: #fff; margin-bottom: 6px;">
+                        <strong>${this.escapeHtml(email.subject || '(No Subject)')}</strong>${importantBadge}
+                    </div>
+                    <div style="color: rgba(255, 255, 255, 0.7); font-size: 13px; margin-bottom: 4px;">
+                        From: ${this.escapeHtml(fromName)} ${fromEmail !== fromName ? `<span style="color: rgba(255, 255, 255, 0.5);">(${this.escapeHtml(fromEmail)})</span>` : ''}
+                    </div>
+                    <div style="color: rgba(255, 255, 255, 0.6); font-size: 12px; margin-bottom: 6px;">
+                        ${date}
+                    </div>
+                    <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px; line-height: 1.4;">
+                        ${this.escapeHtml(email.snippet || 'No preview available')}
+                    </div>
+                </div>
+            `;
+        });
+        
+        this.showNotification(emailHtml, true);
+    }
+
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async getUpcomingEvents() {
+        if (!this.isElectron || !window.require) {
+            this.showNotification('Calendar integration requires Electron', false);
+            return;
+        }
+
+        try {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check authentication status
+            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
+            
+            if (!authStatus.authenticated) {
+                const shouldAuthenticate = confirm(
+                    'Google Calendar authentication required.\n\n' +
+                    'Click OK to authenticate with Google Calendar.\n' +
+                    'This will open a browser window for authentication.'
+                );
+                
+                if (!shouldAuthenticate) {
+                    return;
+                }
+                
+                this.showNotification('Authenticating with Google Calendar...', false);
+                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
+                
+                if (!authResult.success || !authResult.authenticated) {
+                    const errorMsg = authResult.error || 'Authentication failed';
+                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
+                    return;
+                }
+            }
+            
+            this.showNotification('Fetching upcoming events...', false);
+            const result = await ipcRenderer.invoke('list-calendar-events', 10);
+            
+            if (result && result.success) {
+                await this.displayCalendarEvents(result.events);
+            } else {
+                const errorMsg = result?.error || 'Failed to fetch calendar events';
+                this.showNotification(`❌ ${errorMsg}`, false);
+            }
+        } catch (error) {
+            console.error('Error getting calendar events:', error);
+            this.showNotification(`❌ Error: ${error.message}`, false);
+        }
+    }
+
+    async displayCalendarEvents(events) {
+        if (!events || events.length === 0) {
+            this.showNotification('📅 No upcoming events found.', false);
+            return;
+        }
+
+        let eventsHtml = `<h3 style="margin-bottom: 15px; color: #fff;">📅 Upcoming Events (${events.length})</h3>`;
+        
+        events.forEach((event, index) => {
+            const startTime = event.start?.dateTime || event.start?.date;
+            const endTime = event.end?.dateTime || event.end?.date;
+            
+            let dateStr = '';
+            if (startTime) {
+                const start = new Date(startTime);
+                const end = endTime ? new Date(endTime) : null;
+                
+                const isAllDay = !event.start?.dateTime;
+                
+                if (isAllDay) {
+                    dateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                } else {
+                    const today = new Date();
+                    const tomorrow = new Date(today);
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    
+                    let dayStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                    if (start.toDateString() === today.toDateString()) {
+                        dayStr = 'Today';
+                    } else if (start.toDateString() === tomorrow.toDateString()) {
+                        dayStr = 'Tomorrow';
+                    }
+                    
+                    const timeStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                    dateStr = `${dayStr} at ${timeStr}`;
+                    
+                    if (end) {
+                        const endTimeStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                        dateStr += ` - ${endTimeStr}`;
+                    }
+                }
+            }
+            
+            const location = event.location ? `<div style="color: rgba(255, 255, 255, 0.6); font-size: 12px; margin-top: 4px;">📍 ${this.escapeHtml(event.location)}</div>` : '';
+            
+            eventsHtml += `
+                <div style="margin-bottom: 16px; padding: 12px; background: rgba(99, 102, 241, 0.1); border-radius: 10px; border-left: 3px solid #6366f1;">
+                    <div style="color: #fff; font-weight: 600; margin-bottom: 4px;">
+                        ${this.escapeHtml(event.summary || '(No Title)')}
+                    </div>
+                    <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px;">
+                        🕐 ${dateStr}
+                    </div>
+                    ${location}
+                </div>
+            `;
+        });
+        
+        this.showNotification(eventsHtml, true);
+    }
+
     positionFloatingClose() {
         try {
-            if (!this.closeOutputFloating || !this.dragOutput || this.dragOutput.classList.contains('hidden')) return;
+            if (!this.closeOutputFloating) return;
             
-            // Wait for next frame to ensure element is positioned, then try again after a small delay
-            // Use longer delay if it's a loading notification to ensure container is properly sized
-            const isLoading = this.dragOutput && this.dragOutput.classList.contains('loading-notification');
-            const delay = isLoading ? 200 : 10;
-            
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    setTimeout(() => {
-                        try {
-                            if (!this.closeOutputFloating || !this.dragOutput || this.dragOutput.classList.contains('hidden')) return;
-                            
-                            // Get the actual position of drag-output on screen
-                            const dragOutputRect = this.dragOutput.getBoundingClientRect();
-                            const overlayRect = this.overlay.getBoundingClientRect();
-                            
-                            // Ensure we have valid dimensions
-                            if (dragOutputRect.width === 0 || dragOutputRect.height === 0) {
-                                // Retry if element not yet rendered
-                                setTimeout(() => this.positionFloatingClose(), 50);
-                                return;
-                            }
-                            
-                            // For loading notifications, ensure we account for container position
-                            let topPosition;
-                            if (isLoading && this.messagesContainer) {
-                                // Get container's visible top (accounting for scroll)
-                                const containerRect = this.messagesContainer.getBoundingClientRect();
-                                // The drag-output is at the top of the visible container area
-                                topPosition = containerRect.top - overlayRect.top - 8;
-                            } else {
-                                // Normal case: use drag-output's position directly
-                                topPosition = dragOutputRect.top - overlayRect.top - 8;
-                            }
-                            
-                            // Right: overlay width minus (drag-output right edge - overlay left edge), minus 4px to move it more into the corner
-                            const dragOutputRightFromOverlayLeft = dragOutputRect.right - overlayRect.left;
-                            const rightPosition = overlayRect.width - dragOutputRightFromOverlayLeft - 4;
-                            
-                            // Apply the calculated positions
-                            this.closeOutputFloating.style.top = `${topPosition}px`;
-                            this.closeOutputFloating.style.right = `${rightPosition}px`;
-                            this.closeOutputFloating.style.left = 'auto'; // Clear left to use right positioning
-                            this.closeOutputFloating.style.display = 'block'; // Ensure it's visible
-                            this.closeOutputFloating.style.position = 'absolute'; // Ensure absolute positioning
-                            this.closeOutputFloating.classList.remove('hidden');
-                        } catch (error) {
-                            console.error('Error positioning close button:', error);
-                        }
-                    }, delay);
-                });
-            });
+            // Position relative to messages container (always at top-right of container)
+            if (this.messagesContainer && !this.messagesContainer.classList.contains('hidden')) {
+                const containerRect = this.messagesContainer.getBoundingClientRect();
+                const overlayRect = this.overlay.getBoundingClientRect();
+                
+                // Position at top-right of messages container
+                const topPosition = containerRect.top - overlayRect.top - 8;
+                const rightPosition = overlayRect.width - (containerRect.right - overlayRect.left) - 4;
+                
+                this.closeOutputFloating.style.top = `${topPosition}px`;
+                this.closeOutputFloating.style.right = `${rightPosition}px`;
+                this.closeOutputFloating.style.left = 'auto';
+                this.closeOutputFloating.style.display = 'block';
+                this.closeOutputFloating.style.position = 'absolute';
+                this.closeOutputFloating.classList.remove('hidden');
+            } else {
+                // Hide if no messages container visible
+                this.closeOutputFloating.classList.add('hidden');
+            }
         } catch (error) {
             console.error('Error in positionFloatingClose:', error);
         }
@@ -4028,6 +7581,8 @@ User Question: ${question}`;
         if (this.humanizeBtn) {
             this.humanizeBtn.classList.add('hidden');
         }
+        // Hide output toolbar when output is hidden
+        this.hideOutputToolbar();
     }
 
     handleDragStart(e) {
@@ -4040,17 +7595,157 @@ User Question: ${question}`;
             ipcRenderer.invoke('make-interactive');
         }
         
-        const textToDrag = this.dragOutput.dataset.fullText || this.dragOutput.textContent || this.dragOutput.innerText;
+        // Get HTML content to preserve table structure
+        let htmlToDrag = this.dragOutput.innerHTML || '';
+        
+        // Extract tables from HTML and ensure they're properly formatted for Google Docs
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = htmlToDrag;
+        const tables = tempDiv.querySelectorAll('table');
+        
+        // Ensure tables have proper structure for Google Docs recognition
+        tables.forEach(table => {
+            // Add table attributes that Google Docs recognizes when pasting HTML
+            if (!table.hasAttribute('border')) {
+                table.setAttribute('border', '1');
+            }
+            if (!table.hasAttribute('cellpadding')) {
+                table.setAttribute('cellpadding', '5');
+            }
+            if (!table.hasAttribute('cellspacing')) {
+                table.setAttribute('cellspacing', '0');
+            }
+            if (!table.hasAttribute('style')) {
+                table.setAttribute('style', 'border-collapse: collapse; width: 100%;');
+            }
+            
+            // Ensure all rows have proper structure
+            const rows = table.querySelectorAll('tr');
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td, th');
+                cells.forEach(cell => {
+                    if (!cell.hasAttribute('style')) {
+                        cell.setAttribute('style', 'border: 1px solid #ccc; padding: 8px;');
+                    }
+                });
+            });
+        });
+        
+        // Ensure paragraphs are properly formatted with blank lines between them
+        // Convert divs and other block elements to proper paragraphs
+        const blockElements = tempDiv.querySelectorAll('div, p, h1, h2, h3, h4, h5, h6');
+        blockElements.forEach(element => {
+            // If it's not already a paragraph and contains text, wrap or convert
+            if (element.tagName !== 'P' && element.tagName !== 'TABLE' && !element.closest('table')) {
+                const text = element.textContent.trim();
+                if (text && !element.querySelector('table')) {
+                    // Convert to paragraph with no margin
+                    const p = document.createElement('p');
+                    p.innerHTML = element.innerHTML;
+                    p.style.lineHeight = '1.6';
+                    p.style.margin = '0';
+                    p.style.marginBottom = '0';
+                    element.replaceWith(p);
+                }
+            } else if (element.tagName === 'P') {
+                // Remove all margins - we'll use <br> for spacing
+                element.style.margin = '0';
+                element.style.marginBottom = '0';
+                element.style.marginTop = '0';
+                element.style.padding = '0';
+                element.style.lineHeight = '1.6';
+            }
+        });
+        
+        // Get updated HTML after element modifications
+        htmlToDrag = tempDiv.innerHTML;
+        
+        // Get the raw text content to detect paragraph breaks
+        const rawText = tempDiv.textContent || tempDiv.innerText || '';
+        
+        // Check if content has paragraphs that aren't wrapped
+        // Split by double newlines OR single newlines (if they separate distinct paragraphs)
+        let paragraphs = rawText.split(/\n\s*\n/).filter(p => p.trim());
+        
+        // If we only got one paragraph, try splitting by single newlines
+        if (paragraphs.length === 1) {
+            const lines = rawText.split('\n').filter(l => l.trim());
+            // If we have multiple lines that look like separate paragraphs
+            if (lines.length > 1) {
+                paragraphs = lines;
+            }
+        }
+        
+        // If we have multiple paragraphs, rebuild the HTML structure properly
+        if (paragraphs.length > 1 && (!htmlToDrag.includes('<p') || htmlToDrag.match(/<p[^>]*>/g)?.length < paragraphs.length)) {
+            // Rebuild HTML with proper paragraph structure - separate <p> tags without <br>
+            htmlToDrag = paragraphs.map(p => {
+                const trimmed = p.trim();
+                // Preserve any existing HTML in the paragraph
+                if (trimmed.includes('<')) {
+                    return trimmed;
+                }
+                return `<p style="line-height: 1.6; margin: 0; padding: 0;">${trimmed}</p>`;
+            }).join('\n'); // Use newline between paragraphs, not <br>
+            
+            tempDiv.innerHTML = htmlToDrag;
+            htmlToDrag = tempDiv.innerHTML;
+        }
+        
+        // Ensure all existing paragraphs are properly formatted
+        const allParagraphs = tempDiv.querySelectorAll('p');
+        allParagraphs.forEach(p => {
+            p.style.lineHeight = '1.6';
+            p.style.margin = '0';
+            p.style.padding = '0';
+        });
+        
+        // Remove any <br> tags between paragraphs - Google Docs recognizes block-level <p> separation
+        htmlToDrag = tempDiv.innerHTML;
+        htmlToDrag = htmlToDrag.replace(/<\/p>\s*<br\s*\/?>\s*<p/g, '</p>\n<p');
+        htmlToDrag = htmlToDrag.replace(/<\/p>\s*<p/g, '</p>\n<p'); // Ensure newline between paragraphs
+        
+        // Wrap in a container div
+        htmlToDrag = `<div style="line-height: 1.6;">${htmlToDrag}</div>`;
+        
+        // Get clean text for plain text format - CRITICAL for Google Docs
+        // This is what Google Docs uses when dragging
+        let textToDrag = this.dragOutput.dataset.fullText || '';
+        
+        // If we don't have stored full text, extract it from the DOM
+        if (!textToDrag) {
+            // Get text content preserving paragraph structure
+            const textContent = tempDiv.textContent || tempDiv.innerText || '';
+            // Split by double newlines or detect paragraph breaks
+            const textParagraphs = textContent.split(/\n\s*\n/).filter(p => p.trim());
+            
+            if (textParagraphs.length > 1) {
+                // Join with double newlines to preserve paragraph breaks
+                textToDrag = textParagraphs.join('\n\n');
+            } else {
+                // Try single newlines
+                const lines = textContent.split('\n').filter(l => l.trim());
+                if (lines.length > 1) {
+                    textToDrag = lines.join('\n\n'); // Use double newlines for paragraph breaks
+                } else {
+                    textToDrag = textContent;
+                }
+            }
+        }
+        
+        // Ensure text has proper paragraph breaks (double newlines)
+        textToDrag = textToDrag.replace(/\n{3,}/g, '\n\n'); // Normalize excessive breaks
+        textToDrag = textToDrag.trim();
         
         // CRITICAL FIX: Electron windows with special properties can't drag-drop to external apps
         // Copy to clipboard automatically on Windows as a workaround
         const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
         if (isWindows && this.isElectron) {
             const { ipcRenderer } = require('electron');
-            // Copy to clipboard when drag starts (Windows workaround)
-            ipcRenderer.invoke('copy-to-clipboard', textToDrag).then(() => {
+            // Copy HTML to clipboard when drag starts (Windows workaround) - preserves table structure
+            ipcRenderer.invoke('copy-to-clipboard', htmlToDrag).then(() => {
                 // Show brief notification that text was copied
-                this.showNotification('✅ Text copied to clipboard - paste it where needed');
+                this.showNotification('✅ Content copied to clipboard - paste it where needed');
                 // Auto-hide after 2 seconds
                 setTimeout(() => {
                     if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
@@ -4065,9 +7760,10 @@ User Question: ${question}`;
             });
         }
         
-        // Set data in multiple formats for better Windows compatibility
+        // Set data in multiple formats for better compatibility
+        // Use HTML format for tables, plain text as fallback
         e.dataTransfer.setData('text/plain', textToDrag);
-        e.dataTransfer.setData('text/html', textToDrag);
+        e.dataTransfer.setData('text/html', htmlToDrag); // Preserve HTML table structure
         e.dataTransfer.setData('text/unicode', textToDrag);
         e.dataTransfer.effectAllowed = 'copy';
         
@@ -4203,6 +7899,16 @@ User Question: ${question}`;
 document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.notification').forEach(n => n.remove());
             const jarvis = new JarvisOverlay();
+            
+            // Set initial position immediately to prevent drift
+            const overlay = document.getElementById('jarvis-overlay');
+            if (overlay) {
+                const centerX = (window.innerWidth - 400) / 2; // Estimate 400px width
+                const centerY = (window.innerHeight - 200) / 2; // Estimate 200px height
+                overlay.style.left = `${centerX}px`;
+                overlay.style.top = `${centerY}px`;
+                overlay.style.transform = 'none';
+            }
             
            window.setOpenAIKey = (key) => {
                jarvis.apiKey = key;
