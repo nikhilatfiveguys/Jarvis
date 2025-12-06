@@ -34,22 +34,35 @@ if [ -z "$APP_PATH" ]; then
     exit 1
 fi
 
+# Strip ALL extended attributes from the built app BEFORE copying
+echo "🧹 Stripping extended attributes from built app..."
+xattr -cr "$APP_PATH"
+find "$APP_PATH" -exec xattr -c {} \; 2>/dev/null || true
+echo "  ✅ Extended attributes stripped"
+
 echo "🔐 Signing app using your method..."
 
 IDENTITY="Developer ID Application: Aaron Soni (DMH3RU9FQQ)"
 ENTITLEMENTS="build/entitlements.mac.plist"
 
-# Create a clean copy using ditto to strip extended attributes
+# Create a clean copy using tar to strip ALL extended attributes
 SIGN_APP="$HOME/Desktop/Jarvis-TO-SIGN.app"
 rm -rf "$SIGN_APP"
 
-echo "  Copying app with ditto (strips extended attributes)..."
-ditto --norsrc --noextattr --noacl "$APP_PATH" "$SIGN_APP"
+echo "  Copying app using tar (strips all extended attributes)..."
+# Use tar to copy - this strips ALL extended attributes and resource forks
+cd "$(dirname "$APP_PATH")"
+tar -cf - "$(basename "$APP_PATH")" | tar -xf - -C "$HOME/Desktop/"
+mv "$HOME/Desktop/$(basename "$APP_PATH")" "$SIGN_APP"
+cd - > /dev/null
 
-# Strip all extended attributes
-echo "  Stripping extended attributes..."
-xattr -cr "$SIGN_APP"
-find "$SIGN_APP" -name '._*' -delete
+# Double check with xattr -d to remove any remaining provenance
+echo "  Forcefully removing com.apple.provenance..."
+find "$SIGN_APP" -exec xattr -d com.apple.provenance {} \; 2>/dev/null || true
+find "$SIGN_APP" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
+find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
+echo "  Verifying main exec has no xattrs..."
+xattr -l "$SIGN_APP/Contents/MacOS/Jarvis 6.0" 2>&1 || echo "  ✅ No extended attributes on main exec"
 
 echo "  Signing components..."
 
@@ -73,21 +86,53 @@ echo "    Signing frameworks..."
 codesign --force --sign "$IDENTITY" --timestamp "$SIGN_APP/Contents/Frameworks/"*.framework
 
 echo "    Signing helper apps..."
-codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP/Contents/Frameworks/Jarvis 5.0 Helper"*.app
+# Sign all Electron helper apps (GPU, Renderer, Plugin, and base Helper)
+for helper in "$SIGN_APP/Contents/Frameworks/"*Helper*.app; do
+    if [ -d "$helper" ]; then
+        echo "      Signing: $(basename "$helper")"
+        # Sign the helper's main executable first
+        helper_exec="$helper/Contents/MacOS/$(basename "$helper" .app)"
+        if [ -f "$helper_exec" ]; then
+            xattr -cr "$helper_exec"
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$helper_exec" 2>&1 | grep -v "resource fork" || true
+        fi
+        # Then sign the helper app bundle
+        xattr -cr "$helper"
+        codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$helper" 2>&1 | grep -v "resource fork" || true
+    fi
+done
 
-# Sign main executable first
+# Sign main executable
 echo "  Signing main executable..."
-MAIN_EXEC="$SIGN_APP/Contents/MacOS/$(basename "$SIGN_APP" .app)"
+MAIN_EXEC="$SIGN_APP/Contents/MacOS/Jarvis 6.0"
 if [ -f "$MAIN_EXEC" ]; then
+    echo "    Found main executable: Jarvis 6.0"
+    # More aggressive resource fork removal
     xattr -cr "$MAIN_EXEC"
-    codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$MAIN_EXEC" 2>&1 | grep -v "resource fork" || true
+    # Remove ._ files if any
+    rm -f "$SIGN_APP/Contents/MacOS/._Jarvis 6.0" 2>/dev/null || true
+    # Strip resource fork using cat
+    cat "$MAIN_EXEC" > "$MAIN_EXEC.tmp" && mv "$MAIN_EXEC.tmp" "$MAIN_EXEC" && chmod +x "$MAIN_EXEC"
+    xattr -cr "$MAIN_EXEC"
+    echo "    Stripped resource forks from main executable"
+    codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$MAIN_EXEC"
+    echo "    Verifying main executable signature..."
+    codesign --verify --verbose "$MAIN_EXEC" && echo "    ✅ Main executable signed" || echo "    ❌ Main executable signing failed"
+else
+    echo "    ❌ Main executable not found at: $MAIN_EXEC"
+    ls -la "$SIGN_APP/Contents/MacOS/"
 fi
 
-# Sign main app bundle (ignore resource fork warning - it still works)
-echo "  Signing main app bundle..."
+# Clean all resource forks from entire bundle
+echo "  Cleaning all resource forks from app bundle..."
+find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
 xattr -cr "$SIGN_APP"
-# Use --deep to sign all nested components, but sign the bundle itself
-codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP" 2>&1 | grep -v "resource fork" || true
+
+# Sign main app bundle
+echo "  Signing main app bundle..."
+codesign --force --deep --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP"
+echo "  Verifying app bundle signature..."
+codesign --verify --deep --strict "$SIGN_APP" && echo "  ✅ App bundle signed" || echo "  ⚠️ App bundle verification had issues"
 
 # Verify signature
 echo "  Verifying signature..."
@@ -104,9 +149,10 @@ rm -rf "$APP_PATH"
 ditto --norsrc --noextattr --noacl "$SIGN_APP" "$APP_PATH"
 rm -rf "$SIGN_APP"
 
-# Create DMG from signed app
-echo "📦 Creating DMG from signed app..."
-DMG_NAME="Jarvis-5.0-SIGNED.dmg"
+# Get version from package.json
+VERSION=$(node -p "require('./package.json').version")
+echo "📦 Creating DMG from signed app (v$VERSION)..."
+DMG_NAME="Jarvis-6.0-${VERSION}-SIGNED.dmg"
 DMG_PATH="dist/$DMG_NAME"
 rm -f "$DMG_PATH"
 

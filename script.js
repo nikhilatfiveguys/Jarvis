@@ -514,14 +514,8 @@ class JarvisOverlay {
             if (isCalendarCommand) {
                 // Clear input since we're executing a command
                 if (this.textInput) this.textInput.value = '';
-                
-                // Check if they want to add from screenshot
-                if (lowerText.includes('this') || lowerText.includes('screen') || this.currentScreenCapture) {
-                    this.createCalendarEventFromScreenshot();
-                } else {
-                    // Try to extract event from the text itself
-                    this.createCalendarEventFromText(trimmedText);
-                }
+                // Show the calendar modal for manual event creation
+                this.createCalendarEvent();
                 return;
             }
             
@@ -2864,34 +2858,11 @@ ${currentQuestion}`;
             return;
         }
         
-        // Detect calendar event creation phrases
-        const calendarKeywords = ['add', 'schedule', 'create', 'set', 'book', 'plan'];
-        const calendarContexts = ['calendar', 'event', 'meeting', 'appointment', 'reminder'];
-        const hasCalendarKeyword = calendarKeywords.some(keyword => lowerMessage.includes(keyword));
-        const hasCalendarContext = calendarContexts.some(context => lowerMessage.includes(context)) || 
-                                   lowerMessage.includes('at ') || 
-                                   lowerMessage.includes('tomorrow') ||
-                                   lowerMessage.includes('today') ||
-                                   lowerMessage.includes('tonight') ||
-                                   lowerMessage.match(/\d{1,2}(:\d{2})?\s*(am|pm|AM|PM)/);
-        
-        const isCalendarPhrase = hasCalendarKeyword && hasCalendarContext;
-        const isAddToCalendarPhrase = lowerMessage.includes('add') && (lowerMessage.includes('calendar') || lowerMessage.includes('to my calendar') || lowerMessage.includes('to calendar'));
-        
-        if (isCalendarCommand || isCalendarPhrase || isAddToCalendarPhrase) {
+        // Handle /calendar command - show modal for manual event creation
+        if (isCalendarCommand) {
             // Clear input
             if (this.textInput) this.textInput.value = '';
-            
-            if (isAddToCalendarPhrase && lowerMessage.includes('this') || lowerMessage.includes('screenshot')) {
-                // Take screenshot and extract event details
-                await this.createCalendarEventFromScreenshot();
-            } else if (isCalendarPhrase || isAddToCalendarPhrase) {
-                // Extract event details from natural language
-                await this.createCalendarEventFromText(message);
-            } else {
-                // Regular /calendar command - show modal
-                await this.createCalendarEvent();
-            }
+            await this.createCalendarEvent();
             return;
         }
 
