@@ -5,6 +5,7 @@ class PaywallManager {
     constructor() {
         // Subscription management is now handled via Supabase in main.js
         // No need for direct client access here
+        this.isUpgrading = false; // Prevent multiple checkout sessions
         this.setupEventListeners();
         this.checkCurrentStatus();
     }
@@ -74,6 +75,16 @@ class PaywallManager {
     }
 
     async startUpgrade() {
+        // Prevent multiple checkout sessions
+        if (this.isUpgrading) {
+            console.log('⚠️ Upgrade already in progress, ignoring click');
+            return;
+        }
+        
+        this.isUpgrading = true;
+        const upgradeBtn = document.getElementById('upgrade-btn');
+        upgradeBtn.disabled = true;
+        upgradeBtn.textContent = 'Opening...';
         this.showLoading(true);
         
         try {
@@ -95,11 +106,19 @@ class PaywallManager {
                 console.error('❌ Error creating checkout session:', result?.error);
                 const errorMsg = result?.error || 'Failed to start upgrade process. Please try again.';
                 this.showError(errorMsg);
+                // Re-enable button on error
+                this.isUpgrading = false;
+                upgradeBtn.disabled = false;
+                upgradeBtn.textContent = 'Get';
             }
 
         } catch (error) {
             console.error('Upgrade failed:', error);
             this.showError('Failed to start upgrade process. Please try again.');
+            // Re-enable button on error
+            this.isUpgrading = false;
+            upgradeBtn.disabled = false;
+            upgradeBtn.textContent = 'Get';
         } finally {
             this.showLoading(false);
         }
