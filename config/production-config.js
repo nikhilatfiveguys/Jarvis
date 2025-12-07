@@ -12,7 +12,7 @@ const PRODUCTION_CONFIG = {
     },
     // Polar config for payment processing
     polar: {
-        accessToken: process.env.POLAR_ACCESS_TOKEN || 'polar_oat_JhNo3mK5bbMPTZr4535nh3bCQX4aY6PxCvQS92cK3pO',
+        accessToken: process.env.POLAR_ACCESS_TOKEN || 'polar_oat_XLkOLMtdU3aNc7HY0NVACI3RE7CMzNqubQVLJ3vCH2G',
         successUrl: process.env.POLAR_SUCCESS_URL || 'http://localhost:3001/success?checkout_id={CHECKOUT_ID}',
         productId: process.env.POLAR_PRODUCT_ID || 'd6f0145b-067a-4c7b-8e48-7f3c78e8a489'
     },
