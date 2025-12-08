@@ -243,41 +243,27 @@ class JarvisApp {
             this.setupVoiceRecording();
             this.setupAutoUpdater(); // Setup auto-updater after app is ready
             
-            // Check if user has active subscription before showing paywall
-            const userEmail = this.getUserEmail();
-            let shouldShowPaywall = true;
-            
-            if (userEmail) {
-                try {
-                    const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(userEmail);
-                    if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
-                        // User has active subscription, skip paywall
-                            shouldShowPaywall = false;
-                        console.log('✅ Active subscription found, skipping paywall');
-                        }
-                    } catch (error) {
-                    console.error('Error checking subscription on startup:', error);
-                    // On error, show paywall to be safe
-                }
-            }
+            // Trigger screen recording permission request early
+            // This makes macOS add the app to Screen Recording permissions list
+            this.requestScreenRecordingPermission();
             
             // Setup IPC handlers (needed for all flows)
             this.setupIpcHandlers();
             
-            if (shouldShowPaywall) {
-                // Go directly to paywall (no sign-in required)
-                this.createPaywallWindow();
-            } else {
-                // User is subscribed, go directly to main window
-                // Check if onboarding is needed
-                if (!this.isOnboardingComplete()) {
-                    this.createOnboardingWindow();
-                } else {
-                    this.createWindow();
-                    if (process.platform === 'darwin' && app.dock) {
-                        app.dock.hide();
-                    }
-                }
+            // PAYWALL DISABLED - Go directly to main window
+            // Always create window - interactive tutorial happens in overlay now
+            this.createWindow();
+            if (process.platform === 'darwin' && app.dock) {
+                app.dock.hide();
+            }
+            
+            // If onboarding not complete, show the overlay with tutorial
+            if (!this.isOnboardingComplete()) {
+                this.needsInteractiveTutorial = true;
+                // Show overlay immediately for new users
+                setTimeout(() => {
+                    this.showOverlay();
+                }, 500);
             }
             
             // Start Polar success handler
@@ -545,6 +531,40 @@ class JarvisApp {
         }
     }
 
+    // Request screen recording permission early to add app to macOS permissions list
+    async requestScreenRecordingPermission() {
+        if (process.platform !== 'darwin') return;
+        
+        try {
+            // Check current permission status
+            const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+            console.log('🔐 Current screen recording permission status:', screenStatus);
+            
+            if (screenStatus === 'granted') {
+                console.log('✅ Screen recording permission already granted');
+                return;
+            }
+            
+            // This triggers macOS to add the app to Screen Recording permissions
+            // and show the permission prompt if not already shown
+            console.log('🔐 Triggering screen recording permission request...');
+            const sources = await desktopCapturer.getSources({
+                types: ['screen'],
+                thumbnailSize: { width: 100, height: 100 }
+            });
+            
+            if (sources && sources.length > 0) {
+                console.log('✅ Screen recording permission granted, found', sources.length, 'sources');
+            } else {
+                console.log('⚠️ No screen sources returned - permission may be denied');
+            }
+        } catch (error) {
+            console.log('🔐 Screen recording permission error:', error.message);
+            // This is expected if permission hasn't been granted yet
+            // The app should now appear in Screen Recording permissions list
+        }
+    }
+
     createAccountWindow() {
         // Create a proper window with native controls, positioned at screen edge
         const { screen } = require('electron');
@@ -704,44 +724,20 @@ class JarvisApp {
                 this.paywallWindow = null;
             }
             
-            // Check if onboarding is needed
-            const onboardingNeeded = !this.isOnboardingComplete();
-            console.log('Onboarding needed?', onboardingNeeded);
-            if (onboardingNeeded) {
-                console.log('Creating onboarding window from paywall-complete');
-                this.createOnboardingWindow();
-                return;
-            }
-            
             // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-                // Check if user has active subscription before proceeding
-                try {
-                    const subscriptionResult = await this.checkSubscriptionStatus();
-                    
-                    if (subscriptionResult.hasActiveSubscription) {
-                        this.createWindow();
-                        this.setupIpcHandlers();
-                        // Hide Dock icon on macOS
-                        if (process.platform === 'darwin' && app.dock) {
-                            app.dock.hide();
-                        }
-                    } else {
-                        // Proceed to main app with free tier (limited features)
-                        this.createWindow();
-                        this.setupIpcHandlers();
-                        if (process.platform === 'darwin' && app.dock) {
-                            app.dock.hide();
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error checking subscription status:', error);
-                    // On error, proceed to main app
-                    this.createWindow();
-                    this.setupIpcHandlers();
-                    if (process.platform === 'darwin' && app.dock) {
-                        app.dock.hide();
-                    }
+                this.createWindow();
+                this.setupIpcHandlers();
+                if (process.platform === 'darwin' && app.dock) {
+                    app.dock.hide();
+                }
+                
+                // If onboarding not complete, show overlay with interactive tutorial
+                if (!this.isOnboardingComplete()) {
+                    this.needsInteractiveTutorial = true;
+                    setTimeout(() => {
+                        this.showOverlay();
+                    }, 500);
                 }
             }
         });
@@ -753,18 +749,20 @@ class JarvisApp {
                 this.paywallWindow = null;
             }
             
-            // Check if onboarding is needed
-            if (!this.isOnboardingComplete()) {
-                this.createOnboardingWindow();
-                return;
-            }
-            
             // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
                 this.createWindow();
                 this.setupIpcHandlers();
                 if (process.platform === 'darwin' && app.dock) {
                     app.dock.hide();
+                }
+                
+                // If onboarding not complete, show overlay with interactive tutorial
+                if (!this.isOnboardingComplete()) {
+                    this.needsInteractiveTutorial = true;
+                    setTimeout(() => {
+                        this.showOverlay();
+                    }, 500);
                 }
             }
         });
@@ -776,18 +774,20 @@ class JarvisApp {
                 this.paywallWindow = null;
             }
             
-            // Check if onboarding is needed
-            if (!this.isOnboardingComplete()) {
-                this.createOnboardingWindow();
-                return;
-            }
-            
             // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
                 this.createWindow();
                 this.setupIpcHandlers();
                 if (process.platform === 'darwin' && app.dock) {
                     app.dock.hide();
+                }
+                
+                // If onboarding not complete, show overlay with interactive tutorial
+                if (!this.isOnboardingComplete()) {
+                    this.needsInteractiveTutorial = true;
+                    setTimeout(() => {
+                        this.showOverlay();
+                    }, 500);
                 }
             }
         });
@@ -1126,6 +1126,17 @@ class JarvisApp {
                 bounds: d.bounds,
                 workArea: d.workArea
             }));
+        });
+
+        // Interactive tutorial IPC handlers
+        ipcMain.handle('needs-interactive-tutorial', () => {
+            return !this.isOnboardingComplete();
+        });
+        
+        ipcMain.handle('complete-interactive-tutorial', () => {
+            this.markOnboardingComplete();
+            this.needsInteractiveTutorial = false;
+            return true;
         });
 
         // Handle overlay toggle
@@ -2739,6 +2750,11 @@ class JarvisApp {
             this.hideOverlay();
         } else {
             this.showOverlay();
+        }
+        
+        // Notify renderer of toggle for tutorial tracking
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            this.mainWindow.webContents.send('overlay-toggled');
         }
     }
 

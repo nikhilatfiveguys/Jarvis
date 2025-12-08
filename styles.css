@@ -1756,6 +1756,24 @@ body {
     animation: pulse 1s infinite;
 }
 
+.message-counter.upgrade-btn {
+    background: linear-gradient(135deg, #4A9EFF, #6B5BFF);
+    border: none;
+    color: white;
+    cursor: pointer;
+    animation: none;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 12px;
+}
+
+.message-counter.upgrade-btn:hover {
+    background: linear-gradient(135deg, #5AAFFF, #7B6BFF);
+    transform: scale(1.05);
+    box-shadow: 0 2px 10px rgba(74, 158, 255, 0.4);
+}
+
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
@@ -2099,4 +2117,105 @@ body {
     20% { opacity: 1; transform: translateX(-50%) translateY(0); }
     80% { opacity: 1; }
     100% { opacity: 0; }
+}
+
+/* Interactive Onboarding Tutorial */
+.onboarding-tutorial {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10003;
+    pointer-events: auto;
+    animation: tutorialSlideIn 0.4s ease;
+}
+
+@keyframes tutorialSlideIn {
+    0% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+    100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.tutorial-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(20, 20, 25, 0.95);
+    border: 1px solid rgba(100, 150, 255, 0.4);
+    border-radius: 14px;
+    padding: 14px 20px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(100, 150, 255, 0.15);
+}
+
+.tutorial-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    min-width: 24px;
+}
+
+.tutorial-icon .drag-dots-icon {
+    display: grid;
+    grid-template-columns: repeat(2, 6px);
+    grid-template-rows: repeat(3, 6px);
+    gap: 3px;
+}
+
+.tutorial-icon .drag-dots-icon .dot {
+    width: 5px;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+}
+
+.tutorial-icon .hamburger-icon {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 18px;
+}
+
+.tutorial-icon .hamburger-icon span {
+    display: block;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 1px;
+}
+
+.tutorial-text {
+    color: rgba(255, 255, 255, 0.95);
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.tutorial-text kbd {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0 2px;
+}
+
+.tutorial-done-btn {
+    background: linear-gradient(135deg, #4A9EFF, #6B5BFF);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-left: 8px;
+}
+
+.tutorial-done-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 15px rgba(74, 158, 255, 0.4);
 }

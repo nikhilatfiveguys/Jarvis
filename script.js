@@ -15,6 +15,11 @@ class JarvisOverlay {
         this.hasBeenPositioned = false; // Track if overlay has been positioned (to avoid recentering)
         this.stealthModeEnabled = false; // Track stealth mode state
         
+        // Interactive tutorial state
+        this.tutorialStep = 0;
+        this.tutorialToggleCount = 0;
+        this.tutorialActive = false;
+        
         // Load conversation history from localStorage
         try {
             const saved = localStorage.getItem('jarvis_conversation_history');
@@ -46,6 +51,7 @@ class JarvisOverlay {
         this.setupElectronIntegration();
         this.setupDragFunctionality();
         this.setupVoiceRecording(); // Voice recording handlers disabled inside, but subscription listeners still active
+        this.initializeInteractiveTutorial();
         this.checkLicense();
         this.updateMessageCounter();
     }
@@ -934,11 +940,13 @@ class JarvisOverlay {
             });
         }
         
-        // Settings button event listeners
+        // Settings button event listeners (hamburger menu)
         if (this.settingsBtn) {
             this.settingsBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleSettingsMenu();
+                // Track for tutorial
+                this.advanceTutorial('hamburger');
             });
         }
         
@@ -1019,8 +1027,16 @@ class JarvisOverlay {
             console.log('🔧 Initial stealth mode state:', stealthModeEnabled);
             
             // Apply on load (with a small delay to ensure Electron is ready)
+            // Only enable stealth mode on load if user has premium
             setTimeout(() => {
-                this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
+                // If stealth mode is saved as enabled but user doesn't have premium, disable it
+                if (stealthModeEnabled && !this.hasPremiumAccess()) {
+                    this.stealthModeCheckbox.checked = false;
+                    this.stealthModeEnabled = false;
+                    console.log('🔧 Stealth mode disabled on load - requires premium');
+                } else {
+                    this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
+                }
             }, 500);
             
             // Listen for checkbox changes - this is the main handler
@@ -1028,6 +1044,16 @@ class JarvisOverlay {
             this.stealthModeCheckbox.addEventListener('change', (e) => {
                 const enabled = e.target.checked;
                 console.log('🔧 Checkbox changed event fired! New state:', enabled);
+                
+                // Check if user has premium access (only allow enabling stealth mode with premium)
+                if (enabled && !this.hasPremiumAccess()) {
+                    // Revert the checkbox
+                    e.target.checked = false;
+                    this.showNotification('🔒 Stealth Mode requires Jarvis Premium. Upgrade to hide Jarvis from screen recordings!', false);
+                    this.showUpgradePrompt();
+                    return;
+                }
+                
                 localStorage.setItem('stealth_mode_enabled', enabled.toString());
                 this.toggleStealthMode(enabled, true); // true = show notification
             });
@@ -1239,6 +1265,11 @@ class JarvisOverlay {
             this.toggleOverlay();
         });
         
+        // Listen for toggle events from main process (for tutorial tracking)
+        ipcRenderer.on('overlay-toggled', () => {
+            this.advanceTutorial('toggle');
+        });
+        
         ipcRenderer.on('show-overlay', () => {
             this.showOverlay();
         });
@@ -1429,6 +1460,8 @@ class JarvisOverlay {
             if (isDragging) {
                 isDragging = false;
                 this.overlay.style.cursor = 'default';
+                // Track drag for tutorial
+                this.advanceTutorial('drag');
             }
         });
         
@@ -1455,6 +1488,117 @@ class JarvisOverlay {
         this.overlay.style.transform = 'none';
     }
 
+    // Interactive Tutorial System
+    async initializeInteractiveTutorial() {
+        if (!this.isElectron) return;
+        
+        try {
+            const { ipcRenderer } = window.require('electron');
+            const needsTutorial = await ipcRenderer.invoke('needs-interactive-tutorial');
+            
+            if (needsTutorial) {
+                this.tutorialActive = true;
+                this.tutorialStep = 1;
+                this.showTutorialStep(1);
+            }
+        } catch (e) {
+            console.error('Failed to check tutorial status:', e);
+        }
+    }
+    
+    showTutorialStep(step) {
+        const tutorial = document.getElementById('onboarding-tutorial');
+        const tutorialText = document.getElementById('tutorial-text');
+        const tutorialIcon = document.getElementById('tutorial-icon');
+        const doneBtn = document.getElementById('tutorial-done-btn');
+        
+        if (!tutorial || !tutorialText || !tutorialIcon) return;
+        
+        // Show tutorial
+        tutorial.classList.remove('hidden');
+        doneBtn.classList.add('hidden');
+        
+        switch(step) {
+            case 1:
+                tutorialIcon.innerHTML = '⌨️';
+                tutorialText.innerHTML = 'Press <kbd>⌥ Option</kbd> + <kbd>Space</kbd> to open/close overlay';
+                break;
+            case 2:
+                tutorialIcon.innerHTML = `<div class="drag-dots-icon">
+                    <span class="dot"></span><span class="dot"></span>
+                    <span class="dot"></span><span class="dot"></span>
+                    <span class="dot"></span><span class="dot"></span>
+                </div>`;
+                tutorialText.innerHTML = 'Use the 6 dots to move Jarvis around';
+                break;
+            case 3:
+                tutorialIcon.innerHTML = '📸';
+                tutorialText.innerHTML = 'Press <strong>Answer Screen</strong> to answer any question on your screen';
+                break;
+            case 4:
+                tutorialIcon.innerHTML = `<div class="hamburger-icon">
+                    <span></span><span></span><span></span>
+                </div>`;
+                tutorialText.innerHTML = 'Press the hamburger menu to access all features';
+                break;
+            case 5:
+                tutorialIcon.innerHTML = '✨';
+                tutorialText.innerHTML = 'Check the bottom of the Account tab to see all functions';
+                doneBtn.classList.remove('hidden');
+                doneBtn.onclick = () => this.completeTutorial();
+                break;
+        }
+        
+        this.tutorialStep = step;
+    }
+    
+    advanceTutorial(action) {
+        if (!this.tutorialActive) return;
+        
+        switch(action) {
+            case 'toggle':
+                if (this.tutorialStep === 1) {
+                    this.tutorialToggleCount++;
+                    if (this.tutorialToggleCount >= 2) {
+                        this.showTutorialStep(2);
+                    }
+                }
+                break;
+            case 'drag':
+                if (this.tutorialStep === 2) {
+                    this.showTutorialStep(3);
+                }
+                break;
+            case 'answer-screen':
+                if (this.tutorialStep === 3) {
+                    this.showTutorialStep(4);
+                }
+                break;
+            case 'hamburger':
+                if (this.tutorialStep === 4) {
+                    this.showTutorialStep(5);
+                }
+                break;
+        }
+    }
+    
+    async completeTutorial() {
+        const tutorial = document.getElementById('onboarding-tutorial');
+        if (tutorial) {
+            tutorial.classList.add('hidden');
+        }
+        
+        this.tutorialActive = false;
+        
+        if (this.isElectron) {
+            try {
+                const { ipcRenderer } = window.require('electron');
+                await ipcRenderer.invoke('complete-interactive-tutorial');
+            } catch (e) {
+                console.error('Failed to complete tutorial:', e);
+            }
+        }
+    }
 
     toggleOverlay() {
         if (this.isActive) {
@@ -1462,6 +1606,9 @@ class JarvisOverlay {
         } else {
             this.showOverlay();
         }
+        
+        // Track toggles for tutorial
+        this.advanceTutorial('toggle');
     }
 
     async showOverlay() {
@@ -1502,7 +1649,10 @@ class JarvisOverlay {
         // Update message counter to reflect current subscription status
         this.updateMessageCounter();
         
-        this.showNotification('Jarvis is ready! Look for the red X button in the top-right corner of this message.');
+        // Only show welcome notification if not in tutorial mode
+        if (!this.tutorialActive) {
+            this.showNotification('Jarvis is ready! Look for the red X button in the top-right corner of this message.');
+        }
     }
 
     recenterOverlay() {
@@ -4563,6 +4713,7 @@ User Question: ${question}`;
         // Only show counter for free users
         if (this.hasPremiumAccess()) {
             this.messageCounter.classList.add('hidden');
+            this.messageCounter.classList.remove('upgrade-btn');
             console.log('Premium access - hiding message counter');
             return;
         }
@@ -4573,16 +4724,44 @@ User Question: ${question}`;
         // Show counter for free users
         this.messageCounter.classList.remove('hidden');
         const remaining = this.getRemainingMessages();
-        this.messageCountText.textContent = `${remaining}/${this.maxFreeMessages}`;
-        console.log(`Free tier - showing ${remaining}/${this.maxFreeMessages} messages remaining`);
         
         // Update styling based on remaining messages
-        this.messageCounter.classList.remove('warning', 'critical');
+        this.messageCounter.classList.remove('warning', 'critical', 'upgrade-btn');
         
-        if (remaining <= 2) {
-            this.messageCounter.classList.add('critical');
-        } else if (remaining <= 5) {
-            this.messageCounter.classList.add('warning');
+        if (remaining === 0) {
+            // Show upgrade button when out of messages
+            this.messageCountText.textContent = '⬆ Upgrade';
+            this.messageCounter.classList.add('upgrade-btn');
+            this.messageCounter.style.cursor = 'pointer';
+            
+            // Add click handler for upgrade (remove old one first)
+            this.messageCounter.onclick = async () => {
+                if (this.isElectron) {
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        this.showNotification('Opening checkout page...', 'info');
+                        const result = await ipcRenderer.invoke('create-checkout-session');
+                        if (!result || !result.success) {
+                            this.showNotification('Failed to open checkout. Please try again.', 'error');
+                        }
+                    } catch (e) {
+                        console.error('Error opening checkout:', e);
+                        this.showNotification('Failed to open checkout. Please try again.', 'error');
+                    }
+                }
+            };
+            console.log('Free tier - showing upgrade button (0 messages remaining)');
+        } else {
+            this.messageCountText.textContent = `${remaining}/${this.maxFreeMessages}`;
+            this.messageCounter.style.cursor = 'default';
+            this.messageCounter.onclick = null;
+            console.log(`Free tier - showing ${remaining}/${this.maxFreeMessages} messages remaining`);
+            
+            if (remaining <= 2) {
+                this.messageCounter.classList.add('critical');
+            } else if (remaining <= 5) {
+                this.messageCounter.classList.add('warning');
+            }
         }
     }
 
@@ -4667,7 +4846,7 @@ User Question: ${question}`;
         const resetTimeText = timeUntilReset ? this.formatTimeUntilReset(timeUntilReset) : 'soon';
         
         // Display as a simple text message (like normal AI responses)
-        const message = `Message limit reached. Wait ${resetTimeText} or subscribe (click 3 lines → account → get premium)`;
+        const message = `Message limit reached. Wait ${resetTimeText} or upgrade`;
         
         this.showNotification(message, false);
         
@@ -4729,7 +4908,7 @@ User Question: ${question}`;
             if (dragOutput && !dragOutput.classList.contains('hidden')) {
                 const resetTimeText = this.formatTimeUntilReset(remainingTime);
                 // Update as simple text message
-                dragOutput.textContent = `Message limit reached. Wait ${resetTimeText} or subscribe (click 3 lines → account → get premium)`;
+                dragOutput.textContent = `Message limit reached. Wait ${resetTimeText} or upgrade`;
             }
             
             remainingTime -= 1000; // Decrease by 1 second
@@ -4958,7 +5137,8 @@ User Question: ${question}`;
         // Use a more careful regex that doesn't match inside code blocks
         processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, '<span class="math-inline">\\($1\\)</span>');
         // Match $...$ but not $$...$$ (inline math) - be careful not to match inside code blocks
-        processed = processed.replace(/(?<!`)(?<!\$)(?<!\\)\$([^$\n\\`]+?)\$(?!\$)(?!`)/g, '<span class="math-inline">$$1$</span>');
+        // Allow backslashes inside math for LaTeX commands like \int, \sqrt, etc.
+        processed = processed.replace(/(?<!`)(?<!\$)(?<!\\)\$([^$\n`]+?)\$(?!\$)(?!`)/g, '<span class="math-inline">$$$1$$</span>');
         
         // Format powers (only if not already in LaTeX)
         processed = processed.replace(/(?<!\\[()])([a-zA-Z])\^(\d+)(?![\\[()])/g, '$1<sup>$2</sup>');
@@ -5236,6 +5416,9 @@ User Question: ${question}`;
 
 
     async answerThis() {
+        // Track for tutorial
+        this.advanceTutorial('answer-screen');
+        
         try {
             // Check if user has reached message limit for free users
             // Re-check subscription status before processing (in case it was cancelled or activated)
