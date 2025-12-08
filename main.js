@@ -909,6 +909,8 @@ class JarvisApp {
         const { width, height } = primaryDisplay.bounds;
 
         // Create a true overlay window
+        // IMPORTANT: This window is designed to NOT trigger browser blur events
+        // which proctoring software (Canvas, etc.) uses to detect "tab switching"
         const mainWindowOptions = {
             width: width,
             height: height,
@@ -935,9 +937,12 @@ class JarvisApp {
             thickFrame: false
         };
         
-        // macOS-only: Prevent screen recording
+        // macOS-only: Configure as a utility/panel window that doesn't steal focus
         if (process.platform === 'darwin') {
             mainWindowOptions.contentProtection = true;
+            // These help prevent the window from activating the app
+            mainWindowOptions.type = 'panel'; // Makes it a floating panel on macOS
+            mainWindowOptions.acceptFirstMouse = true; // Accept clicks without activating
         }
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
@@ -1118,55 +1123,47 @@ class JarvisApp {
         });
 
         // Handle making overlay interactive
+        // IMPORTANT: This version does NOT steal focus from other windows
+        // to avoid triggering proctoring software (Canvas, etc.) that monitors window blur events
         ipcMain.handle('make-interactive', () => {
             if (this.mainWindow) {
                 try {
-                    console.log('🔵 [MAIN] make-interactive called');
-                    // CRITICAL: Set ignore mouse events to FALSE first
+                    console.log('🔵 [MAIN] make-interactive called (focus-safe mode)');
+                    
+                    // CRITICAL: Only enable mouse events - DO NOT call focus()
+                    // This allows interaction without triggering browser blur events
                     this.mainWindow.setIgnoreMouseEvents(false);
                     console.log('🔵 [MAIN] setIgnoreMouseEvents(false) called');
-                    // Then set focusable and focus
-                    this.mainWindow.setFocusable(true);
-                    this.mainWindow.focus();
-                    console.log('🔵 [MAIN] Window focused');
                     
-                    // On macOS, ensure the window can receive clicks
+                    // Make window focusable but don't actually focus it
+                    // The user clicking on the input will naturally give it focus
+                    // without the OS registering it as an app switch
+                    this.mainWindow.setFocusable(true);
+                    
+                    // Ensure window is visible and on top without stealing focus
                     if (process.platform === 'darwin') {
-                        // Force window to front and ensure it's clickable
-                        this.mainWindow.show();
-                        this.mainWindow.focus();
-                        // Sometimes need to call setIgnoreMouseEvents again after show
+                        this.mainWindow.showInactive(); // Show without activating
+                        // Re-assert always on top without focus
                         setTimeout(() => {
                             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                console.log('🔵 [MAIN] Re-applying interactive state after delay');
                                 this.mainWindow.setIgnoreMouseEvents(false);
                                 this.mainWindow.setFocusable(true);
-                                this.mainWindow.focus();
-                                console.log('✅ [MAIN] Window should now be interactive');
+                                // Use setAlwaysOnTop to keep visible without focus
+                                this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
                             }
                         }, 50);
-                        // Also do it again after a longer delay to ensure it sticks
+                    } else if (process.platform === 'win32') {
+                        // On Windows, show without focus
+                        this.mainWindow.showInactive();
                         setTimeout(() => {
                             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                console.log('🔵 [MAIN] Final check - ensuring interactive');
+                                this.mainWindow.setFocusable(true);
                                 this.mainWindow.setIgnoreMouseEvents(false);
-                                this.mainWindow.setFocusable(true);
-                            }
-                        }, 200);
-                    }
-                    // On Windows, ensure window can receive focus and stays focusable
-                    if (process.platform === 'win32') {
-                        this.mainWindow.focus();
-                        // Force focus again after a short delay to ensure it sticks
-                        setTimeout(() => {
-                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                this.mainWindow.setFocusable(true);
-                                this.mainWindow.focus();
                             }
                         }, 100);
                     }
                     
-                    console.log('✅ [MAIN] make-interactive completed');
+                    console.log('✅ [MAIN] make-interactive completed (no focus steal)');
                     return { success: true };
                 } catch (error) {
                     console.error('❌ [MAIN] Error making window interactive:', error);
@@ -1178,12 +1175,17 @@ class JarvisApp {
             }
         });
 
-        // Handle focus request from renderer (Windows-specific fix)
+        // Handle focus request from renderer
+        // NOTE: We intentionally do NOT call focus() to avoid triggering browser blur events
+        // which proctoring software (Canvas, etc.) uses to detect tab switching
         ipcMain.handle('request-focus', () => {
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 try {
                     this.mainWindow.setFocusable(true);
-                    this.mainWindow.focus();
+                    // DO NOT call focus() - this triggers browser blur events
+                    // Instead, just ensure the window is visible and can receive input
+                    this.mainWindow.setIgnoreMouseEvents(false);
+                    this.mainWindow.moveTop();
                     return true;
                 } catch (_) {
                     return false;
@@ -2772,21 +2774,18 @@ class JarvisApp {
         const stealthEnabled = this.getStealthModePreference();
         this.setWindowContentProtection(this.mainWindow, stealthEnabled);
 
-        // Show the window
-        this.mainWindow.show();
+        // Show the window WITHOUT stealing focus (prevents browser blur events)
+        // This is critical for avoiding proctoring software detection (Canvas, etc.)
+        try {
+            this.mainWindow.showInactive(); // Show without activating/focusing
+        } catch (_) {
+            this.mainWindow.show(); // Fallback if showInactive not available
+        }
         this.mainWindow.moveTop();
         this.isOverlayVisible = true;
         
-        // On Windows, force focus after showing to ensure it can receive input
-        if (process.platform === 'win32') {
-            setTimeout(() => {
-                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                    try {
-                        this.mainWindow.focus();
-                    } catch (_) {}
-                }
-            }, 50);
-        }
+        // DO NOT call focus() - this would trigger browser blur events
+        // The window will receive input when the user clicks on it naturally
         
         // Use the robust fullscreen visibility method
         this.forceFullscreenVisibility();
