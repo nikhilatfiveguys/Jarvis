@@ -2769,9 +2769,10 @@ class JarvisApp {
             }
         }
         
-        // Ensure mouse events are enabled before showing to prevent glitching
+        // Start with click-through mode - let renderer handle making it interactive on hover
+        // This allows clicking through to other windows when not interacting with the overlay
         try {
-            this.mainWindow.setIgnoreMouseEvents(false);
+            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
         } catch (_) {}
         
         // On Windows, ensure window is focusable when showing overlay
