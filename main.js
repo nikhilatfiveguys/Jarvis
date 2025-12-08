@@ -1117,6 +1117,17 @@ class JarvisApp {
         }
         this.ipcHandlersSetup = true;
 
+        // Handle getting all display bounds for multi-monitor support
+        ipcMain.handle('get-all-displays', () => {
+            const { screen } = require('electron');
+            const displays = screen.getAllDisplays();
+            return displays.map(d => ({
+                id: d.id,
+                bounds: d.bounds,
+                workArea: d.workArea
+            }));
+        });
+
         // Handle overlay toggle
         ipcMain.handle('toggle-overlay', () => {
             this.toggleOverlay();

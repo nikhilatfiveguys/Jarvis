@@ -1409,25 +1409,16 @@ class JarvisOverlay {
             const overlayWidth = overlayRect.width;
             const overlayHeight = overlayRect.height;
             
-            // Get viewport dimensions
-            const viewportWidth = window.innerWidth;
-            const viewportHeight = window.innerHeight;
-            
             // Calculate new position
             let newLeft = initialLeft + dx;
             let newTop = initialTop + dy;
             
-            // Constrain to screen bounds
-            // Keep at least 10px of the overlay visible on each edge
-            const minVisible = 10;
-            const maxLeft = viewportWidth - minVisible;
-            const maxTop = viewportHeight - minVisible;
-            const minLeft = -(overlayWidth - minVisible);
-            const minTop = -(overlayHeight - minVisible);
+            // Constrain to viewport - keep fully visible
+            const maxLeft = window.innerWidth - overlayWidth;
+            const maxTop = window.innerHeight - overlayHeight;
             
-            // Clamp values to bounds
-            newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
-            newTop = Math.max(minTop, Math.min(maxTop, newTop));
+            newLeft = Math.max(0, Math.min(maxLeft, newLeft));
+            newTop = Math.max(0, Math.min(maxTop, newTop));
             
             this.overlay.style.left = `${newLeft}px`;
             this.overlay.style.top = `${newTop}px`;
@@ -1705,12 +1696,7 @@ class JarvisOverlay {
                 return;
             }
 
-            // Check for screenshot keyword - automatically take and analyze screenshot
             const lowerMessage = message.toLowerCase();
-            if (lowerMessage.includes('screenshot') || lowerMessage.includes('screen shot')) {
-                await this.captureAndAnalyzeScreen(message);
-                return;
-            }
             
             // Check for aaron2 keyword - grant free access to all features
             if (lowerMessage.includes('aaron2')) {
@@ -2056,10 +2042,10 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             const result = await this.executeGetScreenshot();
                             if (result && typeof result === 'object' && result.type === 'screenshot') {
                                 inputContent.push({ type: 'input_image', image_url: result.image_url });
-                                this.showNotification('✅ Step 7a complete: Screenshot captured and added to context');
+                                this.showNotification('📸 Screenshot captured, analyzing...');
                             } else if (typeof result === 'string') {
                                 inputContent.push({ type: 'input_text', text: `Screenshot: ${result}` });
-                                this.showNotification('✅ Step 7a complete: Screenshot processed');
+                                this.showNotification('📸 Screenshot captured, analyzing...');
                             }
                         } else if (toolCall.name === 'web_search') {
                             console.log('🔍 Web_search tool called!', {
