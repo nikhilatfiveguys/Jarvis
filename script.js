@@ -1724,12 +1724,18 @@ class JarvisOverlay {
                 return; // Exit early to avoid API call
             }
             
-            // Check for URL in message - extract website content
+            // Check for URL in message - only load document if appropriate
             const urlMatch = message.match(/(https?:\/\/[^\s]+)/);
             if (urlMatch) {
                 const url = urlMatch[1];
-                await this.extractAndProcessDocument(url, message);
-                return;
+                const shouldLoadDocument = this.shouldLoadDocumentFromUrl(message, url);
+                
+                if (shouldLoadDocument) {
+                    await this.extractAndProcessDocument(url, message);
+                    return;
+                }
+                // If not loading document, continue with normal message processing
+                // The URL will be included in the message sent to the AI
             }
             
             this.showLoadingNotification();
@@ -4238,6 +4244,68 @@ ${currentQuestion}`;
             
             this.addMessage('Jarvis', 'Pink mode deactivated! 🖤', 'assistant');
         }
+    }
+
+    /**
+     * Determines if a URL in a message should trigger document loading
+     * Returns true only if the user clearly wants to load/read the document
+     * Returns false if the URL is just part of a question or statement
+     */
+    shouldLoadDocumentFromUrl(message, url) {
+        // Remove the URL from the message to analyze the remaining text
+        const textWithoutUrl = message.replace(url, '').trim().toLowerCase();
+        
+        // Case 1: URL is the ONLY thing in the message (just pasted a link)
+        if (textWithoutUrl.length === 0) {
+            console.log('📄 URL is alone - will load document');
+            return true;
+        }
+        
+        // Case 2: Very short text with document-loading intent
+        // Words/phrases that indicate user wants to load/read the document
+        const loadIntentPatterns = [
+            /^read\s*(this)?$/,
+            /^load\s*(this)?$/,
+            /^open\s*(this)?$/,
+            /^extract\s*(this)?$/,
+            /^summarize\s*(this)?$/,
+            /^summary$/,
+            /^analyze\s*(this)?$/,
+            /^check\s*(this)?\s*(out)?$/,
+            /^what('?s| is)\s*(this|in this|on this|here)(\?)?$/,
+            /^tell me about\s*(this)?$/,
+            /^what does (this|it) say(\?)?$/,
+            /^can you (read|load|summarize|analyze)\s*(this)?(\?)?$/,
+            /^please (read|load|summarize|analyze)\s*(this)?$/,
+            /^(read|load|summarize|analyze) (this|the) (page|article|document|website|link|site)$/,
+        ];
+        
+        for (const pattern of loadIntentPatterns) {
+            if (pattern.test(textWithoutUrl)) {
+                console.log('📄 Detected document loading intent - will load document');
+                return true;
+            }
+        }
+        
+        // Case 3: Check if the text is very short (likely just "summarize" or similar)
+        const words = textWithoutUrl.split(/\s+/).filter(w => w.length > 0);
+        if (words.length <= 3) {
+            // Short messages with certain keywords suggest document loading
+            const loadKeywords = ['read', 'load', 'open', 'extract', 'summarize', 'summary', 'analyze', 'check', 'article', 'page', 'document'];
+            if (words.some(word => loadKeywords.includes(word))) {
+                console.log('📄 Short message with load keyword - will load document');
+                return true;
+            }
+        }
+        
+        // Case 4: If text is longer or asks a specific question about the URL content
+        // Don't auto-load - let the AI handle the message naturally
+        // This handles cases like:
+        // - "what is the price on https://..."
+        // - "is https://... a good source?"
+        // - "compare https://... with ..."
+        console.log('📄 URL is part of a larger message - will NOT auto-load document');
+        return false;
     }
 
     async extractAndProcessDocument(url, originalMessage) {
