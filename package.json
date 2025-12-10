@@ -1,6 +1,6 @@
 {
   "name": "jarvis-6.0",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "AI-powered overlay assistant with voice activation and screen analysis",
   "main": "main.js",
   "scripts": {

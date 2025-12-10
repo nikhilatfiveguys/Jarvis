@@ -1624,6 +1624,11 @@ class JarvisOverlay {
 
     toggleOverlay() {
         if (this.isActive) {
+            // Don't allow hiding overlay during tutorial
+            if (this.tutorialActive) {
+                this.showNotification('Complete the tutorial first!');
+                return;
+            }
             this.hideOverlay();
         } else {
             this.showOverlay();
