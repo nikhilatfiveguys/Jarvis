@@ -548,15 +548,18 @@ class JarvisApp {
             
             this.screenRecordingPermissionGranted = false;
             
-            // Permission not granted - open System Preferences
-            console.log('🔐 Screen recording permission not granted, opening System Preferences...');
+            // Permission not granted - show banner and trigger the macOS dialog
+            console.log('🔐 Screen recording permission not granted, triggering permission dialog...');
             
-            // Open System Preferences to Screen Recording
-            shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => {
-                exec('open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"');
-            });
+            // Notify the overlay to show permission banner FIRST (before dialog appears)
+            setTimeout(() => {
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('show-permission-restart-prompt');
+                }
+            }, 500);
             
-            // Trigger the permission request to add app to the list
+            // Trigger the permission request to add app to the list and show macOS dialog
+            // The macOS dialog has its own "Open System Settings" button
             try {
                 await desktopCapturer.getSources({
                     types: ['screen'],
@@ -565,13 +568,6 @@ class JarvisApp {
             } catch (e) {
                 console.log('🔐 Permission request triggered');
             }
-            
-            // Notify the overlay to show restart prompt (after a delay to let window load)
-            setTimeout(() => {
-                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                    this.mainWindow.webContents.send('show-permission-restart-prompt');
-                }
-            }, 2000);
             
         } catch (error) {
             console.log('🔐 Screen recording permission error:', error.message);

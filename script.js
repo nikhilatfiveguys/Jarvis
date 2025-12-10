@@ -1606,32 +1606,25 @@ class JarvisOverlay {
     }
     
     showPermissionRestartPrompt() {
-        // Show a notification with restart button
-        if (!this.dragOutput) return;
+        // Show permission banner at the top like the tutorial
+        const banner = document.getElementById('permission-banner');
+        const restartBtn = document.getElementById('permission-restart-btn');
         
-        this.dragOutput.classList.remove('hidden');
-        this.dragOutput.innerHTML = `
-            <div style="display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px;">
-                <div style="font-size: 14px; text-align: center; color: rgba(255,255,255,0.9);">
-                    📺 Enable <strong>Screen Recording</strong> for Jarvis in the Settings window, then click Restart
-                </div>
-                <button id="restart-app-btn" style="
-                    background: linear-gradient(135deg, #4A9EFF, #6B5BFF);
-                    border: none;
-                    border-radius: 8px;
-                    padding: 10px 24px;
-                    color: white;
-                    font-size: 14px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                ">🔄 Restart Jarvis</button>
-            </div>
-        `;
+        if (!banner) return;
+        
+        // Show the banner
+        banner.classList.remove('hidden');
+        
+        // After a short delay, show the restart button (give user time to enable permission)
+        setTimeout(() => {
+            if (restartBtn) {
+                restartBtn.classList.remove('hidden');
+            }
+        }, 3000);
         
         // Add click handler for restart button
-        const restartBtn = document.getElementById('restart-app-btn');
-        if (restartBtn) {
+        if (restartBtn && !restartBtn.hasClickHandler) {
+            restartBtn.hasClickHandler = true;
             restartBtn.addEventListener('click', async () => {
                 if (this.isElectron) {
                     try {
@@ -1642,16 +1635,13 @@ class JarvisOverlay {
                     }
                 }
             });
-            
-            // Add hover effect
-            restartBtn.addEventListener('mouseenter', () => {
-                restartBtn.style.transform = 'scale(1.05)';
-                restartBtn.style.boxShadow = '0 4px 15px rgba(74, 158, 255, 0.4)';
-            });
-            restartBtn.addEventListener('mouseleave', () => {
-                restartBtn.style.transform = 'scale(1)';
-                restartBtn.style.boxShadow = 'none';
-            });
+        }
+    }
+    
+    hidePermissionBanner() {
+        const banner = document.getElementById('permission-banner');
+        if (banner) {
+            banner.classList.add('hidden');
         }
     }
 
