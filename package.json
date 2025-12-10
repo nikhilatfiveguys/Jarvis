@@ -1,6 +1,6 @@
 {
   "name": "jarvis-6.0",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "AI-powered overlay assistant with voice activation and screen analysis",
   "main": "main.js",
   "scripts": {
@@ -192,6 +192,7 @@
       "node_modules/fetch-blob/**/*",
       "node_modules/formdata-polyfill/**/*",
       "node_modules/web-streams-polyfill/**/*",
+      "node_modules/node-domexception/**/*",
       "node_modules/rimraf/**/*",
       "node_modules/json-bigint/**/*",
       "node_modules/bignumber.js/**/*",
@@ -294,6 +295,7 @@
       "node_modules/fetch-blob/**/*",
       "node_modules/formdata-polyfill/**/*",
       "node_modules/web-streams-polyfill/**/*",
+      "node_modules/node-domexception/**/*",
       "node_modules/rimraf/**/*",
       "node_modules/json-bigint/**/*",
       "node_modules/bignumber.js/**/*",
