@@ -1270,6 +1270,11 @@ class JarvisOverlay {
             this.advanceTutorial('toggle');
         });
         
+        // Listen for permission restart prompt
+        ipcRenderer.on('show-permission-restart-prompt', () => {
+            this.showPermissionRestartPrompt();
+        });
+        
         ipcRenderer.on('show-overlay', () => {
             this.showOverlay();
         });
@@ -1597,6 +1602,56 @@ class JarvisOverlay {
             } catch (e) {
                 console.error('Failed to complete tutorial:', e);
             }
+        }
+    }
+    
+    showPermissionRestartPrompt() {
+        // Show a notification with restart button
+        if (!this.dragOutput) return;
+        
+        this.dragOutput.classList.remove('hidden');
+        this.dragOutput.innerHTML = `
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px;">
+                <div style="font-size: 14px; text-align: center; color: rgba(255,255,255,0.9);">
+                    📺 Enable <strong>Screen Recording</strong> for Jarvis in the Settings window, then click Restart
+                </div>
+                <button id="restart-app-btn" style="
+                    background: linear-gradient(135deg, #4A9EFF, #6B5BFF);
+                    border: none;
+                    border-radius: 8px;
+                    padding: 10px 24px;
+                    color: white;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                ">🔄 Restart Jarvis</button>
+            </div>
+        `;
+        
+        // Add click handler for restart button
+        const restartBtn = document.getElementById('restart-app-btn');
+        if (restartBtn) {
+            restartBtn.addEventListener('click', async () => {
+                if (this.isElectron) {
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        await ipcRenderer.invoke('restart-app');
+                    } catch (e) {
+                        console.error('Failed to restart app:', e);
+                    }
+                }
+            });
+            
+            // Add hover effect
+            restartBtn.addEventListener('mouseenter', () => {
+                restartBtn.style.transform = 'scale(1.05)';
+                restartBtn.style.boxShadow = '0 4px 15px rgba(74, 158, 255, 0.4)';
+            });
+            restartBtn.addEventListener('mouseleave', () => {
+                restartBtn.style.transform = 'scale(1)';
+                restartBtn.style.boxShadow = 'none';
+            });
         }
     }
 

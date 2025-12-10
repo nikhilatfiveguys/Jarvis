@@ -542,26 +542,39 @@ class JarvisApp {
             
             if (screenStatus === 'granted') {
                 console.log('✅ Screen recording permission already granted');
+                this.screenRecordingPermissionGranted = true;
                 return;
             }
             
-            // This triggers macOS to add the app to Screen Recording permissions
-            // and show the permission prompt if not already shown
-            console.log('🔐 Triggering screen recording permission request...');
-            const sources = await desktopCapturer.getSources({
-                types: ['screen'],
-                thumbnailSize: { width: 100, height: 100 }
+            this.screenRecordingPermissionGranted = false;
+            
+            // Permission not granted - open System Preferences
+            console.log('🔐 Screen recording permission not granted, opening System Preferences...');
+            
+            // Open System Preferences to Screen Recording
+            shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => {
+                exec('open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"');
             });
             
-            if (sources && sources.length > 0) {
-                console.log('✅ Screen recording permission granted, found', sources.length, 'sources');
-            } else {
-                console.log('⚠️ No screen sources returned - permission may be denied');
+            // Trigger the permission request to add app to the list
+            try {
+                await desktopCapturer.getSources({
+                    types: ['screen'],
+                    thumbnailSize: { width: 100, height: 100 }
+                });
+            } catch (e) {
+                console.log('🔐 Permission request triggered');
             }
+            
+            // Notify the overlay to show restart prompt (after a delay to let window load)
+            setTimeout(() => {
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('show-permission-restart-prompt');
+                }
+            }, 2000);
+            
         } catch (error) {
             console.log('🔐 Screen recording permission error:', error.message);
-            // This is expected if permission hasn't been granted yet
-            // The app should now appear in Screen Recording permissions list
         }
     }
 
@@ -1266,6 +1279,10 @@ class JarvisApp {
                     this.mainWindow.setContentProtection(true);
                 }
                 
+                // Check screen recording permission status first
+                const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+                console.log('📸 Screen recording permission status:', screenStatus);
+                
                 // Use Electron's built-in desktopCapturer with proper error handling
                 let sources;
                 try {
@@ -1275,11 +1292,23 @@ class JarvisApp {
                     });
                 } catch (capturerError) {
                     console.error('DesktopCapturer error:', capturerError);
-                    throw new Error('Failed to access screen capture. Please check screen recording permissions in System Preferences > Security & Privacy > Privacy > Screen Recording.');
+                    if (screenStatus === 'granted') {
+                        // Permission granted but capture failed - needs restart
+                        throw new Error('Screen recording permission granted! Please restart Jarvis for it to take effect.');
+                    } else {
+                        // Permission not granted - open settings
+                        this.openScreenRecordingSettings();
+                        throw new Error('Please enable Screen Recording for Jarvis in System Preferences, then restart the app.');
+                    }
                 }
                 
                 if (!sources || sources.length === 0) {
-                    throw new Error('No screen sources available. Please check screen recording permissions.');
+                    if (screenStatus === 'granted') {
+                        throw new Error('Screen recording permission granted! Please restart Jarvis for it to take effect.');
+                    } else {
+                        this.openScreenRecordingSettings();
+                        throw new Error('Please enable Screen Recording for Jarvis in System Preferences, then restart the app.');
+                    }
                 }
                 
                 // Get the first screen source
@@ -1685,6 +1714,13 @@ class JarvisApp {
 
         ipcMain.handle('get-app-version', () => {
             return app.getVersion();
+        });
+
+        // Restart the app (used after granting permissions)
+        ipcMain.handle('restart-app', () => {
+            console.log('🔄 Restarting app...');
+            app.relaunch();
+            app.exit(0);
         });
 
         // Google Calendar IPC handlers
