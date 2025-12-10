@@ -252,10 +252,10 @@ class JarvisApp {
             
             // PAYWALL DISABLED - Go directly to main window
             // Always create window - interactive tutorial happens in overlay now
-            this.createWindow();
-            if (process.platform === 'darwin' && app.dock) {
-                app.dock.hide();
-            }
+                    this.createWindow();
+                    if (process.platform === 'darwin' && app.dock) {
+                        app.dock.hide();
+                    }
             
             // If onboarding not complete, show the overlay with tutorial
             if (!this.isOnboardingComplete()) {
@@ -735,11 +735,11 @@ class JarvisApp {
             
             // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-                this.createWindow();
-                this.setupIpcHandlers();
-                if (process.platform === 'darwin' && app.dock) {
-                    app.dock.hide();
-                }
+                        this.createWindow();
+                        this.setupIpcHandlers();
+                        if (process.platform === 'darwin' && app.dock) {
+                            app.dock.hide();
+                        }
                 
                 // If onboarding not complete, show overlay with interactive tutorial
                 if (!this.isOnboardingComplete()) {

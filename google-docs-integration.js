@@ -65,7 +65,7 @@ class GoogleDocsIntegration {
                     console.log('✅ Google Docs tokens loaded successfully (has refresh token)');
                     
                     // Proactively refresh if token is expiring
-                    if (this.oAuth2Client.isTokenExpiring()) {
+                if (this.oAuth2Client.isTokenExpiring()) {
                         console.log('🔄 Token expiring, will refresh on next request...');
                     }
                 } else {

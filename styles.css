@@ -2262,21 +2262,3 @@ body {
     font-weight: 500;
 }
 
-.permission-restart-btn {
-    background: linear-gradient(135deg, #4A9EFF, #6B5BFF);
-    border: none;
-    border-radius: 8px;
-    padding: 8px 16px;
-    color: white;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    margin-left: 8px;
-    white-space: nowrap;
-}
-
-.permission-restart-btn:hover {
-    transform: scale(1.05);
-    box-shadow: 0 4px 15px rgba(74, 158, 255, 0.4);
-}

@@ -1035,7 +1035,7 @@ class JarvisOverlay {
                     this.stealthModeEnabled = false;
                     console.log('🔧 Stealth mode disabled on load - requires premium');
                 } else {
-                    this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
+                this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
                 }
             }, 500);
             
@@ -1608,34 +1608,11 @@ class JarvisOverlay {
     showPermissionRestartPrompt() {
         // Show permission banner at the top like the tutorial
         const banner = document.getElementById('permission-banner');
-        const restartBtn = document.getElementById('permission-restart-btn');
         
         if (!banner) return;
         
         // Show the banner
         banner.classList.remove('hidden');
-        
-        // After a short delay, show the restart button (give user time to enable permission)
-        setTimeout(() => {
-            if (restartBtn) {
-                restartBtn.classList.remove('hidden');
-            }
-        }, 3000);
-        
-        // Add click handler for restart button
-        if (restartBtn && !restartBtn.hasClickHandler) {
-            restartBtn.hasClickHandler = true;
-            restartBtn.addEventListener('click', async () => {
-                if (this.isElectron) {
-                    try {
-                        const { ipcRenderer } = window.require('electron');
-                        await ipcRenderer.invoke('restart-app');
-                    } catch (e) {
-                        console.error('Failed to restart app:', e);
-                    }
-                }
-            });
-        }
     }
     
     hidePermissionBanner() {
@@ -1696,7 +1673,7 @@ class JarvisOverlay {
         
         // Only show welcome notification if not in tutorial mode
         if (!this.tutorialActive) {
-            this.showNotification('Jarvis is ready! Look for the red X button in the top-right corner of this message.');
+        this.showNotification('Jarvis is ready! Look for the red X button in the top-right corner of this message.');
         }
     }
 
@@ -1912,8 +1889,8 @@ class JarvisOverlay {
                 const shouldLoadDocument = this.shouldLoadDocumentFromUrl(message, url);
                 
                 if (shouldLoadDocument) {
-                    await this.extractAndProcessDocument(url, message);
-                    return;
+                await this.extractAndProcessDocument(url, message);
+                return;
                 }
                 // If not loading document, continue with normal message processing
                 // The URL will be included in the message sent to the AI
@@ -3049,7 +3026,7 @@ ${currentQuestion}`;
         if (isCalendarCommand) {
             // Clear input
             if (this.textInput) this.textInput.value = '';
-            await this.createCalendarEvent();
+                await this.createCalendarEvent();
             return;
         }
 
@@ -3081,7 +3058,7 @@ ${currentQuestion}`;
         if (message) {
             this.lastUserQuery = message;
         }
-        
+
         // Immediately clear UI input so text disappears as soon as user sends
         if (this.textInput) this.textInput.value = '';
 
@@ -4801,11 +4778,11 @@ User Question: ${question}`;
             this.messageCounter.style.cursor = 'default';
             this.messageCounter.onclick = null;
             console.log(`Free tier - showing ${remaining}/${this.maxFreeMessages} messages remaining`);
-            
-            if (remaining <= 2) {
-                this.messageCounter.classList.add('critical');
-            } else if (remaining <= 5) {
-                this.messageCounter.classList.add('warning');
+        
+        if (remaining <= 2) {
+            this.messageCounter.classList.add('critical');
+        } else if (remaining <= 5) {
+            this.messageCounter.classList.add('warning');
             }
         }
     }
