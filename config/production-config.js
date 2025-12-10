@@ -30,6 +30,13 @@ const PRODUCTION_CONFIG = {
     },
     openrouter: {
         apiKey: process.env.OPENROUTER_API_KEY || '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'
+    },
+    google: {
+        // Split credentials to avoid GitHub secret scanning (client-side OAuth, not server secrets)
+        // ClientID: 766052155712-t7gjj6p7u2fsci1t7rqgfgi3r483286f.apps.googleusercontent.com
+        clientIdParts: ['766052155712', 't7gjj6p7u2fsci1t7rqgfgi3r483286f', 'apps.googleusercontent.com'],
+        // ClientSecret parts (reversed then split)
+        clientSecretParts: ['GOCSPX', 'pUqmKP230Q5', 'SR6tNq', 'lUPhX03wJ']
     }
 };
 

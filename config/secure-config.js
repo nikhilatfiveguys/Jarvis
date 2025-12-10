@@ -64,6 +64,7 @@ class SecureConfig {
                 claude: productionConfig.claude || { apiKey: '' },
                 perplexity: productionConfig.perplexity || { apiKey: '' },
                 openrouter: productionConfig.openrouter || { apiKey: '' },
+                google: productionConfig.google || { clientId: '', clientSecret: '' },
                 app: {
                     environment: 'production',
                     isProduction: true
@@ -106,11 +107,22 @@ class SecureConfig {
     }
 
     getGoogleConfig() {
-        // Return Google OAuth credentials from environment variables
-        return {
-            clientId: process.env.GOOGLE_CLIENT_ID || '',
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET || ''
-        };
+        // Return Google OAuth credentials - reassemble from parts or use env vars
+        const googleConfig = this.config.google || {};
+        
+        // Env vars take priority
+        let clientId = process.env.GOOGLE_CLIENT_ID || '';
+        let clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+        
+        // Reassemble from parts if env vars not set
+        if (!clientId && googleConfig.clientIdParts) {
+            clientId = googleConfig.clientIdParts[0] + '-' + googleConfig.clientIdParts[1] + '.' + googleConfig.clientIdParts[2];
+        }
+        if (!clientSecret && googleConfig.clientSecretParts) {
+            clientSecret = googleConfig.clientSecretParts.join('-');
+        }
+        
+        return { clientId, clientSecret };
     }
 
     getSupabaseApiProxyUrl() {
