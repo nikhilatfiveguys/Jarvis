@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis 6.0 - Features</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0a0a0a !important;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            -webkit-app-region: drag;
+            color: #ffffff;
+        }
+
+        .onboarding-container {
+            background: rgba(20, 20, 20, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            max-width: 520px;
+            width: 90%;
+            position: relative;
+            z-index: 1;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 30px auto;
+            display: block;
+            object-fit: contain;
+        }
+
+        h1 {
+            font-size: 28px;
+            color: #ffffff;
+            margin-bottom: 12px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .description {
+            font-size: 15px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+
+        .features-list {
+            text-align: left;
+            margin-bottom: 30px;
+        }
+
+        .feature-item {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+
+        .feature-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .feature-content {
+            flex: 1;
+        }
+
+        .feature-title {
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .feature-description {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .demo-visual {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 8px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .next-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: white;
+            padding: 14px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            -webkit-app-region: no-drag;
+            width: 100%;
+        }
+
+        .next-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 30px;
+        }
+
+        .step-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .step-dot.active {
+            background: rgba(255, 255, 255, 0.8);
+        }
+
+        .shortcut-key {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 0 2px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div class="onboarding-container">
+        <img src="./JarvisLogo.png" alt="Jarvis Logo" class="logo" onerror="this.style.display='none'; console.error('Logo failed to load');">
+        <h1>Getting Started</h1>
+        <p class="description">Here's how to use Jarvis 6.0:</p>
+
+        <div class="features-list">
+            <div class="feature-item">
+                <div class="feature-icon">⋮⋮</div>
+                <div class="feature-content">
+                    <div class="feature-title">Move the Overlay</div>
+                    <div class="feature-description">
+                        Click and drag the 6 dots (⋮⋮) at the top of the overlay to move it around your screen.
+                        <div class="demo-visual">Double-click the 6 dots to move the overlay to the top of your screen.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="feature-item">
+                <div class="feature-icon">📸</div>
+                <div class="feature-content">
+                    <div class="feature-title">"Answer Screen" Button</div>
+                    <div class="feature-description">
+                        Click the "Answer Screen" button to take a screenshot. Jarvis will analyze what's on your screen and provide intelligent answers.
+                    </div>
+                </div>
+            </div>
+
+            <div class="feature-item">
+                <div class="feature-icon">⌨️</div>
+                <div class="feature-content">
+                    <div class="feature-title">Keyboard Shortcut</div>
+                    <div class="feature-description">
+                        Press <span class="shortcut-key">⌥ Option</span> + <span class="shortcut-key">Space</span> to toggle the overlay on and off.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="buttons">
+            <button class="next-btn" id="finish-btn">Next</button>
+        </div>
+
+        <div class="step-indicator">
+            <div class="step-dot"></div>
+            <div class="step-dot active"></div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        // Fast initialization - minimal processing
+        function init() {
+            document.body.style.display = 'flex';
+            document.body.style.background = '#0a0a0a';
+            document.body.style.color = '#ffffff';
+            
+            // Logo will load asynchronously, don't block
+            const logo = document.querySelector('.logo');
+            if (logo && !logo.src.includes('JarvisLogo')) {
+                logo.src = './JarvisLogo.png';
+            }
+            
+            document.getElementById('finish-btn').onclick = () => {
+                ipcRenderer.send('onboarding-features-complete');
+            };
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
+
