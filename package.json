@@ -309,6 +309,7 @@
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "notarize": false,
       "identity": "Aaron Soni (DMH3RU9FQQ)",
       "extendInfo": {
         "CFBundleShortVersionString": "1.1.6",
