@@ -17,9 +17,9 @@ echo "🧹 Cleaning previous builds..."
 rm -rf dist/mac-arm64 dist/mac 2>/dev/null
 find dist -name "*.dmg" -delete 2>/dev/null
 
-# Build the unsigned app
+# Build the unsigned app (using unsigned config to skip electron-builder signing)
 echo "📦 Building app (unsigned)..."
-npm run build
+npm run build-unsigned
 
 if [ $? -ne 0 ]; then
     echo "❌ Build failed. Check the error messages above."
