@@ -16,28 +16,12 @@
 
         body {
             font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #0a0a0f 0%, #131320 50%, #0d0d15 100%);
+            background: #000000;
             color: #fff;
             margin: 0;
             padding: 24px;
             overflow-y: auto;
             min-height: 100vh;
-        }
-
-        /* Animated background */
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: 
-                radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
-                radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.04) 0%, transparent 70%);
-            pointer-events: none;
-            z-index: 0;
         }
 
         .account-container {
@@ -52,57 +36,60 @@
         .header {
             text-align: center;
             margin-bottom: 28px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         .logo {
-            width: 56px;
-            height: 56px;
-            margin: 0 auto 16px;
-            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            width: 70px;
+            height: 70px;
+            margin: 0;
             border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            color: white;
-            font-weight: 700;
-            box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
-            position: relative;
+            object-fit: contain;
         }
 
-        .logo::after {
-            content: '';
-            position: absolute;
-            inset: -2px;
-            border-radius: 18px;
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.5), rgba(139, 92, 246, 0.5));
-            z-index: -1;
-            filter: blur(8px);
-            opacity: 0.6;
+        .open-browser-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 8px;
+            color: #a5b4fc;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+            margin-top: 12px;
+        }
+
+        .open-browser-btn:hover {
+            background: rgba(99, 102, 241, 0.25);
+            border-color: rgba(99, 102, 241, 0.5);
+            transform: translateY(-1px);
         }
 
         /* Card Styles */
         .card {
-            background: rgba(255, 255, 255, 0.03);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            background: #111111;
             border-radius: 20px;
             padding: 24px;
             margin-bottom: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             transition: all 0.3s ease;
         }
 
         .card:hover {
-            border-color: rgba(255, 255, 255, 0.1);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border-color: rgba(255, 255, 255, 0.15);
         }
 
         .card-title {
             font-size: 13px;
             font-weight: 600;
-            color: rgba(255, 255, 255, 0.5);
+            color: rgba(255, 255, 255, 0.7);
             text-transform: uppercase;
             letter-spacing: 1.2px;
             margin-bottom: 16px;
@@ -110,8 +97,8 @@
 
         /* Premium User Section */
         .user-info-card {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
-            border: 1px solid rgba(99, 102, 241, 0.2);
+            background: #111111;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .user-email {
@@ -152,14 +139,14 @@
         }
 
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.06);
-            color: rgba(255, 255, 255, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: #1a1a1a;
+            color: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 0.15);
         }
 
         .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.2);
+            background: #222222;
+            border-color: rgba(255, 255, 255, 0.25);
         }
 
         .btn-danger {
@@ -196,13 +183,13 @@
         }
 
         .features-list li {
-            color: rgba(255, 255, 255, 0.8);
+            color: #ffffff;
             font-size: 14px;
             padding: 10px 0;
             display: flex;
             align-items: center;
             gap: 12px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .features-list li:last-child {
@@ -210,16 +197,16 @@
         }
 
         .features-list li::before {
-            content: "✓";
+            content: "•";
             display: flex;
             align-items: center;
             justify-content: center;
             width: 20px;
             height: 20px;
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%);
-            color: #10b981;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.5);
             font-weight: bold;
-            font-size: 11px;
+            font-size: 16px;
             border-radius: 6px;
         }
 
@@ -229,10 +216,10 @@
             align-items: center;
             justify-content: space-between;
             padding: 14px 16px;
-            background: rgba(255, 255, 255, 0.03);
+            background: #1a1a1a;
             border-radius: 12px;
             margin-bottom: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             transition: all 0.2s ease;
         }
 
@@ -241,8 +228,8 @@
         }
 
         .service-item:hover {
-            background: rgba(255, 255, 255, 0.06);
-            border-color: rgba(255, 255, 255, 0.08);
+            background: #222222;
+            border-color: rgba(255, 255, 255, 0.12);
         }
 
         .service-info {
@@ -256,7 +243,7 @@
         }
 
         .service-name {
-            color: rgba(255, 255, 255, 0.95);
+            color: #ffffff;
             font-size: 14px;
             font-weight: 500;
         }
@@ -285,8 +272,8 @@
         .service-reconnect-btn {
             padding: 6px 14px;
             border-radius: 8px;
-            border: 1px solid rgba(99, 102, 241, 0.3);
-            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            background: rgba(99, 102, 241, 0.2);
             color: #a5b4fc;
             font-size: 12px;
             font-weight: 600;
@@ -296,8 +283,8 @@
         }
 
         .service-reconnect-btn:hover {
-            background: rgba(99, 102, 241, 0.2);
-            border-color: rgba(99, 102, 241, 0.5);
+            background: rgba(99, 102, 241, 0.3);
+            border-color: rgba(99, 102, 241, 0.6);
             transform: translateY(-1px);
         }
 
@@ -307,7 +294,7 @@
             justify-content: space-between;
             align-items: center;
             padding: 12px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .shortcut-item:last-child {
@@ -316,18 +303,18 @@
         }
 
         .shortcut-key {
-            background: rgba(255, 255, 255, 0.08);
-            color: rgba(255, 255, 255, 0.9);
+            background: #1a1a1a;
+            color: #ffffff;
             padding: 6px 10px;
             border-radius: 8px;
             font-weight: 500;
             font-size: 12px;
             font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.15);
         }
 
         .shortcut-desc {
-            color: rgba(255, 255, 255, 0.6);
+            color: #ffffff;
             font-size: 13px;
         }
 
@@ -345,13 +332,13 @@
         }
 
         .google-account-email {
-            color: rgba(255, 255, 255, 0.7);
+            color: #ffffff;
             font-size: 13px;
             margin-bottom: 16px;
             padding: 10px 14px;
-            background: rgba(255, 255, 255, 0.04);
+            background: #1a1a1a;
             border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             font-family: 'SF Mono', Monaco, monospace;
         }
 
@@ -367,9 +354,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
+            background: rgba(0, 0, 0, 0.9);
             z-index: 10000;
             justify-content: center;
             align-items: center;
@@ -380,7 +365,7 @@
         }
 
         .sign-in-modal-content {
-            background: linear-gradient(135deg, rgba(20, 20, 30, 0.95) 0%, rgba(15, 15, 25, 0.95) 100%);
+            background: #111111;
             border-radius: 20px;
             padding: 32px;
             max-width: 400px;
@@ -400,8 +385,8 @@
         .sign-in-modal-content input {
             width: 100%;
             padding: 14px 16px;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: #1a1a1a;
+            border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 12px;
             color: #fff;
             font-size: 14px;
@@ -413,9 +398,8 @@
 
         .sign-in-modal-content input:focus {
             outline: none;
-            border-color: rgba(99, 102, 241, 0.5);
-            background: rgba(99, 102, 241, 0.05);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+            border-color: rgba(255, 255, 255, 0.3);
+            background: #222222;
         }
 
         .sign-in-modal-content input::placeholder {
@@ -450,13 +434,13 @@
         }
 
         .sign-in-modal-btn.secondary {
-            background: rgba(255, 255, 255, 0.06);
-            color: rgba(255, 255, 255, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: #1a1a1a;
+            color: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 0.15);
         }
 
         .sign-in-modal-btn.secondary:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: #222222;
         }
 
         .sign-in-modal-error {
@@ -491,6 +475,119 @@
             margin: 20px 0;
         }
 
+        /* Password Section */
+        .password-section {
+            margin-top: 8px;
+        }
+
+        .password-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.7);
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            margin-bottom: 12px;
+        }
+
+        .password-inputs {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .password-inputs input {
+            width: 100%;
+            padding: 12px 14px;
+            background: #1a1a1a;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 14px;
+            box-sizing: border-box;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .password-inputs input:focus {
+            outline: none;
+            border-color: rgba(99, 102, 241, 0.5);
+            background: #222222;
+        }
+
+        .password-inputs input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .password-error {
+            color: #f87171;
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .password-error.active {
+            display: block;
+        }
+
+        .password-success {
+            color: #10b981;
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .password-success.active {
+            display: block;
+        }
+
+        .password-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 14px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 10px;
+        }
+
+        .password-icon {
+            font-size: 16px;
+        }
+
+        .password-text {
+            color: #10b981;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Forgot Password Link */
+        .forgot-password-link {
+            text-align: right;
+            margin: -8px 0 16px 0;
+        }
+
+        .forgot-password-link a {
+            color: #6366f1;
+            font-size: 13px;
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        .forgot-password-link a:hover {
+            color: #8b5cf6;
+            text-decoration: underline;
+        }
+
+        /* Forgot Password Steps */
+        .forgot-step {
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         @media (max-width: 480px) {
             body {
                 padding: 16px;
@@ -505,7 +602,15 @@
 <body>
     <div class="account-container">
         <div class="header">
-            <div class="logo">J</div>
+            <img src="ChatGPT Image Oct 18, 2025 at 01_00_33 PM-2.PNG" alt="Jarvis" class="logo">
+            <button id="open-in-browser-btn" class="open-browser-btn" title="Open in browser">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+                Open in Browser
+            </button>
         </div>
 
         <!-- Premium User Section (shown when subscribed) -->
@@ -513,6 +618,40 @@
             <div class="card user-info-card">
                 <div class="user-email" id="user-email-display">user@email.com</div>
                 <div class="next-billing" id="next-billing-display">Next billing: —</div>
+                
+                <!-- Password Section -->
+                <div class="divider"></div>
+                <div id="password-section" class="password-section">
+                    <div id="password-not-set" class="password-not-set">
+                        <div class="password-label">Password</div>
+                        <div class="password-inputs">
+                            <input type="password" id="new-password-input" placeholder="Set a password (min 6 characters)" autocomplete="new-password">
+                            <input type="password" id="confirm-password-input" placeholder="Confirm password" autocomplete="new-password">
+                        </div>
+                        <div id="password-error" class="password-error"></div>
+                        <button id="set-password-btn" class="btn btn-primary" style="margin-top: 12px;">Set Password</button>
+                    </div>
+                    <div id="password-already-set" class="password-already-set" style="display: none;">
+                        <div class="password-status">
+                            <span class="password-icon">🔒</span>
+                            <span class="password-text">Password protected</span>
+                        </div>
+                        <button id="change-password-btn" class="btn btn-secondary" style="margin-top: 8px;">Change Password</button>
+                    </div>
+                    <div id="change-password-form" class="change-password-form" style="display: none;">
+                        <div class="password-label">Change Password</div>
+                        <div class="password-inputs">
+                            <input type="password" id="current-password-input" placeholder="Current password" autocomplete="current-password">
+                            <input type="password" id="change-new-password-input" placeholder="New password (min 6 characters)" autocomplete="new-password">
+                            <input type="password" id="change-confirm-password-input" placeholder="Confirm new password" autocomplete="new-password">
+                        </div>
+                        <div id="change-password-error" class="password-error"></div>
+                        <div style="display: flex; gap: 8px; margin-top: 12px;">
+                            <button id="cancel-change-password-btn" class="btn btn-secondary">Cancel</button>
+                            <button id="update-password-btn" class="btn btn-primary">Update Password</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             <button id="manage-subscription-btn" class="btn btn-secondary">Manage Subscription</button>
             <button id="sign-out-btn" class="btn btn-danger">Sign Out</button>
@@ -523,10 +662,11 @@
             <div class="card">
                 <div class="card-title">Premium Features</div>
                 <ul class="features-list">
-                    <li>Unlimited AI responses</li>
-                    <li>Screenshot analysis</li>
-                    <li>Voice activation</li>
-                    <li>Advanced AI models</li>
+                    <li>All AI models</li>
+                    <li>High-usage messaging plan</li>
+                    <li>Lockdown browser support (except when screen monitoring)</li>
+                    <li>Humanizer (coming soon)</li>
+                    <li>Priority support</li>
                 </ul>
                 <button id="sign-in-btn" class="btn btn-primary" onclick="window.handleSignIn && window.handleSignIn(); return false;">Sign In</button>
                 <button id="get-premium-btn" class="btn btn-success">Get Premium</button>
@@ -567,22 +707,6 @@
             <button id="google-disconnect-all-btn" class="btn btn-secondary hidden">Disconnect Google Account</button>
         </div>
 
-        <!-- Keyboard Shortcuts Section -->
-        <div class="card">
-            <div class="card-title">Keyboard Shortcuts</div>
-            <div class="shortcut-item">
-                <span class="shortcut-desc">Toggle Jarvis</span>
-                <span class="shortcut-key">⌥ Space</span>
-            </div>
-            <div class="shortcut-item">
-                <span class="shortcut-desc">Move to top</span>
-                <span class="shortcut-key">Double-click ⋮⋮</span>
-            </div>
-            <div class="shortcut-item">
-                <span class="shortcut-desc">Answer screen</span>
-                <span class="shortcut-key">📷 Button</span>
-            </div>
-        </div>
 
         <!-- Hidden sections for functionality -->
         <div id="subscription-status" class="status-card" style="display: none;">
@@ -597,10 +721,65 @@
             <div class="sign-in-modal-content">
                 <h2>Welcome Back</h2>
                 <input type="email" id="sign-in-email-input" placeholder="Enter your email" autocomplete="email">
+                <input type="password" id="sign-in-password-input" placeholder="Enter your password" autocomplete="current-password" style="display: none;">
                 <div id="sign-in-modal-error" class="sign-in-modal-error"></div>
+                <div class="forgot-password-link" id="forgot-password-link" style="display: none;">
+                    <a href="#" onclick="showForgotPasswordModal(); return false;">Forgot Password?</a>
+                </div>
                 <div class="sign-in-modal-buttons">
                     <button class="sign-in-modal-btn secondary" id="sign-in-modal-cancel">Cancel</button>
                     <button class="sign-in-modal-btn primary" id="sign-in-modal-submit">Sign In</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Forgot Password Modal -->
+        <div id="forgot-password-modal" class="sign-in-modal">
+            <div class="sign-in-modal-content">
+                <!-- Step 1: Enter Email -->
+                <div id="forgot-step-email" class="forgot-step">
+                    <h2>Reset Password</h2>
+                    <p style="color: rgba(255,255,255,0.6); font-size: 13px; margin-bottom: 16px;">Enter your email to receive a reset code</p>
+                    <input type="email" id="forgot-email-input" placeholder="Enter your email" autocomplete="email">
+                    <div id="forgot-email-error" class="sign-in-modal-error"></div>
+                    <div class="sign-in-modal-buttons">
+                        <button class="sign-in-modal-btn secondary" onclick="hideForgotPasswordModal()">Cancel</button>
+                        <button class="sign-in-modal-btn primary" id="forgot-send-code-btn" onclick="sendResetCode()">Send Code</button>
+                    </div>
+                </div>
+
+                <!-- Step 2: Enter Code -->
+                <div id="forgot-step-code" class="forgot-step" style="display: none;">
+                    <h2>Enter Code</h2>
+                    <p style="color: rgba(255,255,255,0.6); font-size: 13px; margin-bottom: 16px;">Check your email for the 6-digit code</p>
+                    <input type="text" id="forgot-code-input" placeholder="Enter 6-digit code" maxlength="6" style="text-align: center; letter-spacing: 8px; font-size: 20px;">
+                    <div id="forgot-code-error" class="sign-in-modal-error"></div>
+                    <div class="sign-in-modal-buttons">
+                        <button class="sign-in-modal-btn secondary" onclick="goBackToEmailStep()">Back</button>
+                        <button class="sign-in-modal-btn primary" id="forgot-verify-code-btn" onclick="verifyResetCode()">Verify</button>
+                    </div>
+                </div>
+
+                <!-- Step 3: New Password -->
+                <div id="forgot-step-password" class="forgot-step" style="display: none;">
+                    <h2>New Password</h2>
+                    <p style="color: rgba(255,255,255,0.6); font-size: 13px; margin-bottom: 16px;">Enter your new password</p>
+                    <input type="password" id="forgot-new-password-input" placeholder="New password (min 6 characters)" autocomplete="new-password">
+                    <input type="password" id="forgot-confirm-password-input" placeholder="Confirm password" autocomplete="new-password" style="margin-top: 10px;">
+                    <div id="forgot-password-error" class="sign-in-modal-error"></div>
+                    <div class="sign-in-modal-buttons">
+                        <button class="sign-in-modal-btn secondary" onclick="hideForgotPasswordModal()">Cancel</button>
+                        <button class="sign-in-modal-btn primary" id="forgot-reset-btn" onclick="resetPassword()">Reset Password</button>
+                    </div>
+                </div>
+
+                <!-- Success -->
+                <div id="forgot-step-success" class="forgot-step" style="display: none;">
+                    <h2>✅ Password Reset</h2>
+                    <p style="color: rgba(255,255,255,0.6); font-size: 14px; margin-bottom: 20px;">Your password has been reset successfully. You can now sign in with your new password.</p>
+                    <div class="sign-in-modal-buttons">
+                        <button class="sign-in-modal-btn primary" onclick="hideForgotPasswordModal(); showSignInModal();">Sign In</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -628,15 +807,207 @@
         function hideSignInModal() {
             const modal = document.getElementById('sign-in-modal');
             const emailInput = document.getElementById('sign-in-email-input');
+            const passwordInput = document.getElementById('sign-in-password-input');
             const errorDiv = document.getElementById('sign-in-modal-error');
+            const forgotLink = document.getElementById('forgot-password-link');
             
             if (modal) {
                 modal.classList.remove('active');
                 if (emailInput) emailInput.value = '';
+                if (passwordInput) {
+                    passwordInput.value = '';
+                    passwordInput.style.display = 'none';
+                }
+                if (forgotLink) forgotLink.style.display = 'none';
                 if (errorDiv) {
                     errorDiv.classList.remove('active');
                     errorDiv.textContent = '';
                 }
+            }
+        }
+
+        // Forgot password state
+        let forgotPasswordEmail = '';
+
+        // Show forgot password modal - opens in browser
+        function showForgotPasswordModal() {
+            // Get email from sign-in input if available
+            const signInEmail = document.getElementById('sign-in-email-input');
+            const email = signInEmail ? signInEmail.value.trim() : '';
+            
+            // Open browser-based password reset page
+            ipcRenderer.invoke('open-password-reset-page', email);
+            
+            // Hide the sign-in modal
+            hideSignInModal();
+        }
+
+        // Hide forgot password modal
+        function hideForgotPasswordModal() {
+            const modal = document.getElementById('forgot-password-modal');
+            if (modal) {
+                modal.classList.remove('active');
+                resetForgotPasswordSteps();
+            }
+        }
+
+        // Reset forgot password steps
+        function resetForgotPasswordSteps() {
+            document.getElementById('forgot-step-email').style.display = 'block';
+            document.getElementById('forgot-step-code').style.display = 'none';
+            document.getElementById('forgot-step-password').style.display = 'none';
+            document.getElementById('forgot-step-success').style.display = 'none';
+            
+            // Clear inputs
+            const inputs = ['forgot-email-input', 'forgot-code-input', 'forgot-new-password-input', 'forgot-confirm-password-input'];
+            inputs.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            
+            // Clear errors
+            const errors = ['forgot-email-error', 'forgot-code-error', 'forgot-password-error'];
+            errors.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.classList.remove('active');
+                    el.textContent = '';
+                }
+            });
+            
+            forgotPasswordEmail = '';
+        }
+
+        // Go back to email step
+        function goBackToEmailStep() {
+            document.getElementById('forgot-step-email').style.display = 'block';
+            document.getElementById('forgot-step-code').style.display = 'none';
+        }
+
+        // Send reset code
+        async function sendResetCode() {
+            const emailInput = document.getElementById('forgot-email-input');
+            const errorDiv = document.getElementById('forgot-email-error');
+            const sendBtn = document.getElementById('forgot-send-code-btn');
+            
+            const email = emailInput.value.trim();
+            
+            if (!email || !email.includes('@') || !email.includes('.')) {
+                errorDiv.textContent = 'Please enter a valid email address';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            errorDiv.classList.remove('active');
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+            
+            try {
+                const result = await ipcRenderer.invoke('send-password-reset-email', email);
+                
+                if (result.success) {
+                    forgotPasswordEmail = email;
+                    document.getElementById('forgot-step-email').style.display = 'none';
+                    document.getElementById('forgot-step-code').style.display = 'block';
+                    document.getElementById('forgot-code-input').focus();
+                } else {
+                    errorDiv.textContent = result.error || 'Failed to send code';
+                    errorDiv.classList.add('active');
+                }
+            } catch (error) {
+                console.error('Error sending reset code:', error);
+                errorDiv.textContent = 'An error occurred. Please try again.';
+                errorDiv.classList.add('active');
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send Code';
+            }
+        }
+
+        // Verify reset code
+        async function verifyResetCode() {
+            const codeInput = document.getElementById('forgot-code-input');
+            const errorDiv = document.getElementById('forgot-code-error');
+            const verifyBtn = document.getElementById('forgot-verify-code-btn');
+            
+            const code = codeInput.value.trim();
+            
+            if (!code || code.length !== 6) {
+                errorDiv.textContent = 'Please enter the 6-digit code';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            errorDiv.classList.remove('active');
+            verifyBtn.disabled = true;
+            verifyBtn.textContent = 'Verifying...';
+            
+            try {
+                const result = await ipcRenderer.invoke('verify-password-reset-code', forgotPasswordEmail, code);
+                
+                if (result.success) {
+                    document.getElementById('forgot-step-code').style.display = 'none';
+                    document.getElementById('forgot-step-password').style.display = 'block';
+                    document.getElementById('forgot-new-password-input').focus();
+                } else {
+                    errorDiv.textContent = result.error || 'Invalid code';
+                    errorDiv.classList.add('active');
+                }
+            } catch (error) {
+                console.error('Error verifying code:', error);
+                errorDiv.textContent = 'An error occurred. Please try again.';
+                errorDiv.classList.add('active');
+            } finally {
+                verifyBtn.disabled = false;
+                verifyBtn.textContent = 'Verify';
+            }
+        }
+
+        // Reset password
+        async function resetPassword() {
+            const newPasswordInput = document.getElementById('forgot-new-password-input');
+            const confirmPasswordInput = document.getElementById('forgot-confirm-password-input');
+            const errorDiv = document.getElementById('forgot-password-error');
+            const resetBtn = document.getElementById('forgot-reset-btn');
+            const codeInput = document.getElementById('forgot-code-input');
+            
+            const newPassword = newPasswordInput.value;
+            const confirmPassword = confirmPasswordInput.value;
+            const code = codeInput.value.trim();
+            
+            if (!newPassword || newPassword.length < 6) {
+                errorDiv.textContent = 'Password must be at least 6 characters';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                errorDiv.textContent = 'Passwords do not match';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            errorDiv.classList.remove('active');
+            resetBtn.disabled = true;
+            resetBtn.textContent = 'Resetting...';
+            
+            try {
+                const result = await ipcRenderer.invoke('reset-password-with-code', forgotPasswordEmail, code, newPassword);
+                
+                if (result.success) {
+                    document.getElementById('forgot-step-password').style.display = 'none';
+                    document.getElementById('forgot-step-success').style.display = 'block';
+                } else {
+                    errorDiv.textContent = result.error || 'Failed to reset password';
+                    errorDiv.classList.add('active');
+                }
+            } catch (error) {
+                console.error('Error resetting password:', error);
+                errorDiv.textContent = 'An error occurred. Please try again.';
+                errorDiv.classList.add('active');
+            } finally {
+                resetBtn.disabled = false;
+                resetBtn.textContent = 'Reset Password';
             }
         }
 
@@ -649,6 +1020,7 @@
         // Handle sign-in submission
         async function handleSignInSubmit() {
             const emailInput = document.getElementById('sign-in-email-input');
+            const passwordInput = document.getElementById('sign-in-password-input');
             const errorDiv = document.getElementById('sign-in-modal-error');
             const submitBtn = document.getElementById('sign-in-modal-submit');
             
@@ -658,6 +1030,7 @@
             }
 
             const email = emailInput.value.trim();
+            const password = passwordInput ? passwordInput.value : '';
             
             if (!email) {
                 errorDiv.textContent = 'Please enter your email address';
@@ -671,16 +1044,38 @@
                 return;
             }
 
+            // Check if password field is visible and empty
+            if (passwordInput && passwordInput.style.display !== 'none' && !password) {
+                errorDiv.textContent = 'Please enter your password';
+                errorDiv.classList.add('active');
+                return;
+            }
+
             errorDiv.classList.remove('active');
             submitBtn.disabled = true;
             submitBtn.textContent = 'Signing in...';
 
             try {
                 console.log('🔐 Attempting to sign in with email:', email);
-                const result = await ipcRenderer.invoke('sign-in-user', email);
+                const result = await ipcRenderer.invoke('sign-in-user', email, password);
                 console.log('🔐 Sign-in result:', result);
 
                 if (result.success) {
+                    if (result.requiresPassword) {
+                        // Show password field and forgot password link
+                        if (passwordInput) {
+                            passwordInput.style.display = 'block';
+                            passwordInput.focus();
+                        }
+                        const forgotLink = document.getElementById('forgot-password-link');
+                        if (forgotLink) forgotLink.style.display = 'block';
+                        errorDiv.textContent = 'Please enter your password';
+                        errorDiv.classList.add('active');
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Sign In';
+                        return;
+                    }
+                    
                     if (result.hasSubscription) {
                         hideSignInModal();
                         await checkSubscriptionStatus();
@@ -693,6 +1088,11 @@
                 } else {
                     errorDiv.textContent = result.error || 'Failed to sign in. Please try again.';
                     errorDiv.classList.add('active');
+                    // Show forgot password link if it's a password error
+                    if (result.error && result.error.toLowerCase().includes('password')) {
+                        const forgotLink = document.getElementById('forgot-password-link');
+                        if (forgotLink) forgotLink.style.display = 'block';
+                    }
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Sign In';
                 }
@@ -722,9 +1122,234 @@
             checkSubscriptionStatus();
             setupGoogleServices();
             updateGoogleServicesStatus();
+            setupPasswordHandlers();
+        }
+
+        // Check and update password status
+        async function checkPasswordStatus(email) {
+            try {
+                const result = await ipcRenderer.invoke('check-user-has-password', email);
+                const passwordNotSet = document.getElementById('password-not-set');
+                const passwordAlreadySet = document.getElementById('password-already-set');
+                
+                if (result.success && result.hasPassword) {
+                    if (passwordNotSet) passwordNotSet.style.display = 'none';
+                    if (passwordAlreadySet) passwordAlreadySet.style.display = 'block';
+                } else {
+                    if (passwordNotSet) passwordNotSet.style.display = 'block';
+                    if (passwordAlreadySet) passwordAlreadySet.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error checking password status:', error);
+            }
+        }
+
+        // Setup password handlers
+        function setupPasswordHandlers() {
+            const setPasswordBtn = document.getElementById('set-password-btn');
+            const changePasswordBtn = document.getElementById('change-password-btn');
+            
+            if (setPasswordBtn) {
+                setPasswordBtn.addEventListener('click', handleSetPassword);
+            }
+            
+            if (changePasswordBtn) {
+                changePasswordBtn.addEventListener('click', () => {
+                    // Show the change password form
+                    const passwordAlreadySet = document.getElementById('password-already-set');
+                    const changePasswordForm = document.getElementById('change-password-form');
+                    if (passwordAlreadySet) passwordAlreadySet.style.display = 'none';
+                    if (changePasswordForm) changePasswordForm.style.display = 'block';
+                    
+                    // Focus the current password field
+                    const currentPasswordInput = document.getElementById('current-password-input');
+                    if (currentPasswordInput) currentPasswordInput.focus();
+                });
+            }
+            
+            // Cancel change password
+            const cancelChangePasswordBtn = document.getElementById('cancel-change-password-btn');
+            if (cancelChangePasswordBtn) {
+                cancelChangePasswordBtn.addEventListener('click', () => {
+                    const passwordAlreadySet = document.getElementById('password-already-set');
+                    const changePasswordForm = document.getElementById('change-password-form');
+                    if (passwordAlreadySet) passwordAlreadySet.style.display = 'flex';
+                    if (changePasswordForm) changePasswordForm.style.display = 'none';
+                    
+                    // Clear inputs
+                    document.getElementById('current-password-input').value = '';
+                    document.getElementById('change-new-password-input').value = '';
+                    document.getElementById('change-confirm-password-input').value = '';
+                    document.getElementById('change-password-error').textContent = '';
+                    document.getElementById('change-password-error').classList.remove('active');
+                });
+            }
+            
+            // Update password button
+            const updatePasswordBtn = document.getElementById('update-password-btn');
+            if (updatePasswordBtn) {
+                updatePasswordBtn.addEventListener('click', handleChangePassword);
+            }
+        }
+        
+        // Handle changing password (with old password verification)
+        async function handleChangePassword() {
+            const currentPassword = document.getElementById('current-password-input');
+            const newPassword = document.getElementById('change-new-password-input');
+            const confirmPassword = document.getElementById('change-confirm-password-input');
+            const errorDiv = document.getElementById('change-password-error');
+            const updateBtn = document.getElementById('update-password-btn');
+            const emailDisplay = document.getElementById('user-email-display');
+            
+            if (!currentPassword || !newPassword || !confirmPassword || !emailDisplay) return;
+            
+            const oldPass = currentPassword.value;
+            const newPass = newPassword.value;
+            const confirm = confirmPassword.value;
+            const email = emailDisplay.textContent;
+            
+            // Validate
+            if (!oldPass) {
+                errorDiv.textContent = 'Please enter your current password';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            if (!newPass || newPass.length < 6) {
+                errorDiv.textContent = 'New password must be at least 6 characters';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            if (newPass !== confirm) {
+                errorDiv.textContent = 'New passwords do not match';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            errorDiv.classList.remove('active');
+            updateBtn.disabled = true;
+            updateBtn.textContent = 'Updating...';
+            
+            try {
+                // First verify the current password
+                const verifyResult = await ipcRenderer.invoke('verify-user-password', email, oldPass);
+                
+                if (!verifyResult.success) {
+                    errorDiv.textContent = 'Current password is incorrect';
+                    errorDiv.classList.add('active');
+                    updateBtn.disabled = false;
+                    updateBtn.textContent = 'Update Password';
+                    return;
+                }
+                
+                // Now set the new password
+                const result = await ipcRenderer.invoke('set-user-password', email, newPass);
+                
+                if (result.success) {
+                    // Clear inputs and show success
+                    currentPassword.value = '';
+                    newPassword.value = '';
+                    confirmPassword.value = '';
+                    
+                    // Hide form and show status
+                    const passwordAlreadySet = document.getElementById('password-already-set');
+                    const changePasswordForm = document.getElementById('change-password-form');
+                    if (passwordAlreadySet) passwordAlreadySet.style.display = 'flex';
+                    if (changePasswordForm) changePasswordForm.style.display = 'none';
+                    
+                    // Show success message briefly
+                    const statusText = passwordAlreadySet.querySelector('.password-text');
+                    if (statusText) {
+                        statusText.textContent = 'Password updated!';
+                        setTimeout(() => {
+                            statusText.textContent = 'Password protected';
+                        }, 2000);
+                    }
+                } else {
+                    errorDiv.textContent = result.error || 'Failed to update password';
+                    errorDiv.classList.add('active');
+                }
+            } catch (error) {
+                console.error('Error changing password:', error);
+                errorDiv.textContent = 'An error occurred. Please try again.';
+                errorDiv.classList.add('active');
+            } finally {
+                updateBtn.disabled = false;
+                updateBtn.textContent = 'Update Password';
+            }
+        }
+
+        // Handle setting password
+        async function handleSetPassword() {
+            const newPassword = document.getElementById('new-password-input');
+            const confirmPassword = document.getElementById('confirm-password-input');
+            const errorDiv = document.getElementById('password-error');
+            const setPasswordBtn = document.getElementById('set-password-btn');
+            const emailDisplay = document.getElementById('user-email-display');
+            
+            if (!newPassword || !confirmPassword || !emailDisplay) return;
+            
+            const password = newPassword.value;
+            const confirm = confirmPassword.value;
+            const email = emailDisplay.textContent;
+            
+            // Validate
+            if (!password || password.length < 6) {
+                errorDiv.textContent = 'Password must be at least 6 characters';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            if (password !== confirm) {
+                errorDiv.textContent = 'Passwords do not match';
+                errorDiv.classList.add('active');
+                return;
+            }
+            
+            errorDiv.classList.remove('active');
+            setPasswordBtn.disabled = true;
+            setPasswordBtn.textContent = 'Setting...';
+            
+            try {
+                const result = await ipcRenderer.invoke('set-user-password', email, password);
+                
+                if (result.success) {
+                    // Clear inputs
+                    newPassword.value = '';
+                    confirmPassword.value = '';
+                    
+                    // Update UI to show password is set
+                    const passwordNotSet = document.getElementById('password-not-set');
+                    const passwordAlreadySet = document.getElementById('password-already-set');
+                    if (passwordNotSet) passwordNotSet.style.display = 'none';
+                    if (passwordAlreadySet) passwordAlreadySet.style.display = 'block';
+                    
+                    // Notify main window that password was set
+                    ipcRenderer.send('password-set', email);
+                } else {
+                    errorDiv.textContent = result.error || 'Failed to set password';
+                    errorDiv.classList.add('active');
+                }
+            } catch (error) {
+                console.error('Error setting password:', error);
+                errorDiv.textContent = 'An error occurred. Please try again.';
+                errorDiv.classList.add('active');
+            } finally {
+                setPasswordBtn.disabled = false;
+                setPasswordBtn.textContent = 'Set Password';
+            }
         }
 
         function setupEventListeners() {
+            // Open in Browser button
+            const openBrowserBtn = document.getElementById('open-in-browser-btn');
+            if (openBrowserBtn) {
+                openBrowserBtn.addEventListener('click', async () => {
+                    await ipcRenderer.invoke('open-account-in-browser');
+                });
+            }
+            
             // Sign In Button (for free users)
             const signInBtn = document.getElementById('sign-in-btn');
             if (signInBtn) {
@@ -755,6 +1380,37 @@
                     if (e.key === 'Enter') {
                         handleSignInSubmit();
                     }
+                });
+            }
+            
+            const signInPasswordInput = document.getElementById('sign-in-password-input');
+            if (signInPasswordInput) {
+                signInPasswordInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        handleSignInSubmit();
+                    }
+                });
+            }
+
+            // Forgot password modal keyboard support
+            const forgotEmailInput = document.getElementById('forgot-email-input');
+            if (forgotEmailInput) {
+                forgotEmailInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') sendResetCode();
+                });
+            }
+            
+            const forgotCodeInput = document.getElementById('forgot-code-input');
+            if (forgotCodeInput) {
+                forgotCodeInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') verifyResetCode();
+                });
+            }
+            
+            const forgotConfirmInput = document.getElementById('forgot-confirm-password-input');
+            if (forgotConfirmInput) {
+                forgotConfirmInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') resetPassword();
                 });
             }
 
@@ -862,6 +1518,9 @@
                 document.getElementById('payment-section').style.display = 'none';
                 document.getElementById('subscription-status').style.display = 'none';
                 document.getElementById('license-info').style.display = 'none';
+                
+                // Check password status
+                checkPasswordStatus(subscriptionData.email);
             } else {
                 premiumSection.style.display = 'none';
                 freeSection.style.display = 'block';
@@ -873,6 +1532,7 @@
             
             setTimeout(() => {
                 setupEventListeners();
+                setupPasswordHandlers();
             }, 100);
         }
 

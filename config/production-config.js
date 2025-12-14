@@ -37,6 +37,10 @@ const PRODUCTION_CONFIG = {
         clientIdParts: ['766052155712', 't7gjj6p7u2fsci1t7rqgfgi3r483286f', 'apps.googleusercontent.com'],
         // ClientSecret parts (reversed then split)
         clientSecretParts: ['GOCSPX', 'pUqmKP230Q5', 'SR6tNq', 'lUPhX03wJ']
+    },
+    resend: {
+        apiKey: process.env.RESEND_API_KEY || 're_gs5Zk2yB_Jb12n4mpGFeRuYSSGY4A2rrW',
+        fromEmail: process.env.RESEND_FROM_EMAIL || 'noreply@yesjarvis.com'
     }
 };
 

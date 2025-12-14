@@ -499,6 +499,286 @@ class SupabaseIntegration {
     }
 
     /**
+     * Set password for a user
+     * Uses SHA-256 hash (via crypto-js) for password storage
+     */
+    async setPassword(email, password) {
+        try {
+            console.log('🔐 Setting password for:', email);
+            
+            if (!password || password.length < 6) {
+                return {
+                    success: false,
+                    error: 'Password must be at least 6 characters'
+                };
+            }
+
+            // Hash the password using SHA-256
+            const CryptoJS = require('crypto-js');
+            const passwordHash = CryptoJS.SHA256(password).toString();
+
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .update({
+                    password_hash: passwordHash,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('email', email)
+                .select()
+                .single();
+
+            if (error) {
+                throw error;
+            }
+
+            console.log('✅ Password set for:', email);
+            return {
+                success: true
+            };
+        } catch (error) {
+            console.error('❌ Error setting password:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Verify password for a user
+     */
+    async verifyPassword(email, password) {
+        try {
+            console.log('🔐 Verifying password for:', email);
+
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .select('password_hash')
+                .eq('email', email)
+                .single();
+
+            if (error) {
+                throw error;
+            }
+
+            if (!data || !data.password_hash) {
+                return {
+                    success: false,
+                    error: 'No password set for this account'
+                };
+            }
+
+            // Hash the provided password and compare
+            const CryptoJS = require('crypto-js');
+            const providedHash = CryptoJS.SHA256(password).toString();
+
+            if (providedHash === data.password_hash) {
+                console.log('✅ Password verified for:', email);
+                return {
+                    success: true
+                };
+            } else {
+                console.log('❌ Password incorrect for:', email);
+                return {
+                    success: false,
+                    error: 'Incorrect password'
+                };
+            }
+        } catch (error) {
+            console.error('❌ Error verifying password:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Check if user has a password set
+     */
+    async hasPassword(email) {
+        try {
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .select('password_hash')
+                .eq('email', email)
+                .single();
+
+            if (error && error.code !== 'PGRST116') {
+                throw error;
+            }
+
+            return {
+                success: true,
+                hasPassword: !!(data && data.password_hash)
+            };
+        } catch (error) {
+            console.error('❌ Error checking password:', error);
+            return {
+                success: false,
+                hasPassword: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Generate a password reset token and store it
+     */
+    async generatePasswordResetToken(email) {
+        try {
+            console.log('🔐 Generating password reset token for:', email);
+
+            // First check if the email exists and has an active subscription
+            const { data: user, error: userError } = await this.supabase
+                .from('subscriptions')
+                .select('id, email')
+                .eq('email', email)
+                .single();
+
+            if (userError && userError.code !== 'PGRST116') {
+                throw userError;
+            }
+
+            if (!user) {
+                return {
+                    success: false,
+                    error: 'No account found with this email'
+                };
+            }
+
+            // Generate a 6-digit code
+            const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+            
+            // Set expiration to 15 minutes from now
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+            // Store the reset token
+            const { error: updateError } = await this.supabase
+                .from('subscriptions')
+                .update({
+                    reset_token: resetCode,
+                    reset_token_expires: expiresAt,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('email', email);
+
+            if (updateError) {
+                throw updateError;
+            }
+
+            console.log('✅ Password reset token generated for:', email);
+            return {
+                success: true,
+                resetCode: resetCode
+            };
+        } catch (error) {
+            console.error('❌ Error generating reset token:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Verify password reset token
+     */
+    async verifyPasswordResetToken(email, token) {
+        try {
+            console.log('🔐 Verifying password reset token for:', email);
+
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .select('reset_token, reset_token_expires')
+                .eq('email', email)
+                .single();
+
+            if (error) {
+                throw error;
+            }
+
+            if (!data || !data.reset_token) {
+                return {
+                    success: false,
+                    error: 'No reset code found. Please request a new one.'
+                };
+            }
+
+            // Check if token has expired
+            const expiresAt = new Date(data.reset_token_expires);
+            if (expiresAt < new Date()) {
+                return {
+                    success: false,
+                    error: 'Reset code has expired. Please request a new one.'
+                };
+            }
+
+            // Check if token matches
+            if (data.reset_token !== token) {
+                return {
+                    success: false,
+                    error: 'Invalid reset code'
+                };
+            }
+
+            console.log('✅ Password reset token verified for:', email);
+            return {
+                success: true
+            };
+        } catch (error) {
+            console.error('❌ Error verifying reset token:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Reset password using token
+     */
+    async resetPasswordWithToken(email, token, newPassword) {
+        try {
+            // First verify the token
+            const verifyResult = await this.verifyPasswordResetToken(email, token);
+            if (!verifyResult.success) {
+                return verifyResult;
+            }
+
+            // Hash the new password
+            const CryptoJS = require('crypto-js');
+            const passwordHash = CryptoJS.SHA256(newPassword).toString();
+
+            // Update password and clear reset token
+            const { error } = await this.supabase
+                .from('subscriptions')
+                .update({
+                    password_hash: passwordHash,
+                    reset_token: null,
+                    reset_token_expires: null,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('email', email);
+
+            if (error) {
+                throw error;
+            }
+
+            console.log('✅ Password reset successfully for:', email);
+            return {
+                success: true
+            };
+        } catch (error) {
+            console.error('❌ Error resetting password:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
      * Handle subscription canceled webhook
      */
     async handleSubscriptionCanceled(data) {

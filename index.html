@@ -31,6 +31,16 @@
             </div>
         </div>
         
+        <!-- Set Password Notification -->
+        <div id="set-password-notification" class="set-password-notification hidden">
+            <div class="password-notification-content">
+                <span class="password-notification-icon">🔐</span>
+                <span class="password-notification-text">Set a password to secure your account</span>
+                <button id="password-notification-open-btn" class="password-notification-btn">Open</button>
+                <button id="password-notification-dismiss-btn" class="password-notification-dismiss">×</button>
+            </div>
+        </div>
+        
         <!-- Google Docs Writing Status Indicator -->
         <div id="docs-writing-indicator" class="docs-writing-indicator hidden">
             <div class="docs-status-content">
@@ -83,13 +93,13 @@
                 <span id="message-count-text">0/10</span>
             </div>
             
-            <!-- File button -->
-            <button id="file-btn" class="file-btn" title="Attach images, PDFs, or text">
-                <svg class="paperclip-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12.5 6.5L6.5 12.5C5.4 13.6 3.6 13.6 2.5 12.5C1.4 11.4 1.4 9.6 2.5 8.5L8.5 2.5C9.2 1.8 10.3 1.8 11 2.5C11.7 3.2 11.7 4.3 11 5L5 11C4.7 11.3 4.2 11.3 3.9 11C3.6 10.7 3.6 10.2 3.9 9.9L9.4 4.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <!-- Add file button -->
+            <button id="add-btn" class="add-btn" title="Add file">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span class="sr-only">Attach files</span>
             </button>
+            <input type="file" id="file-input" class="hidden" multiple accept="image/*,.pdf,.txt,.doc,.docx,.md,.json,.csv">
             <!-- Settings button -->
             <button id="settings-btn" class="settings-btn" title="Settings">
                 <div class="menu-icon">
@@ -111,7 +121,7 @@
             <div id="model-submenu" class="model-submenu hidden">
                 <div class="model-item" data-model="default">
                     <span class="model-name">Jarvis</span>
-                    <span class="model-desc">uses ChatGPT-5.1</span>
+                    <span class="model-desc">uses ChatGPT-5.2</span>
                 </div>
                 <div class="model-item" data-model="openai/gpt-5-nano">
                     <span class="model-name">GPT 5 Nano</span>
@@ -181,16 +191,42 @@
                     <span class="toggle-slider"></span>
                 </label>
             </div>
+            <div class="settings-item settings-item-submenu" id="settings-submenu-btn">
+                <span class="settings-text">Settings</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
+                    <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div id="settings-submenu" class="settings-submenu hidden">
+                <div class="settings-item" id="opacity-slider-item">
+                    <span class="settings-text">Opacity</span>
+                    <div class="slider-container">
+                        <input type="range" id="opacity-slider" min="5" max="95" value="95" 
+                               ondblclick="this.value=95; window.handleOpacitySlider(95);"
+                               oninput="window.handleOpacitySlider(this.value)" 
+                               onchange="window.handleOpacitySlider(this.value)">
+                    </div>
+                </div>
+                <div class="settings-item" id="color-picker-item">
+                    <span class="settings-text">Color</span>
+                    <div class="color-options-row">
+                        <div class="color-dot" data-color="#000000" style="background: #000000; border: 1px solid rgba(255,255,255,0.3);" onclick="event.stopPropagation(); window.handleColorPicker('#000000')"></div>
+                        <div class="color-dot" data-color="#ffffff" style="background: #ffffff;" onclick="event.stopPropagation(); window.handleColorPicker('#ffffff')"></div>
+                        <div class="color-dot" data-color="#ec4899" style="background: #ec4899;" onclick="event.stopPropagation(); window.handleColorPicker('#ec4899')"></div>
+                        <div class="color-dot" data-color="#4A9EFF" style="background: #4A9EFF;" onclick="event.stopPropagation(); window.handleColorPicker('#4A9EFF')"></div>
+                    </div>
+                </div>
+                <div class="settings-item" id="check-updates-btn">
+                    <span class="settings-text">Check for Updates</span>
+                    <span class="settings-version" id="app-version-display">v1.0.0</span>
+                </div>
+                <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
+                    <span class="settings-text">🔄 Update Available</span>
+                    <span class="settings-version" id="update-version-display">v1.0.0</span>
+                </div>
+            </div>
             <div class="settings-item" id="account-info-btn">
                 <span class="settings-text">Account</span>
-            </div>
-            <div class="settings-item" id="check-updates-btn">
-                <span class="settings-text">Check for Updates</span>
-                <span class="settings-version" id="app-version-display">v1.0.0</span>
-            </div>
-            <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
-                <span class="settings-text">🔄 Update Available</span>
-                <span class="settings-version" id="update-version-display">v1.0.0</span>
             </div>
             <div class="settings-item" id="clear-chat-btn">
                 <span class="settings-text">Clear Chat History</span>

@@ -73,6 +73,9 @@ class JarvisApp {
         this.mainWindow = null;
         this.paywallWindow = null;
         this.onboardingWindow = null;
+        this.accountWindow = null;
+        this.passwordResetWindow = null;
+        this.hotkeysWindow = null;
         this.isOverlayVisible = true;
         this.fullscreenMaintenanceInterval = null;
         this.fullscreenEnforcementInterval = null;
@@ -166,17 +169,17 @@ class JarvisApp {
         
         // Set update check interval (check every 4 hours)
         setInterval(() => {
-            getAutoUpdater().checkForUpdates().catch(err => {
-                console.log('Update check failed:', err.message);
+            getAutoUpdater().checkForUpdates().catch(() => {
+                // Silently fail - don't log or show errors
             });
         }, 4 * 60 * 60 * 1000); // 4 hours
         
-        // Check for updates on startup (after a delay to not slow down startup)
+        // Check for updates on startup (after a LONG delay to not slow down startup)
         setTimeout(() => {
-            getAutoUpdater().checkForUpdates().catch(err => {
-                console.log('Initial update check failed:', err.message);
+            getAutoUpdater().checkForUpdates().catch(() => {
+                // Silently fail - don't log or show errors
             });
-        }, 5000); // Check 5 seconds after app ready
+        }, 30000); // Check 30 seconds after app ready - completely non-blocking
         
         // Handle update events
         updater.on('checking-for-update', () => {
@@ -205,10 +208,12 @@ class JarvisApp {
         });
         
         updater.on('error', (err) => {
-            console.error('Error in auto-updater:', err);
-            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                this.mainWindow.webContents.send('update-error', err.message);
+            // Silently ignore update errors - don't show to user or log
+            // Only log critical errors (not network timeouts)
+            if (err && err.message && !err.message.includes('504') && !err.message.includes('timeout') && !err.message.includes('time-out')) {
+                console.error('Error in auto-updater:', err);
             }
+            // Don't send error to renderer - user doesn't need to see update check failures
         });
         
         updater.on('download-progress', (progressObj) => {
@@ -308,9 +313,26 @@ class JarvisApp {
         // Global shortcuts
         app.whenReady().then(() => {
             const { globalShortcut } = require('electron');
+            const fs = require('fs');
+            const path = require('path');
             
-            // Register multiple toggles to avoid conflicts with macOS/Apps
-            try { globalShortcut.register('Alt+Space', () => { this.toggleOverlay(); }); } catch (_) {}
+            // Load saved shortcut
+            let savedShortcut = 'Alt+Space';
+            try {
+                const userDataPath = app.getPath('userData');
+                const shortcutFile = path.join(userDataPath, 'toggle-shortcut.json');
+                if (fs.existsSync(shortcutFile)) {
+                    const data = JSON.parse(fs.readFileSync(shortcutFile, 'utf8'));
+                    if (data.shortcut) savedShortcut = data.shortcut;
+                }
+            } catch (e) {}
+            
+            // Register saved shortcut
+            try { globalShortcut.register(savedShortcut, () => { this.toggleOverlay(); }); } catch (_) {}
+            // Also register Alt+Space as fallback
+            if (savedShortcut !== 'Alt+Space') {
+                try { globalShortcut.register('Alt+Space', () => { this.toggleOverlay(); }); } catch (_) {}
+            }
             try { globalShortcut.register('CommandOrControl+Shift+Space', () => { this.toggleOverlay(); }); } catch (_) {}
 
             // Register Command+Shift+J for voice activation
@@ -575,6 +597,17 @@ class JarvisApp {
     }
 
     createAccountWindow() {
+        // Reuse existing window if it exists
+        if (this.accountWindow && !this.accountWindow.isDestroyed()) {
+            this.accountWindow.show();
+            this.accountWindow.focus();
+            // Bring app to front on macOS
+            if (process.platform === 'darwin') {
+                app.focus({ steal: true });
+            }
+            return this.accountWindow;
+        }
+        
         // Create a proper window with native controls, positioned at screen edge
         const { screen } = require('electron');
         const primaryDisplay = screen.getPrimaryDisplay();
@@ -582,15 +615,17 @@ class JarvisApp {
         
         const accountOptions = {
             width: 480,
-            height: 600,
-            x: screenWidth - 480, // Position at right edge
-            y: 0, // Top of screen
+            height: 650,
+            x: screenWidth - 500, // Position at right edge with some margin
+            y: 50, // Slight offset from top
             resizable: true,
             frame: true,
-            title: 'Account',
+            title: 'Jarvis - Account',
             alwaysOnTop: false,
             modal: false,
-            parent: this.mainWindow,
+            show: false, // Don't show until ready
+            skipTaskbar: false, // Show in dock/taskbar for Cmd+Tab
+            focusable: true,
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false
@@ -610,12 +645,214 @@ class JarvisApp {
 
         accountWindow.loadFile('account-window.html');
         
+        // Show and focus when ready - ensures proper focus
+        accountWindow.once('ready-to-show', () => {
+            // Temporarily lower main window level so account window can be focused
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.setAlwaysOnTop(true, 'floating', 0);
+            }
+            accountWindow.show();
+            accountWindow.focus();
+            // Bring app to front on macOS
+            if (process.platform === 'darwin') {
+                app.focus({ steal: true });
+            }
+        });
+        
+        // When account window gains focus, lower main window level
+        accountWindow.on('focus', () => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.setAlwaysOnTop(true, 'floating', 0);
+            }
+        });
+        
+        // When account window loses focus, restore main window level (unless account window is still open)
+        accountWindow.on('blur', () => {
+            // Small delay to check if we're switching to another Jarvis window
+            setTimeout(() => {
+                if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
+                    return; // Still focused on account window
+                }
+                if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
+                    return; // Focused on password reset window
+                }
+                // Restore main window level
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    try {
+                        this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+                    } catch (_) {
+                        this.mainWindow.setAlwaysOnTop(true, 'floating', 1);
+                    }
+                }
+            }, 100);
+        });
+        
         accountWindow.on('closed', () => {
             this.accountWindow = null;
+            // Restore main window level when account window closes
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                try {
+                    this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+                } catch (_) {
+                    this.mainWindow.setAlwaysOnTop(true, 'floating', 1);
+                }
+            }
         });
 
         this.accountWindow = accountWindow;
         return accountWindow;
+    }
+
+    createPasswordResetWindow(email = '') {
+        // Reuse existing window if it exists
+        if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed()) {
+            this.passwordResetWindow.show();
+            this.passwordResetWindow.focus();
+            if (process.platform === 'darwin') {
+                app.focus({ steal: true });
+            }
+            return this.passwordResetWindow;
+        }
+        
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        
+        const windowWidth = 480;
+        const windowHeight = 580;
+        
+        const resetOptions = {
+            width: windowWidth,
+            height: windowHeight,
+            x: Math.floor((screenWidth - windowWidth) / 2),
+            y: Math.floor((screenHeight - windowHeight) / 2),
+            resizable: false,
+            frame: true,
+            title: 'Jarvis - Reset Password',
+            alwaysOnTop: false,
+            modal: false,
+            show: false, // Don't show until ready
+            skipTaskbar: false, // Show in dock/taskbar for Cmd+Tab
+            focusable: true,
+            webPreferences: {
+                nodeIntegration: true,
+                contextIsolation: false
+            }
+        };
+        
+        // macOS-only: Prevent screen recording
+        if (process.platform === 'darwin') {
+            resetOptions.contentProtection = true;
+        }
+        
+        const resetWindow = new BrowserWindow(resetOptions);
+
+        // macOS-only: Enable content protection
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(resetWindow, stealthEnabled);
+
+        // Load the page with email parameter
+        resetWindow.loadFile('password-reset.html', { 
+            query: email ? { email: email } : {} 
+        });
+        
+        // Show and focus when ready
+        resetWindow.once('ready-to-show', () => {
+            // Temporarily lower main window level so reset window can be focused
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.setAlwaysOnTop(true, 'floating', 0);
+            }
+            resetWindow.show();
+            resetWindow.focus();
+            if (process.platform === 'darwin') {
+                app.focus({ steal: true });
+            }
+        });
+        
+        // When reset window gains focus, lower main window level
+        resetWindow.on('focus', () => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.setAlwaysOnTop(true, 'floating', 0);
+            }
+        });
+        
+        // When reset window loses focus, check if we should restore main window level
+        resetWindow.on('blur', () => {
+            setTimeout(() => {
+                if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
+                    return;
+                }
+                if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
+                    return;
+                }
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    try {
+                        this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+                    } catch (_) {
+                        this.mainWindow.setAlwaysOnTop(true, 'floating', 1);
+                    }
+                }
+            }, 100);
+        });
+        
+        resetWindow.on('closed', () => {
+            this.passwordResetWindow = null;
+            // Restore main window level when reset window closes
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                try {
+                    this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+                } catch (_) {
+                    this.mainWindow.setAlwaysOnTop(true, 'floating', 1);
+                }
+            }
+        });
+
+        this.passwordResetWindow = resetWindow;
+        return resetWindow;
+    }
+
+    createHotkeysWindow() {
+        // Create a proper window with native controls, positioned at screen edge
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        
+        const hotkeysOptions = {
+            width: 500,
+            height: 600,
+            x: screenWidth - 500, // Position at right edge
+            y: 0, // Top of screen
+            resizable: true,
+            frame: true,
+            title: 'Hotkeys',
+            alwaysOnTop: false,
+            modal: false,
+            parent: this.mainWindow,
+            webPreferences: {
+                nodeIntegration: true,
+                contextIsolation: false
+            }
+        };
+        
+        // macOS-only: Prevent screen recording
+        if (process.platform === 'darwin') {
+            hotkeysOptions.contentProtection = true;
+        }
+        
+        const hotkeysWindow = new BrowserWindow(hotkeysOptions);
+
+        // macOS-only: Enable content protection (check stealth mode preference)
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(hotkeysWindow, stealthEnabled);
+
+        hotkeysWindow.loadFile('hotkeys-window.html');
+        
+        hotkeysWindow.on('closed', () => {
+            this.hotkeysWindow = null;
+        });
+
+        this.hotkeysWindow = hotkeysWindow;
+        return hotkeysWindow;
     }
 
     setupVoiceRecording() {
@@ -806,6 +1043,15 @@ class JarvisApp {
             app.quit();
         });
 
+        // Handle password set notification
+        ipcMain.on('password-set', (event, email) => {
+            console.log('🔐 Password set for:', email);
+            // Notify main window to hide password notification
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('password-set', email);
+            }
+        });
+
         // Handle open paywall request from main app
         ipcMain.on('open-paywall', () => {
             this.createPaywallWindow();
@@ -913,31 +1159,9 @@ class JarvisApp {
             return;
         }
         
-        // Get all displays and calculate combined bounds for multi-monitor support
-        const displays = screen.getAllDisplays();
+        // Get primary display info
         const primaryDisplay = screen.getPrimaryDisplay();
-        
-        // Initialize with primary display bounds
-        let minX = primaryDisplay.bounds.x;
-        let minY = primaryDisplay.bounds.y;
-        let maxX = primaryDisplay.bounds.x + primaryDisplay.bounds.width;
-        let maxY = primaryDisplay.bounds.y + primaryDisplay.bounds.height;
-        
-        // Expand to include all displays
-        displays.forEach(display => {
-            const { x, y, width: dw, height: dh } = display.bounds;
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x + dw);
-            maxY = Math.max(maxY, y + dh);
-        });
-        
-        const width = maxX - minX;
-        const height = maxY - minY;
-        const windowX = minX;
-        const windowY = minY;
-        
-        console.log(`Creating overlay spanning all displays: ${width}x${height} at (${windowX}, ${windowY})`);
+        const { width, height } = primaryDisplay.bounds;
 
         // Create a true overlay window
         // IMPORTANT: This window is designed to NOT trigger browser blur events
@@ -945,8 +1169,8 @@ class JarvisApp {
         const mainWindowOptions = {
             width: width,
             height: height,
-            x: windowX,
-            y: windowY,
+            x: 0,
+            y: 0,
             frame: false,
             alwaysOnTop: true,
             transparent: true,
@@ -1029,8 +1253,6 @@ class JarvisApp {
             console.error('Failed to load index.html:', err);
         });
 
-        // Setup IPC handlers for main window
-        this.setupIpcHandlers();
 
         // Window is ready; show overlay immediately
         this.mainWindow.once('ready-to-show', () => {
@@ -1158,20 +1380,16 @@ class JarvisApp {
                 workArea: d.workArea
             }));
         });
-        
-        // Get primary display bounds for positioning overlay
-        ipcMain.handle('get-primary-display', () => {
-            const { screen } = require('electron');
-            const primary = screen.getPrimaryDisplay();
-            return {
-                bounds: primary.bounds,
-                workArea: primary.workArea
-            };
-        });
 
         // Interactive tutorial IPC handlers
         ipcMain.handle('needs-interactive-tutorial', () => {
             return !this.isOnboardingComplete();
+        });
+        
+        ipcMain.handle('check-screen-permission', () => {
+            if (process.platform !== 'darwin') return true;
+            const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+            return screenStatus === 'granted';
         });
         
         ipcMain.handle('complete-interactive-tutorial', () => {
@@ -1189,6 +1407,14 @@ class JarvisApp {
         // IMPORTANT: This version does NOT steal focus from other windows
         // to avoid triggering proctoring software (Canvas, etc.) that monitors window blur events
         ipcMain.handle('make-interactive', () => {
+            // Don't interfere if account or password reset window is focused
+            if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
+                return { success: true, skipped: 'account window focused' };
+            }
+            if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
+                return { success: true, skipped: 'password reset window focused' };
+            }
+            
             if (this.mainWindow) {
                 try {
                     console.log('🔵 [MAIN] make-interactive called (focus-safe mode)');
@@ -1242,6 +1468,14 @@ class JarvisApp {
         // NOTE: We intentionally do NOT call focus() to avoid triggering browser blur events
         // which proctoring software (Canvas, etc.) uses to detect tab switching
         ipcMain.handle('request-focus', () => {
+            // Don't interfere if account or password reset window is focused
+            if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
+                return true;
+            }
+            if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
+                return true;
+            }
+            
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 try {
                     this.mainWindow.setFocusable(true);
@@ -1458,7 +1692,162 @@ class JarvisApp {
 
         // Handle opening account window
         ipcMain.handle('open-account-window', () => {
+            // Reuse existing window if it exists
+            if (this.accountWindow && !this.accountWindow.isDestroyed()) {
+                this.accountWindow.show();
+                this.accountWindow.focus();
+                return;
+            }
             this.createAccountWindow();
+        });
+        
+        // Handle opening account in browser
+        ipcMain.handle('open-account-in-browser', async () => {
+            const { shell } = require('electron');
+            
+            // Get user email if available
+            let email = '';
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const userDataPath = app.getPath('userData');
+                const userFile = path.join(userDataPath, 'jarvis_user.json');
+                if (fs.existsSync(userFile)) {
+                    const userData = JSON.parse(fs.readFileSync(userFile, 'utf8'));
+                    email = userData.email || '';
+                }
+            } catch (e) {}
+            
+            // Open account page in browser
+            let url = 'https://yesjarvis.com/account/';
+            if (email) {
+                url += `?email=${encodeURIComponent(email)}`;
+            }
+            
+            await shell.openExternal(url);
+        });
+        
+        // Handle opening hotkeys window
+        ipcMain.handle('open-hotkeys-window', () => {
+            this.createHotkeysWindow();
+        });
+        
+        // Handle getting/setting toggle shortcut
+        ipcMain.handle('get-toggle-shortcut', () => {
+            const fs = require('fs');
+            const path = require('path');
+            const userDataPath = app.getPath('userData');
+            const shortcutFile = path.join(userDataPath, 'toggle-shortcut.json');
+            try {
+                if (fs.existsSync(shortcutFile)) {
+                    const data = JSON.parse(fs.readFileSync(shortcutFile, 'utf8'));
+                    return data.shortcut || 'Alt+Space';
+                }
+            } catch (e) {}
+            return 'Alt+Space';
+        });
+        
+        ipcMain.handle('set-toggle-shortcut', async (event, shortcut) => {
+            const fs = require('fs');
+            const path = require('path');
+            const userDataPath = app.getPath('userData');
+            const shortcutFile = path.join(userDataPath, 'toggle-shortcut.json');
+            try {
+                fs.writeFileSync(shortcutFile, JSON.stringify({ shortcut }, null, 2));
+                // Re-register the shortcut
+                globalShortcut.unregisterAll();
+                try {
+                    globalShortcut.register(shortcut, () => { this.toggleOverlay(); });
+                } catch (e) {
+                    console.error('Failed to register shortcut:', e);
+                }
+                // Also register Alt+Space as fallback
+                try {
+                    globalShortcut.register('Alt+Space', () => { this.toggleOverlay(); });
+                } catch (_) {}
+            } catch (e) {
+                console.error('Failed to save shortcut:', e);
+            }
+        });
+        
+        // Handle shortcut listening
+        let shortcutListener = null;
+        let pressedModifiers = new Set();
+        let pressedKey = null;
+        
+        ipcMain.on('start-shortcut-listening', () => {
+            if (shortcutListener) {
+                // Reset if already listening
+                pressedModifiers.clear();
+                pressedKey = null;
+                return;
+            }
+            
+            shortcutListener = (event, input) => {
+                event.preventDefault(); // Prevent default behavior
+                
+                if (input.type === 'keyDown') {
+                    // Track modifiers
+                    if (input.control) pressedModifiers.add('CommandOrControl');
+                    if (input.alt) pressedModifiers.add('Alt');
+                    if (input.shift) pressedModifiers.add('Shift');
+                    if (input.meta && !input.control) pressedModifiers.add('Command');
+                    
+                    // Track the main key (not a modifier)
+                    const isModifier = ['Control', 'Alt', 'Shift', 'Meta', 'Command', 'CommandOrControl'].includes(input.key);
+                    if (!isModifier && input.key) {
+                        if (input.key === ' ') {
+                            pressedKey = 'Space';
+                        } else if (input.key.length === 1) {
+                            pressedKey = input.key.toUpperCase();
+                        } else {
+                            pressedKey = input.key;
+                        }
+                        
+                        // Only capture if we have at least one modifier + a key
+                        if (pressedModifiers.size > 0 && pressedKey) {
+                            const parts = Array.from(pressedModifiers).sort();
+                            parts.push(pressedKey);
+                            const shortcut = parts.join('+');
+                            
+                            if (this.hotkeysWindow && !this.hotkeysWindow.isDestroyed()) {
+                                this.hotkeysWindow.webContents.send('shortcut-captured', shortcut);
+                            }
+                            
+                            // Clean up
+                            const listenerToRemove = shortcutListener;
+                            pressedModifiers.clear();
+                            pressedKey = null;
+                            shortcutListener = null;
+                            if (this.hotkeysWindow && !this.hotkeysWindow.isDestroyed() && listenerToRemove) {
+                                this.hotkeysWindow.webContents.removeListener('before-input-event', listenerToRemove);
+                            }
+                        }
+                    }
+                } else if (input.type === 'keyUp') {
+                    // Clear modifiers on key up
+                    if (!input.control) pressedModifiers.delete('CommandOrControl');
+                    if (!input.alt) pressedModifiers.delete('Alt');
+                    if (!input.shift) pressedModifiers.delete('Shift');
+                    if (!input.meta) pressedModifiers.delete('Command');
+                }
+            };
+            
+            if (this.hotkeysWindow && !this.hotkeysWindow.isDestroyed()) {
+                pressedModifiers.clear();
+                pressedKey = null;
+                this.hotkeysWindow.webContents.on('before-input-event', shortcutListener);
+            }
+        });
+        
+        ipcMain.on('cancel-shortcut-listening', () => {
+            if (shortcutListener && this.hotkeysWindow && !this.hotkeysWindow.isDestroyed()) {
+                const listenerToRemove = shortcutListener;
+                shortcutListener = null;
+                this.hotkeysWindow.webContents.removeListener('before-input-event', listenerToRemove);
+                pressedModifiers.clear();
+                pressedKey = null;
+            }
         });
 
         // Handle getting account info
@@ -1646,6 +2035,11 @@ class JarvisApp {
             }
         });
 
+        // Quit app handler
+        ipcMain.handle('quit-app', () => {
+            app.quit();
+        });
+        
         // Auto-update IPC handlers
         ipcMain.handle('check-for-updates', async () => {
             try {
@@ -2182,7 +2576,7 @@ class JarvisApp {
         });
 
         // Handle sign-in user
-        ipcMain.handle('sign-in-user', async (_event, email) => {
+        ipcMain.handle('sign-in-user', async (_event, email, password) => {
             try {
                 if (!email || !email.includes('@')) {
                     return {
@@ -2204,7 +2598,30 @@ class JarvisApp {
                 const subscriptionResult = await this.supabaseIntegration.checkSubscriptionByEmail(email);
 
                 if (subscriptionResult.hasSubscription && subscriptionResult.subscription) {
-                    // User has active subscription - store email and subscription data
+                    // Check if user has a password set
+                    const passwordResult = await this.supabaseIntegration.hasPassword(email);
+                    
+                    if (passwordResult.hasPassword) {
+                        // User has password, verify it
+                        if (!password) {
+                            return {
+                                success: true,
+                                hasSubscription: true,
+                                requiresPassword: true,
+                                error: 'Password required'
+                            };
+                        }
+                        
+                        const verifyResult = await this.supabaseIntegration.verifyPassword(email, password);
+                        if (!verifyResult.success) {
+                            return {
+                                success: false,
+                                error: verifyResult.error || 'Incorrect password'
+                            };
+                        }
+                    }
+                    
+                    // User has active subscription and password verified (or no password set)
                     const subscriptionData = {
                         email: email,
                         subscriptionId: subscriptionResult.subscription.id,
@@ -2221,7 +2638,8 @@ class JarvisApp {
                     return {
                         success: true,
                         hasSubscription: true,
-                        subscriptionData: subscriptionData
+                        subscriptionData: subscriptionData,
+                        hasPassword: passwordResult.hasPassword
                     };
                 } else {
                     // No active subscription found
@@ -2283,6 +2701,197 @@ class JarvisApp {
                 return {
                     success: false,
                     error: error.message || 'Failed to sign out'
+                };
+            }
+        });
+
+        // Handle setting password
+        ipcMain.handle('set-user-password', async (_event, email, password) => {
+            try {
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        error: 'Service not available'
+                    };
+                }
+                return await this.supabaseIntegration.setPassword(email, password);
+            } catch (error) {
+                console.error('Error setting password:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
+            }
+        });
+
+        // Handle verifying password
+        ipcMain.handle('verify-user-password', async (_event, email, password) => {
+            try {
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        error: 'Service not available'
+                    };
+                }
+                return await this.supabaseIntegration.verifyPassword(email, password);
+            } catch (error) {
+                console.error('Error verifying password:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
+            }
+        });
+
+        // Handle checking if user has password
+        ipcMain.handle('check-user-has-password', async (_event, email) => {
+            try {
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        hasPassword: false,
+                        error: 'Service not available'
+                    };
+                }
+                return await this.supabaseIntegration.hasPassword(email);
+            } catch (error) {
+                console.error('Error checking password:', error);
+                return {
+                    success: false,
+                    hasPassword: false,
+                    error: error.message
+                };
+            }
+        });
+
+        // Handle sending password reset email
+        ipcMain.handle('send-password-reset-email', async (_event, email) => {
+            try {
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        error: 'Service not available'
+                    };
+                }
+
+                // Generate reset token
+                const tokenResult = await this.supabaseIntegration.generatePasswordResetToken(email);
+                if (!tokenResult.success) {
+                    return tokenResult;
+                }
+
+                // Send email with Resend
+                const resendConfig = this.secureConfig.getResendConfig();
+                if (!resendConfig.apiKey) {
+                    return {
+                        success: false,
+                        error: 'Email service not configured'
+                    };
+                }
+
+                const axios = require('axios');
+                const response = await axios.post('https://api.resend.com/emails', {
+                    from: resendConfig.fromEmail,
+                    to: email,
+                    subject: 'Jarvis - Password Reset Code',
+                    html: `
+                        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; padding: 40px 20px;">
+                            <div style="text-align: center; margin-bottom: 30px;">
+                                <h1 style="color: #6366f1; margin: 0; font-size: 28px;">Jarvis</h1>
+                            </div>
+                            <div style="background: #1a1a1a; border-radius: 16px; padding: 32px; color: #ffffff;">
+                                <h2 style="margin: 0 0 16px 0; font-size: 20px; color: #ffffff;">Password Reset</h2>
+                                <p style="color: #a0a0a0; font-size: 14px; line-height: 1.6; margin: 0 0 24px 0;">
+                                    You requested to reset your password. Use the code below to set a new password:
+                                </p>
+                                <div style="background: #2a2a2a; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #6366f1;">${tokenResult.resetCode}</span>
+                                </div>
+                                <p style="color: #666666; font-size: 12px; margin: 0;">
+                                    This code expires in 15 minutes. If you didn't request this, you can ignore this email.
+                                </p>
+                            </div>
+                            <p style="text-align: center; color: #666666; font-size: 12px; margin-top: 24px;">
+                                © ${new Date().getFullYear()} Jarvis AI Assistant
+                            </p>
+                        </div>
+                    `
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${resendConfig.apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                console.log('✅ Password reset email sent to:', email);
+                return {
+                    success: true
+                };
+            } catch (error) {
+                console.error('Error sending password reset email:', error.response?.data || error.message);
+                return {
+                    success: false,
+                    error: error.response?.data?.message || error.message || 'Failed to send email'
+                };
+            }
+        });
+
+        // Handle verifying password reset code
+        ipcMain.handle('verify-password-reset-code', async (_event, email, code) => {
+            try {
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        error: 'Service not available'
+                    };
+                }
+                return await this.supabaseIntegration.verifyPasswordResetToken(email, code);
+            } catch (error) {
+                console.error('Error verifying reset code:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
+            }
+        });
+
+        // Handle resetting password with code
+        ipcMain.handle('reset-password-with-code', async (_event, email, code, newPassword) => {
+            try {
+                if (!this.supabaseIntegration) {
+                    return {
+                        success: false,
+                        error: 'Service not available'
+                    };
+                }
+                return await this.supabaseIntegration.resetPasswordWithToken(email, code, newPassword);
+            } catch (error) {
+                console.error('Error resetting password:', error);
+                return {
+                    success: false,
+                    error: error.message
+                };
+            }
+        });
+
+        // Handle opening password reset page in browser
+        ipcMain.handle('open-password-reset-page', async (_event, email) => {
+            try {
+                const { shell } = require('electron');
+                
+                // Open account page with forgot password flow in browser
+                let url = 'https://yesjarvis.com/account/#forgot';
+                if (email) {
+                    url = `https://yesjarvis.com/account/?email=${encodeURIComponent(email)}#forgot`;
+                }
+                
+                await shell.openExternal(url);
+                return { success: true };
+            } catch (error) {
+                console.error('Error opening password reset page:', error);
+                return {
+                    success: false,
+                    error: error.message
                 };
             }
         });
@@ -2730,6 +3339,14 @@ class JarvisApp {
         // Only apply if overlay is marked as visible
         if (!this.isOverlayVisible) return;
         
+        // Skip if account or password reset window is focused - don't interfere with them
+        if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
+            return;
+        }
+        if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
+            return;
+        }
+        
         // Ensure window is visible first
         if (!this.mainWindow.isVisible()) {
             this.mainWindow.show();
@@ -2899,6 +3516,14 @@ class JarvisApp {
                     clearInterval(this.fullscreenEnforcementInterval);
                     this.fullscreenEnforcementInterval = null;
                 }
+                return;
+            }
+            
+            // Skip enforcement if account or password reset window is open and focused
+            if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
+                return;
+            }
+            if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
                 return;
             }
             

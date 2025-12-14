@@ -20,13 +20,6 @@ class JarvisOverlay {
         this.tutorialToggleCount = 0;
         this.tutorialActive = false;
         
-        // Quiz mode state
-        this.quizMode = false;
-        this.quizQuestions = [];
-        this.currentQuizIndex = 0;
-        this.quizScore = 0;
-        this.quizPending = false; // Waiting for user to confirm MCQ format
-        
         // Load conversation history from localStorage
         try {
             const saved = localStorage.getItem('jarvis_conversation_history');
@@ -58,8 +51,10 @@ class JarvisOverlay {
         this.setupElectronIntegration();
         this.setupDragFunctionality();
         this.setupVoiceRecording(); // Voice recording handlers disabled inside, but subscription listeners still active
-        this.initializeInteractiveTutorial();
-        this.checkLicense();
+        // Initialize tutorial asynchronously - don't block
+        this.initializeInteractiveTutorial().catch(e => console.error('Tutorial init:', e));
+        // Check license asynchronously - don't block startup
+        this.checkLicense().catch(e => console.error('License check:', e));
         this.updateMessageCounter();
     }
 
@@ -225,6 +220,9 @@ class JarvisOverlay {
                     };
                     console.log('✅ Premium subscription active');
                     
+                    // Check if user needs to set password
+                    this.checkPasswordNotification(subscriptionResult.subscriptionData.email);
+                    
                     // Immediately clear any message limit notifications
                     if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
                         const currentContent = this.dragOutput.innerHTML || this.dragOutput.textContent || '';
@@ -243,6 +241,8 @@ class JarvisOverlay {
                     this.licenseStatus = { valid: false, type: 'free' };
                     this.features = {};
                     console.log('ℹ️ Free tier - subscription not active');
+                    // Hide password notification for non-premium users
+                    this.hidePasswordNotification();
                 }
                 
                 // Update message counter display
@@ -258,6 +258,69 @@ class JarvisOverlay {
             // Still update message counter even on error
             this.updateMessageCounter();
             this.updatePremiumFeaturesVisibility();
+        }
+    }
+    
+    // Check if user needs to set password and show notification
+    async checkPasswordNotification(email) {
+        if (!this.isElectron || !window.require) return;
+        
+        try {
+            const { ipcRenderer } = window.require('electron');
+            const result = await ipcRenderer.invoke('check-user-has-password', email);
+            
+            // Check if notification was dismissed in this session
+            const dismissedKey = 'jarvis-password-notification-dismissed';
+            const dismissed = localStorage.getItem(dismissedKey);
+            
+            if (result.success && !result.hasPassword && !dismissed) {
+                console.log('🔐 User needs to set password, showing notification');
+                this.showPasswordNotification();
+            } else {
+                this.hidePasswordNotification();
+            }
+        } catch (error) {
+            console.error('Error checking password status:', error);
+        }
+    }
+    
+    // Show password notification
+    showPasswordNotification() {
+        const notification = document.getElementById('set-password-notification');
+        if (notification) {
+            notification.classList.remove('hidden');
+            
+            // Setup event listeners
+            const openBtn = document.getElementById('password-notification-open-btn');
+            const dismissBtn = document.getElementById('password-notification-dismiss-btn');
+            
+            if (openBtn && !openBtn._hasListener) {
+                openBtn._hasListener = true;
+                openBtn.addEventListener('click', () => {
+                    if (this.isElectron && window.require) {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('open-account-window');
+                    }
+                    this.hidePasswordNotification();
+                });
+            }
+            
+            if (dismissBtn && !dismissBtn._hasListener) {
+                dismissBtn._hasListener = true;
+                dismissBtn.addEventListener('click', () => {
+                    // Remember dismissal for this session
+                    localStorage.setItem('jarvis-password-notification-dismissed', 'true');
+                    this.hidePasswordNotification();
+                });
+            }
+        }
+    }
+    
+    // Hide password notification
+    hidePasswordNotification() {
+        const notification = document.getElementById('set-password-notification');
+        if (notification) {
+            notification.classList.add('hidden');
         }
     }
     
@@ -333,6 +396,14 @@ class JarvisOverlay {
         // Listen for subscription activation
         ipcRenderer.on('subscription-activated', (event, data) => {
             this.handleSubscriptionActivated(data);
+        });
+
+        // Listen for password set event
+        ipcRenderer.on('password-set', (event, email) => {
+            console.log('🔐 Password set notification received for:', email);
+            this.hidePasswordNotification();
+            // Clear the dismissal flag since password is now set
+            localStorage.removeItem('jarvis-password-notification-dismissed');
         });
 
         // Listen for paywall display request
@@ -808,10 +879,11 @@ class JarvisOverlay {
         this.resizeHandle = document.getElementById('resize-handle');
         this.settingsBtn = document.getElementById('settings-btn');
         this.settingsMenu = document.getElementById('settings-menu');
-        this.fileBtn = document.getElementById('file-btn');
+        this.fileBtn = document.getElementById('add-btn');
         this.clearChatBtn = document.getElementById('clear-chat-btn');
         this.settingsCloseBtn = document.getElementById('settings-close-btn');
         this.accountInfoBtn = document.getElementById('account-info-btn');
+        this.hotkeysBtn = document.getElementById('hotkeys-btn');
         this.stealthModeToggle = document.getElementById('stealth-mode-toggle');
         this.stealthModeCheckbox = document.getElementById('stealth-mode-checkbox');
         this.fileInput = document.getElementById('file-input');
@@ -829,6 +901,12 @@ class JarvisOverlay {
         this.modelSwitcherBtn = document.getElementById('model-switcher-btn');
         this.modelSubmenu = document.getElementById('model-submenu');
         this.currentModelDisplay = document.getElementById('current-model-display');
+        this.settingsSubmenuBtn = document.getElementById('settings-submenu-btn');
+        this.settingsSubmenu = document.getElementById('settings-submenu');
+        this.opacitySlider = document.getElementById('opacity-slider');
+        this.colorWheelBtn = document.getElementById('color-wheel-btn');
+        this.colorSubmenu = document.getElementById('color-submenu');
+        this.colorPreview = document.getElementById('color-preview');
         
         // Output Toolbar elements
         this.outputToolbar = document.getElementById('output-toolbar');
@@ -933,6 +1011,49 @@ class JarvisOverlay {
             });
         }
         
+        // Settings submenu toggle
+        if (this.settingsSubmenuBtn) {
+            this.settingsSubmenuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleSettingsSubmenu();
+            });
+        }
+        
+        // Initialize opacity value (default 95% = original fully visible)
+        const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '95';
+        this.currentOpacity = parseInt(savedOpacity);
+        this.setOverlayOpacity(parseInt(savedOpacity));
+        
+        // Set slider value if it exists (listener will be attached when menu opens)
+        if (this.opacitySlider) {
+            this.opacitySlider.value = savedOpacity;
+        }
+        
+        // Color picker
+        if (this.colorWheelBtn) {
+            // Load saved color (default black)
+            const savedColor = localStorage.getItem('jarvis-overlay-color') || 'black';
+            this.setOverlayColor(savedColor);
+            
+            this.colorWheelBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleColorSubmenu();
+            });
+        }
+        
+        // Color options
+        if (this.colorSubmenu) {
+            const colorOptions = this.colorSubmenu.querySelectorAll('.color-option');
+            colorOptions.forEach(option => {
+                option.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const color = option.getAttribute('data-color');
+                    this.setOverlayColor(color);
+                    this.toggleColorSubmenu();
+                });
+            });
+        }
+        
         // Model selection event listeners
         if (this.modelSubmenu) {
             const modelItems = this.modelSubmenu.querySelectorAll('.model-item');
@@ -951,7 +1072,16 @@ class JarvisOverlay {
         if (this.settingsBtn) {
             this.settingsBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.toggleSettingsMenu();
+                // Toggle settings menu
+                if (this.settingsMenu) {
+                    if (this.settingsMenu.classList.contains('hidden')) {
+                        this.settingsMenu.classList.remove('hidden');
+                        // Attach opacity slider listener when menu opens
+                        this.attachOpacitySliderWhenReady();
+                    } else {
+                        this.settingsMenu.classList.add('hidden');
+                    }
+                }
                 // Track for tutorial
                 this.advanceTutorial('hamburger');
             });
@@ -967,17 +1097,17 @@ class JarvisOverlay {
             }
         };
 
+        // Add file button - directly opens file picker
         if (this.fileBtn && this.fileInput) {
-            console.log('✅ File button and file input found, setting up listeners');
+            console.log('✅ Add button and file input found, setting up listeners');
             this.fileBtn.addEventListener('click', (e) => {
-                console.log('🖱️ File button clicked');
+                console.log('🖱️ Add button clicked');
                 e.stopPropagation();
                 this.fileInput.value = '';
                 this.fileInput.click();
-                console.log('📁 File input clicked');
             });
         } else {
-            console.warn('⚠️ File button or file input not found', {
+            console.warn('⚠️ Add button or file input not found', {
                 fileBtn: !!this.fileBtn,
                 fileInput: !!this.fileInput
             });
@@ -1002,6 +1132,14 @@ class JarvisOverlay {
             });
         }
         
+        // Quit app button
+        const quitAppBtn = document.getElementById('quit-app-btn');
+        if (quitAppBtn) {
+            quitAppBtn.addEventListener('click', () => {
+                this.quitApp();
+            });
+        }
+        
         // Load and display current app version
         this.loadAppVersion();
         
@@ -1022,6 +1160,10 @@ class JarvisOverlay {
         
         if (this.accountInfoBtn) {
             this.accountInfoBtn.addEventListener('click', () => this.showAccountWindow());
+        }
+        
+        if (this.hotkeysBtn) {
+            this.hotkeysBtn.addEventListener('click', () => this.showHotkeysWindow());
         }
         
         // Stealth Mode toggle
@@ -1127,22 +1269,45 @@ class JarvisOverlay {
         
         // Close settings menu when clicking outside
         document.addEventListener('click', (e) => {
-            // Close settings menu when clicking outside (but not if clicking on model submenu)
+            // Close settings menu when clicking outside (but not if clicking on model submenu or settings submenu)
             if (this.settingsMenu && !this.settingsMenu.contains(e.target) && !this.settingsBtn.contains(e.target)) {
                 this.hideSettingsMenu();
                 this.hideModelSubmenu();
+                this.hideSettingsSubmenu();
+                this.hideColorSubmenu();
+            }
+        });
+        
+        // Close menus and restore click-through when window loses focus (user clicked another window)
+        window.addEventListener('blur', () => {
+            // Hide all menus
+            this.hideSettingsMenu();
+            this.hideModelSubmenu();
+            this.hideSettingsSubmenu();
+            this.hideColorSubmenu();
+            
+            // Restore click-through so user can interact with other windows
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('make-click-through').catch(() => {});
+                } catch (e) {}
             }
         });
         
         // Make overlay interactive when needed, but allow clicks to work
         if (this.overlay) {
             let clickThroughTimeout = null;
+            let menuCloseTimeout = null;
             let isCurrentlyInteractive = false;
             
             // Make overlay interactive when mouse enters overlay area
             this.overlay.addEventListener('mouseenter', () => {
+                // Cancel any pending menu close
+                clearTimeout(menuCloseTimeout);
+                clearTimeout(clickThroughTimeout);
+                
                 if (this.isElectron) {
-                    clearTimeout(clickThroughTimeout);
                     const { ipcRenderer } = require('electron');
                     ipcRenderer.invoke('make-interactive').catch(() => {});
                     isCurrentlyInteractive = true;
@@ -1157,15 +1322,85 @@ class JarvisOverlay {
                         return;
                     }
                     
-                    // Delay going back to click-through
-                    clearTimeout(clickThroughTimeout);
-                    clickThroughTimeout = setTimeout(() => {
+                    // Delay closing menus to allow for mouse movement between elements
+                    clearTimeout(menuCloseTimeout);
+                    menuCloseTimeout = setTimeout(() => {
+                        // Close any open menus when mouse leaves overlay
+                        this.hideSettingsMenu();
+                        this.hideModelSubmenu();
+                        this.hideSettingsSubmenu();
+                        this.hideColorSubmenu();
+                        
+                        // Go back to click-through
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-click-through').catch(() => {});
                         isCurrentlyInteractive = false;
-                    }, 500); // 500ms delay before going click-through
+                    }, 500); // 500ms delay before closing menus
                 }
             });
+            
+            // Keep interactive when interacting with settings menu
+            if (this.settingsMenu) {
+                this.settingsMenu.addEventListener('mouseenter', () => {
+                    if (this.isElectron) {
+                        clearTimeout(clickThroughTimeout);
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                });
+                this.settingsMenu.addEventListener('mousedown', () => {
+                    if (this.isElectron) {
+                        clearTimeout(clickThroughTimeout);
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        ipcRenderer.invoke('request-focus').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                });
+            }
+            
+            // Keep interactive when interacting with settings submenu (where opacity slider is)
+            if (this.settingsSubmenu) {
+                this.settingsSubmenu.addEventListener('mouseenter', () => {
+                    if (this.isElectron) {
+                        clearTimeout(clickThroughTimeout);
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                });
+                this.settingsSubmenu.addEventListener('mousedown', () => {
+                    if (this.isElectron) {
+                        clearTimeout(clickThroughTimeout);
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        ipcRenderer.invoke('request-focus').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                });
+            }
+            
+            // Keep interactive when interacting with color submenu
+            if (this.colorSubmenu) {
+                this.colorSubmenu.addEventListener('mouseenter', () => {
+                    if (this.isElectron) {
+                        clearTimeout(clickThroughTimeout);
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                });
+                this.colorSubmenu.addEventListener('mousedown', () => {
+                    if (this.isElectron) {
+                        clearTimeout(clickThroughTimeout);
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-interactive').catch(() => {});
+                        ipcRenderer.invoke('request-focus').catch(() => {});
+                        isCurrentlyInteractive = true;
+                    }
+                });
+            }
             
             // Handle clicks on overlay - always make interactive
             this.overlay.addEventListener('mousedown', (e) => {
@@ -1311,16 +1546,18 @@ class JarvisOverlay {
         });
         
         ipcRenderer.on('update-error', (event, error) => {
-            console.error('❌ Update error:', error);
-            // If code signature error, offer to open download page
+            // Ignore network/timeout errors - don't show to user
+            if (error && (error.includes('504') || error.includes('timeout') || error.includes('time-out') || error.includes('Gateway'))) {
+                return; // Silently ignore
+            }
+            
+            // Only show critical errors (like code signature issues)
             if (error && error.includes('code signature')) {
                 this.showNotification('Opening download page...', 'info');
-                // Open the GitHub releases page
                 const { shell } = require('electron');
                 shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
-            } else {
-                this.showNotification('Update error: ' + error, 'error');
             }
+            // Don't show other update errors - they're not critical
         });
         
         ipcRenderer.on('update-not-available', (event) => {
@@ -1393,6 +1630,17 @@ class JarvisOverlay {
         }
     }
     
+    quitApp() {
+        // Show confirmation dialog
+        const confirmed = confirm('Are you sure you want to quit Jarvis?');
+        if (confirmed) {
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                ipcRenderer.invoke('quit-app');
+            }
+        }
+    }
+    
     async checkForUpdates() {
         try {
             const { ipcRenderer } = require('electron');
@@ -1427,9 +1675,6 @@ class JarvisOverlay {
         let isDragging = false;
         let startX, startY, initialLeft, initialTop;
         
-        // Get primary display bounds for positioning (on macOS the primary display is the main screen)
-        this.loadPrimaryDisplayBounds();
-        
         this.dragHandle.addEventListener('mousedown', (e) => {
             isDragging = true;
             startX = e.clientX;
@@ -1459,13 +1704,11 @@ class JarvisOverlay {
             let newLeft = initialLeft + dx;
             let newTop = initialTop + dy;
             
-            // Allow movement across all displays (window spans all monitors)
-            // Only constrain to keep at least 50px visible on screen
-            const minVisible = 50;
-            const maxLeft = window.innerWidth - minVisible;
-            const maxTop = window.innerHeight - minVisible;
+            // Constrain to viewport - keep fully visible
+            const maxLeft = window.innerWidth - overlayWidth;
+            const maxTop = window.innerHeight - overlayHeight;
             
-            newLeft = Math.max(-overlayWidth + minVisible, Math.min(maxLeft, newLeft));
+            newLeft = Math.max(0, Math.min(maxLeft, newLeft));
             newTop = Math.max(0, Math.min(maxTop, newTop));
             
             this.overlay.style.left = `${newLeft}px`;
@@ -1482,63 +1725,27 @@ class JarvisOverlay {
             }
         });
         
-        // Double-click to center at top of PRIMARY display (main Mac screen)
+        // Double-click to center at top
         this.dragHandle.addEventListener('dblclick', () => {
-            this.resetToMainScreen();
+            const overlayWidth = this.overlay.offsetWidth || 400;
+            const overlayHeight = this.overlay.offsetHeight || 200;
+            const centerX = Math.max(0, (window.innerWidth - overlayWidth) / 2);
+            const topY = Math.max(0, Math.min(20, window.innerHeight - overlayHeight - 20));
+            this.overlay.style.left = `${centerX}px`;
+            this.overlay.style.top = `${topY}px`;
+            this.overlay.style.transform = 'none';
         });
     }
-    
-    async loadPrimaryDisplayBounds() {
-        if (!this.isElectron) {
-            // Default to current window for browser
-            this.primaryDisplayBounds = {
-                x: 0,
-                y: 0,
-                width: window.innerWidth,
-                height: window.innerHeight
-            };
-            return;
-        }
-        
-        try {
-            const { ipcRenderer } = window.require('electron');
-            const primary = await ipcRenderer.invoke('get-primary-display');
-            this.primaryDisplayBounds = primary.bounds;
-            console.log('Primary display bounds:', this.primaryDisplayBounds);
-            
-            // Position overlay on primary display on startup
-            this.resetToMainScreen();
-        } catch (e) {
-            console.error('Failed to get primary display:', e);
-            this.primaryDisplayBounds = {
-                x: 0,
-                y: 0,
-                width: window.innerWidth,
-                height: window.innerHeight
-            };
-        }
-    }
-    
-    resetToMainScreen() {
+
+    moveToTopMiddle() {
         if (!this.overlay) return;
-        
         const overlayWidth = this.overlay.offsetWidth || 400;
-        const bounds = this.primaryDisplayBounds || { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
-        
-        // Calculate center position on the primary (main Mac) display
-        // Note: bounds.x/y are absolute positions relative to the virtual screen
-        const centerX = bounds.x + (bounds.width - overlayWidth) / 2;
-        const topY = bounds.y + 20; // 20px from top of primary display
+        const centerX = (window.innerWidth - overlayWidth) / 2;
+        const topY = 20; // 20px from the top
         
         this.overlay.style.left = `${centerX}px`;
         this.overlay.style.top = `${topY}px`;
         this.overlay.style.transform = 'none';
-        
-        console.log(`Reset overlay to primary display: (${centerX}, ${topY})`);
-    }
-
-    moveToTopMiddle() {
-        this.resetToMainScreen();
     }
 
     // Interactive Tutorial System
@@ -1550,9 +1757,18 @@ class JarvisOverlay {
             const needsTutorial = await ipcRenderer.invoke('needs-interactive-tutorial');
             
             if (needsTutorial) {
-                this.tutorialActive = true;
-                this.tutorialStep = 1;
-                this.showTutorialStep(1);
+                // Check if screen permission is granted
+                const hasPermission = await ipcRenderer.invoke('check-screen-permission');
+                
+                if (hasPermission) {
+                    // Permission granted - show tutorial
+                    this.tutorialActive = true;
+                    this.tutorialStep = 1;
+                    this.showTutorialStep(1);
+                } else {
+                    // Permission not granted - show permission banner
+                    this.showPermissionRestartPrompt();
+                }
             }
         } catch (e) {
             console.error('Failed to check tutorial status:', e);
@@ -1574,7 +1790,7 @@ class JarvisOverlay {
         switch(step) {
             case 1:
                 tutorialIcon.innerHTML = '⌨️';
-                tutorialText.innerHTML = 'Press <kbd>⌥ Option</kbd> + <kbd>Space</kbd> to open/close overlay';
+                tutorialText.innerHTML = 'Press <kbd>⌥ Option</kbd> + <kbd>Space</kbd> twice to open/close overlay';
                 break;
             case 2:
                 tutorialIcon.innerHTML = `<div class="drag-dots-icon">
@@ -1593,10 +1809,6 @@ class JarvisOverlay {
                     <span></span><span></span><span></span>
                 </div>`;
                 tutorialText.innerHTML = 'Press the hamburger menu to access all features';
-                break;
-            case 5:
-                tutorialIcon.innerHTML = '✨';
-                tutorialText.innerHTML = 'Check the bottom of the Account tab to see all functions';
                 doneBtn.classList.remove('hidden');
                 doneBtn.onclick = () => this.completeTutorial();
                 break;
@@ -1629,7 +1841,7 @@ class JarvisOverlay {
                 break;
             case 'hamburger':
                 if (this.tutorialStep === 4) {
-                    this.showTutorialStep(5);
+                    // Already on step 4 (hamburger), no need to advance
                 }
                 break;
         }
@@ -1933,12 +2145,6 @@ class JarvisOverlay {
             if (lowerMessage.includes('nicole')) {
                 this.togglePinkMode();
                 return; // Exit early to avoid API call
-            }
-            
-            // Check for quiz request - offer MCQ format
-            if (this.isQuizRequest(message)) {
-                this.showQuizFormatPrompt(message);
-                return; // Wait for user to choose format
             }
             
             // Check for URL in message - only load document if appropriate
@@ -3172,6 +3378,23 @@ ${currentQuestion}`;
         currentOutput.title = 'Drag me to drop text into apps';
         currentOutput.innerHTML = processedContent;
         
+        // Apply current theme if set
+        if (this.currentTheme) {
+            currentOutput.style.background = `rgba(${this.hexToRgb(this.currentTheme.bg)}, 0.95)`;
+            currentOutput.style.color = this.currentTheme.text;
+            currentOutput.style.border = 'none'; // No border
+        }
+        
+        // Apply current opacity if set
+        let opacityToApply = this.currentOpacity;
+        if (opacityToApply === undefined) {
+            // Default opacity if not set (95% = original fully visible)
+            opacityToApply = parseInt(localStorage.getItem('jarvis-overlay-opacity') || '95');
+        }
+        const opacityValue = (opacityToApply / 100).toString();
+        currentOutput.style.setProperty('opacity', opacityValue, 'important');
+        currentOutput.setAttribute('data-opacity', opacityValue);
+        
         // Render math with KaTeX after content is inserted (with delay to ensure DOM and KaTeX are ready)
         setTimeout(() => {
             this.renderMath(currentOutput);
@@ -3303,886 +3526,6 @@ ${currentQuestion}`;
         
         document.querySelectorAll('.notification').forEach(n => n.remove());
     }
-
-    // ==================== QUIZ MODE METHODS ====================
-    
-    /**
-     * Check if user is requesting a quiz
-     */
-    isQuizRequest(message) {
-        const lowerMsg = message.toLowerCase();
-        return lowerMsg.includes('quiz me') || 
-               lowerMsg.includes('test me') || 
-               lowerMsg.includes('make a quiz') ||
-               lowerMsg.includes('create a quiz') ||
-               lowerMsg.includes('give me questions');
-    }
-    
-    /**
-     * Extract number of questions from request (default 5)
-     */
-    extractQuestionCount(request) {
-        const match = request.match(/(\d+)\s*questions?/i);
-        if (match) {
-            const count = parseInt(match[1]);
-            return Math.min(Math.max(count, 1), 20); // Clamp between 1 and 20
-        }
-        return 5; // Default
-    }
-    
-    /**
-     * Ask user if they want MCQ or FRQ format
-     */
-    showQuizFormatPrompt(originalRequest) {
-        this.pendingQuizRequest = originalRequest;
-        this.pendingQuestionCount = this.extractQuestionCount(originalRequest);
-        this.quizPending = true;
-        
-        const promptHTML = `
-            <div class="quiz-format-prompt">
-                <p style="margin-bottom: 12px; font-weight: 500;">📝 Choose question format:</p>
-                <div style="display: flex; gap: 10px; justify-content: center;">
-                    <button class="quiz-format-btn quiz-mcq-btn" onclick="window.jarvisOverlay.confirmQuizFormat('mcq')">
-                        <span style="font-size: 18px;">🔘</span>
-                        <span>Multiple Choice</span>
-                    </button>
-                    <button class="quiz-format-btn quiz-frq-btn" onclick="window.jarvisOverlay.confirmQuizFormat('frq')">
-                        <span style="font-size: 18px;">✏️</span>
-                        <span>Free Response</span>
-                    </button>
-                </div>
-            </div>
-        `;
-        this.showNotification(promptHTML, true);
-    }
-    
-    /**
-     * Handle user's quiz format choice
-     */
-    async confirmQuizFormat(format) {
-        this.quizPending = false;
-        const originalRequest = this.pendingQuizRequest;
-        this.pendingQuizRequest = null;
-        
-        if (format === 'mcq') {
-            // Generate MCQ quiz
-            await this.generateMCQQuiz(originalRequest);
-        } else if (format === 'frq') {
-            // Generate FRQ quiz
-            await this.generateFRQQuiz(originalRequest);
-        }
-    }
-    
-    /**
-     * Generate FRQ (Free Response Questions) quiz
-     */
-    async generateFRQQuiz(request) {
-        this.showLoadingNotification('Creating free response questions...');
-        
-        const frqPrompt = `Based on the following request, generate 5 free response questions for studying/practice.
-
-REQUEST: ${request}
-
-${this.currentScreenCapture ? 'The user has a screenshot attached - base questions on the visible content.' : ''}
-${this.currentDocument ? `The user has loaded a document titled "${this.currentDocument.title}" - base questions on this content.` : ''}
-
-Format your response as a numbered list of questions (1-5). Make them thoughtful questions that require explanation, not just one-word answers. After all questions, provide a section titled "ANSWER KEY:" with brief model answers.
-
-Example format:
-1. Question one here?
-2. Question two here?
-...
-
-ANSWER KEY:
-1. Model answer for question one...
-2. Model answer for question two...`;
-
-        // Use regular message processing for FRQ
-        this.lastUserQuery = frqPrompt;
-        
-        try {
-            const requestPayload = {
-                model: 'gpt-4o-mini',
-                input: [{ role: 'user', content: [{ type: 'input_text', text: frqPrompt }] }]
-            };
-            
-            let response;
-            if (this.apiProxyUrl && this.supabaseAnonKey) {
-                response = await fetch(this.apiProxyUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${this.supabaseAnonKey}`
-                    },
-                    body: JSON.stringify({
-                        provider: 'openai',
-                        endpoint: 'responses',
-                        payload: requestPayload
-                    })
-                });
-            } else {
-                response = await fetch('https://api.openai.com/v1/responses', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestPayload)
-                });
-            }
-            
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            const responseText = data.output?.[0]?.content?.[0]?.text || 
-                                data.choices?.[0]?.message?.content || 
-                                'Failed to generate questions.';
-            
-            this.showNotification(responseText, true);
-        } catch (error) {
-            console.error('FRQ generation error:', error);
-            this.showNotification('Error generating questions: ' + error.message, false);
-        }
-    }
-    
-    /**
-     * Generate MCQ quiz from content
-     */
-    async generateMCQQuiz(request) {
-        const questionCount = this.pendingQuestionCount || 5;
-        this.showLoadingNotification(`Creating ${questionCount} quiz questions...`);
-        
-        // Build the quiz generation prompt
-        let quizPrompt = `Based on the following request, generate exactly ${questionCount} multiple choice questions. 
-
-REQUEST: ${request}
-
-${this.currentScreenCapture ? 'The user has a screenshot attached - base questions on the visible content.' : ''}
-${this.currentDocument ? `The user has loaded a document titled "${this.currentDocument.title}" - base questions on this content:\n\n${this.currentDocument.content?.substring(0, 3000) || ''}` : ''}
-
-IMPORTANT: You MUST respond in this EXACT JSON format with no other text:
-{
-  "questions": [
-    {
-      "question": "The question text here?",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correct": 0,
-      "explanation": "Brief explanation of why this is correct"
-    }
-  ]
-}
-
-Rules:
-- Generate exactly ${questionCount} questions
-- Each question has exactly 4 options (A, B, C, D)
-- "correct" is the index (0-3) of the correct answer
-- Make questions progressively harder
-- Include variety in question types
-- Keep explanations brief (1-2 sentences)
-
-Respond with ONLY the JSON, no markdown code blocks, no other text.`;
-
-        try {
-            // Build messages array
-            let messageContent = quizPrompt;
-            
-            // If there's a screenshot, include it
-            if (this.currentScreenCapture) {
-                const base64Data = this.currentScreenCapture.split(',')[1] || this.currentScreenCapture;
-                
-                const requestPayload = {
-                    model: 'gpt-4o',
-                    input: [
-                        {
-                            role: 'user',
-                            content: [
-                                {
-                                    type: 'input_text',
-                                    text: quizPrompt
-                                },
-                                {
-                                    type: 'input_image',
-                                    image_url: `data:image/png;base64,${base64Data}`
-                                }
-                            ]
-                        }
-                    ]
-                };
-                
-                let response;
-                if (this.apiProxyUrl && this.supabaseAnonKey) {
-                    response = await fetch(this.apiProxyUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${this.supabaseAnonKey}`
-                        },
-                        body: JSON.stringify({
-                            provider: 'openai',
-                            endpoint: 'responses',
-                            payload: requestPayload
-                        })
-                    });
-                } else {
-                    response = await fetch('https://api.openai.com/v1/responses', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${this.apiKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(requestPayload)
-                    });
-                }
-                
-                if (!response.ok) {
-                    throw new Error(`API error: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                const responseText = data.output?.[0]?.content?.[0]?.text || 
-                                    data.choices?.[0]?.message?.content || 
-                                    JSON.stringify(data);
-                
-                const parsed = this.parseQuizResponse(responseText);
-                
-                if (parsed && parsed.questions && parsed.questions.length > 0) {
-                    this.quizQuestions = parsed.questions;
-                    this.currentQuizIndex = 0;
-                    this.quizScore = 0;
-                    this.quizMode = true;
-                    this.renderQuizQuestion();
-                } else {
-                    this.showNotification('Failed to generate quiz questions. Please try again.', false);
-                }
-            } else {
-                // No screenshot - use regular text API call
-                const requestPayload = {
-                    model: 'gpt-4o-mini',
-                    input: [{ role: 'user', content: [{ type: 'input_text', text: quizPrompt }] }]
-                };
-                
-                let response;
-                if (this.apiProxyUrl && this.supabaseAnonKey) {
-                    response = await fetch(this.apiProxyUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${this.supabaseAnonKey}`
-                        },
-                        body: JSON.stringify({
-                            provider: 'openai',
-                            endpoint: 'responses',
-                            payload: requestPayload
-                        })
-                    });
-                } else {
-                    response = await fetch('https://api.openai.com/v1/responses', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${this.apiKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(requestPayload)
-                    });
-                }
-                
-                if (!response.ok) {
-                    throw new Error(`API error: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                const responseText = data.output?.[0]?.content?.[0]?.text || 
-                                    data.choices?.[0]?.message?.content || 
-                                    JSON.stringify(data);
-                
-                const parsed = this.parseQuizResponse(responseText);
-                
-                if (parsed && parsed.questions && parsed.questions.length > 0) {
-                    this.quizQuestions = parsed.questions;
-                    this.currentQuizIndex = 0;
-                    this.quizScore = 0;
-                    this.quizMode = true;
-                    this.renderQuizQuestion();
-                } else {
-                    this.showNotification('Failed to generate quiz questions. Please try again.', false);
-                }
-            }
-        } catch (error) {
-            console.error('Quiz generation error:', error);
-            this.showNotification('Error generating quiz: ' + error.message, false);
-        }
-    }
-    
-    /**
-     * Parse AI response to extract quiz questions
-     */
-    parseQuizResponse(response) {
-        try {
-            // Try to find JSON in the response
-            let jsonStr = response;
-            
-            // Remove markdown code blocks if present
-            jsonStr = jsonStr.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
-            
-            // Try to find JSON object
-            const jsonMatch = jsonStr.match(/\{[\s\S]*"questions"[\s\S]*\}/);
-            if (jsonMatch) {
-                jsonStr = jsonMatch[0];
-            }
-            
-            const parsed = JSON.parse(jsonStr);
-            return parsed;
-        } catch (e) {
-            console.error('Failed to parse quiz response:', e);
-            console.log('Raw response:', response);
-            return null;
-        }
-    }
-    
-    /**
-     * Render current quiz question with clickable buttons
-     */
-    renderQuizQuestion() {
-        const question = this.quizQuestions[this.currentQuizIndex];
-        const questionNum = this.currentQuizIndex + 1;
-        const total = this.quizQuestions.length;
-        const progressPercent = (questionNum / total) * 100;
-        
-        const optionLabels = ['A', 'B', 'C', 'D'];
-        
-        let optionsHTML = question.options.map((opt, idx) => `
-            <button class="quiz-option-btn" data-index="${idx}" onclick="window.jarvisOverlay.selectQuizAnswer(${idx})">
-                <span class="quiz-option-label">${optionLabels[idx]}</span>
-                <span class="quiz-option-text">${opt}</span>
-            </button>
-        `).join('');
-        
-        const quizHTML = `
-            <div class="quiz-container">
-                <div class="quiz-top-bar">
-                    <div class="quiz-progress-section">
-                        <div class="quiz-progress-bar">
-                            <div class="quiz-progress-fill" style="width: ${progressPercent}%"></div>
-                        </div>
-                        <span class="quiz-progress-text">${questionNum}/${total}</span>
-                    </div>
-                    <div class="quiz-top-actions">
-                        <button class="quiz-hint-btn" onclick="window.jarvisOverlay.showQuizHint()">💡 Hint</button>
-                        <span class="quiz-score-badge">${this.quizScore}✓</span>
-                    </div>
-                </div>
-                <div class="quiz-question">${question.question}</div>
-                <div class="quiz-options">
-                    ${optionsHTML}
-                </div>
-            </div>
-        `;
-        
-        this.showNotification(quizHTML, true);
-        this.injectQuizStyles();
-    }
-    
-    /**
-     * Show hint for current question
-     */
-    showQuizHint() {
-        if (!this.quizMode || !this.quizQuestions[this.currentQuizIndex]) return;
-        
-        const question = this.quizQuestions[this.currentQuizIndex];
-        const correctAnswer = question.options[question.correct];
-        
-        // Give a hint without revealing the full answer
-        const hints = [
-            `Think about: ${question.explanation.split(' ').slice(0, 5).join(' ')}...`,
-            `The answer starts with "${correctAnswer.charAt(0)}"`,
-            `Consider: ${question.explanation.split('.')[0]}`
-        ];
-        
-        const randomHint = hints[Math.floor(Math.random() * hints.length)];
-        
-        // Show hint as a toast notification
-        this.showQuizToast(`💡 ${randomHint}`);
-    }
-    
-    /**
-     * Show a temporary toast message for quiz
-     */
-    showQuizToast(message) {
-        // Remove existing toast
-        const existingToast = document.querySelector('.quiz-toast');
-        if (existingToast) existingToast.remove();
-        
-        const toast = document.createElement('div');
-        toast.className = 'quiz-toast';
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        
-        // Animate in
-        setTimeout(() => toast.classList.add('show'), 10);
-        
-        // Remove after 3 seconds
-        setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    }
-    
-    /**
-     * Handle user selecting a quiz answer
-     */
-    selectQuizAnswer(selectedIndex) {
-        if (!this.quizMode) return;
-        
-        const question = this.quizQuestions[this.currentQuizIndex];
-        const isCorrect = selectedIndex === question.correct;
-        
-        if (isCorrect) {
-            this.quizScore++;
-        }
-        
-        // Show feedback
-        this.showQuizFeedback(selectedIndex, question.correct, question.explanation, isCorrect);
-    }
-    
-    /**
-     * Show feedback after answering
-     */
-    showQuizFeedback(selectedIndex, correctIndex, explanation, isCorrect) {
-        const question = this.quizQuestions[this.currentQuizIndex];
-        const optionLabels = ['A', 'B', 'C', 'D'];
-        const isLastQuestion = this.currentQuizIndex >= this.quizQuestions.length - 1;
-        const questionNum = this.currentQuizIndex + 1;
-        const total = this.quizQuestions.length;
-        const progressPercent = (questionNum / total) * 100;
-        
-        let optionsHTML = question.options.map((opt, idx) => {
-            let btnClass = 'quiz-option-btn quiz-answered';
-            if (idx === correctIndex) {
-                btnClass += ' quiz-correct';
-            } else if (idx === selectedIndex && !isCorrect) {
-                btnClass += ' quiz-incorrect';
-            }
-            return `
-                <button class="${btnClass}" disabled>
-                    <span class="quiz-option-label">${optionLabels[idx]}</span>
-                    <span class="quiz-option-text">${opt}</span>
-                    ${idx === correctIndex ? '<span class="quiz-check">✓</span>' : ''}
-                    ${idx === selectedIndex && !isCorrect ? '<span class="quiz-x">✗</span>' : ''}
-                </button>
-            `;
-        }).join('');
-        
-        const feedbackHTML = `
-            <div class="quiz-container">
-                <div class="quiz-top-bar">
-                    <div class="quiz-progress-section">
-                        <div class="quiz-progress-bar">
-                            <div class="quiz-progress-fill" style="width: ${progressPercent}%"></div>
-                        </div>
-                        <span class="quiz-progress-text">${questionNum}/${total}</span>
-                    </div>
-                    <div class="quiz-top-actions">
-                        <span class="quiz-score-badge">${this.quizScore}✓</span>
-                    </div>
-                </div>
-                <div class="quiz-question">${question.question}</div>
-                <div class="quiz-options quiz-options-compact">
-                    ${optionsHTML}
-                </div>
-                <div class="quiz-feedback ${isCorrect ? 'quiz-feedback-correct' : 'quiz-feedback-incorrect'}">
-                    <span class="quiz-feedback-icon">${isCorrect ? '✓' : '✗'}</span>
-                    <span class="quiz-explanation">${explanation}</span>
-                </div>
-                <button class="quiz-next-btn-small" onclick="window.jarvisOverlay.nextQuizQuestion()">
-                    ${isLastQuestion ? '🏁 Results' : '→ Next'}
-                </button>
-            </div>
-        `;
-        
-        this.showNotification(feedbackHTML, true);
-    }
-    
-    /**
-     * Move to next question or show final results
-     */
-    nextQuizQuestion() {
-        this.currentQuizIndex++;
-        
-        if (this.currentQuizIndex >= this.quizQuestions.length) {
-            this.showQuizResults();
-        } else {
-            this.renderQuizQuestion();
-        }
-    }
-    
-    /**
-     * Show final quiz results
-     */
-    showQuizResults() {
-        const total = this.quizQuestions.length;
-        const score = this.quizScore;
-        const percentage = Math.round((score / total) * 100);
-        
-        let emoji, message;
-        if (percentage >= 80) {
-            emoji = '🎉';
-            message = 'Excellent work!';
-        } else if (percentage >= 60) {
-            emoji = '👍';
-            message = 'Good job!';
-        } else if (percentage >= 40) {
-            emoji = '📚';
-            message = 'Keep studying!';
-        } else {
-            emoji = '💪';
-            message = 'Don\'t give up!';
-        }
-        
-        const resultsHTML = `
-            <div class="quiz-container quiz-results">
-                <div class="quiz-results-emoji">${emoji}</div>
-                <div class="quiz-results-title">Quiz Complete!</div>
-                <div class="quiz-results-score">${score}/${total}</div>
-                <div class="quiz-results-percentage">${percentage}%</div>
-                <div class="quiz-results-message">${message}</div>
-                <div class="quiz-results-actions">
-                    <button class="quiz-retry-btn" onclick="window.jarvisOverlay.retryQuiz()">🔄 Retry Quiz</button>
-                    <button class="quiz-done-btn" onclick="window.jarvisOverlay.endQuiz()">✓ Done</button>
-                </div>
-            </div>
-        `;
-        
-        this.showNotification(resultsHTML, true);
-    }
-    
-    /**
-     * Retry the same quiz
-     */
-    retryQuiz() {
-        this.currentQuizIndex = 0;
-        this.quizScore = 0;
-        this.renderQuizQuestion();
-    }
-    
-    /**
-     * End quiz mode and return to normal
-     */
-    endQuiz() {
-        this.quizMode = false;
-        this.quizQuestions = [];
-        this.currentQuizIndex = 0;
-        this.quizScore = 0;
-        this.showNotification('Quiz completed! Ask me anything else.', false);
-    }
-    
-    /**
-     * Inject quiz CSS styles
-     */
-    injectQuizStyles() {
-        if (document.getElementById('quiz-styles')) return;
-        
-        const styles = document.createElement('style');
-        styles.id = 'quiz-styles';
-        styles.textContent = `
-            .quiz-format-prompt {
-                text-align: center;
-                padding: 15px 10px;
-            }
-            .quiz-format-btn {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                gap: 5px;
-                padding: 15px 25px;
-                border: none;
-                border-radius: 12px;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 500;
-                transition: all 0.2s ease;
-                min-width: 130px;
-                background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                color: white;
-            }
-            .quiz-mcq-btn:hover, .quiz-frq-btn:hover {
-                background: rgba(255, 255, 255, 0.15);
-                border-color: rgba(255, 255, 255, 0.25);
-                transform: translateY(-2px);
-            }
-            
-            .quiz-container {
-                padding: 5px;
-            }
-            
-            /* Progress bar top section */
-            .quiz-top-bar {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 12px;
-                gap: 10px;
-            }
-            .quiz-progress-section {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                flex: 1;
-            }
-            .quiz-progress-bar {
-                flex: 1;
-                height: 4px;
-                background: rgba(255, 255, 255, 0.1);
-                border-radius: 2px;
-                overflow: hidden;
-            }
-            .quiz-progress-fill {
-                height: 100%;
-                background: rgba(255, 255, 255, 0.6);
-                border-radius: 2px;
-                transition: width 0.3s ease;
-            }
-            .quiz-progress-text {
-                font-size: 11px;
-                opacity: 0.5;
-                white-space: nowrap;
-                font-weight: 500;
-            }
-            .quiz-top-actions {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-            }
-            .quiz-hint-btn {
-                padding: 5px 10px;
-                background: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                color: rgba(255, 255, 255, 0.7);
-                font-size: 11px;
-                cursor: pointer;
-                transition: all 0.2s ease;
-            }
-            .quiz-hint-btn:hover {
-                background: rgba(255, 255, 255, 0.12);
-                color: white;
-            }
-            .quiz-score-badge {
-                padding: 5px 10px;
-                background: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                font-size: 11px;
-                font-weight: 600;
-                color: rgba(255, 255, 255, 0.7);
-            }
-            
-            .quiz-question {
-                font-size: 14px;
-                font-weight: 400;
-                margin-bottom: 12px;
-                line-height: 1.5;
-                opacity: 0.95;
-            }
-            .quiz-options {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
-            }
-            .quiz-options-compact {
-                gap: 5px;
-            }
-            .quiz-options-compact .quiz-option-btn {
-                padding: 8px 12px;
-            }
-            .quiz-option-btn {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                width: 100%;
-                padding: 10px 12px;
-                background: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 10px;
-                cursor: pointer;
-                transition: all 0.15s ease;
-                text-align: left;
-                color: rgba(255, 255, 255, 0.9);
-                font-size: 13px;
-                box-sizing: border-box;
-            }
-            .quiz-option-btn:hover:not(:disabled) {
-                background: rgba(255, 255, 255, 0.08);
-                border-color: rgba(255, 255, 255, 0.15);
-            }
-            .quiz-option-label {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 26px;
-                height: 26px;
-                background: rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                font-weight: 500;
-                font-size: 12px;
-                flex-shrink: 0;
-                color: rgba(255, 255, 255, 0.6);
-            }
-            .quiz-option-text {
-                flex: 1;
-            }
-            .quiz-answered {
-                cursor: default;
-            }
-            .quiz-correct {
-                background: rgba(74, 222, 128, 0.1) !important;
-                border-color: rgba(74, 222, 128, 0.3) !important;
-            }
-            .quiz-correct .quiz-option-label {
-                background: rgba(74, 222, 128, 0.8);
-                color: white;
-            }
-            .quiz-incorrect {
-                background: rgba(248, 113, 113, 0.1) !important;
-                border-color: rgba(248, 113, 113, 0.3) !important;
-            }
-            .quiz-incorrect .quiz-option-label {
-                background: rgba(248, 113, 113, 0.8);
-                color: white;
-            }
-            .quiz-check, .quiz-x {
-                margin-left: auto;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            .quiz-check { color: #4ade80; }
-            .quiz-x { color: #f87171; }
-            
-            .quiz-feedback {
-                display: flex;
-                align-items: flex-start;
-                gap: 8px;
-                margin-top: 10px;
-                padding: 10px 12px;
-                border-radius: 10px;
-                font-size: 12px;
-                line-height: 1.4;
-                background: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-            }
-            .quiz-feedback-correct {
-                border-color: rgba(74, 222, 128, 0.2);
-            }
-            .quiz-feedback-incorrect {
-                border-color: rgba(248, 113, 113, 0.2);
-            }
-            .quiz-feedback-icon {
-                font-size: 13px;
-                font-weight: bold;
-            }
-            .quiz-feedback-correct .quiz-feedback-icon { color: #4ade80; }
-            .quiz-feedback-incorrect .quiz-feedback-icon { color: #f87171; }
-            .quiz-explanation {
-                flex: 1;
-                opacity: 0.8;
-            }
-            
-            .quiz-next-btn-small {
-                display: inline-block;
-                margin-top: 10px;
-                padding: 8px 16px;
-                background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                color: white;
-                font-size: 12px;
-                font-weight: 500;
-                cursor: pointer;
-                transition: all 0.15s ease;
-                float: right;
-            }
-            .quiz-next-btn-small:hover {
-                background: rgba(255, 255, 255, 0.15);
-            }
-            
-            /* Toast notification */
-            .quiz-toast {
-                position: fixed;
-                top: 20px;
-                left: 50%;
-                transform: translateX(-50%) translateY(-20px);
-                background: rgba(30, 30, 30, 0.95);
-                color: white;
-                padding: 10px 18px;
-                border-radius: 10px;
-                font-size: 12px;
-                z-index: 99999;
-                opacity: 0;
-                transition: all 0.3s ease;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                backdrop-filter: blur(10px);
-            }
-            .quiz-toast.show {
-                opacity: 1;
-                transform: translateX(-50%) translateY(0);
-            }
-            
-            .quiz-results {
-                text-align: center;
-                padding: 15px 10px;
-            }
-            .quiz-results-emoji {
-                font-size: 36px;
-                margin-bottom: 8px;
-            }
-            .quiz-results-title {
-                font-size: 16px;
-                font-weight: 500;
-                margin-bottom: 8px;
-                opacity: 0.9;
-            }
-            .quiz-results-score {
-                font-size: 28px;
-                font-weight: 600;
-                color: white;
-            }
-            .quiz-results-percentage {
-                font-size: 14px;
-                opacity: 0.5;
-                margin-bottom: 8px;
-            }
-            .quiz-results-message {
-                font-size: 13px;
-                margin-bottom: 15px;
-                opacity: 0.7;
-            }
-            .quiz-results-actions {
-                display: flex;
-                gap: 8px;
-                justify-content: center;
-            }
-            .quiz-retry-btn, .quiz-done-btn {
-                padding: 8px 16px;
-                border: none;
-                border-radius: 8px;
-                cursor: pointer;
-                font-size: 12px;
-                font-weight: 500;
-                transition: all 0.15s ease;
-                background: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: white;
-            }
-            .quiz-retry-btn:hover, .quiz-done-btn:hover {
-                background: rgba(255, 255, 255, 0.12);
-            }
-        `;
-        document.head.appendChild(styles);
-    }
-    
-    // ==================== END QUIZ MODE METHODS ====================
 
     showLoadingNotification(message = null, context = 'default') {
         if (!this.dragOutput) return;
@@ -4347,6 +3690,8 @@ Respond with ONLY the JSON, no markdown code blocks, no other text.`;
         if (this.settingsMenu) {
             if (this.settingsMenu.classList.contains('hidden')) {
                 this.settingsMenu.classList.remove('hidden');
+                // Attach opacity slider listener when menu opens
+                this.attachOpacitySliderWhenReady();
             } else {
                 this.settingsMenu.classList.add('hidden');
             }
@@ -4357,6 +3702,27 @@ Respond with ONLY the JSON, no markdown code blocks, no other text.`;
         if (this.settingsMenu) {
             this.settingsMenu.classList.add('hidden');
         }
+    }
+    
+    attachOpacitySliderWhenReady() {
+        // Simply update the slider value - inline handlers in HTML will do the work
+        const slider = document.getElementById('opacity-slider');
+        if (!slider) {
+            console.warn('❌ Opacity slider not found');
+            return;
+        }
+        
+        // Set the saved value (default 95% = original fully visible)
+        const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '95';
+        slider.value = savedOpacity;
+        
+        // Update display
+        const display = document.getElementById('opacity-value-display');
+        if (display) {
+            display.textContent = savedOpacity + '%';
+        }
+        
+        console.log('✅ Opacity slider ready, value:', savedOpacity + '%');
     }
 
     toggleModelSubmenu() {
@@ -4374,6 +3740,200 @@ Respond with ONLY the JSON, no markdown code blocks, no other text.`;
         if (this.modelSubmenu) {
             this.modelSubmenu.classList.add('hidden');
         }
+    }
+    
+    toggleSettingsSubmenu() {
+        if (this.settingsSubmenu) {
+            const isHidden = this.settingsSubmenu.classList.contains('hidden');
+            if (isHidden) {
+                this.settingsSubmenu.classList.remove('hidden');
+                // Attach opacity slider listener when submenu opens
+                setTimeout(() => this.attachOpacitySliderWhenReady(), 50);
+            } else {
+                this.settingsSubmenu.classList.add('hidden');
+            }
+        }
+    }
+    
+    
+    hideSettingsSubmenu() {
+        if (this.settingsSubmenu) {
+            this.settingsSubmenu.classList.add('hidden');
+        }
+    }
+    
+    toggleColorSubmenu() {
+        if (this.colorSubmenu) {
+            const isHidden = this.colorSubmenu.classList.contains('hidden');
+            if (isHidden) {
+                this.colorSubmenu.classList.remove('hidden');
+            } else {
+                this.colorSubmenu.classList.add('hidden');
+            }
+        }
+    }
+    
+    hideColorSubmenu() {
+        if (this.colorSubmenu) {
+            this.colorSubmenu.classList.add('hidden');
+        }
+    }
+    
+    
+    setOverlayOpacity(opacity) {
+        console.log(`setOverlayOpacity called with: ${opacity}%`);
+        // Store opacity for new messages
+        this.currentOpacity = opacity;
+        const opacityValue = (opacity / 100).toString();
+        
+        // Apply opacity to ALL visible UI elements
+        
+        // Add a CSS rule to ensure opacity is applied
+        let opacityStyle = document.getElementById('overlay-opacity-style');
+        if (!opacityStyle) {
+            opacityStyle = document.createElement('style');
+            opacityStyle.id = 'overlay-opacity-style';
+            document.head.appendChild(opacityStyle);
+        }
+        
+        // Apply to all overlay elements: HUD, output, buttons, history
+        opacityStyle.textContent = `
+            .minimal-hud { opacity: ${opacityValue} !important; }
+            .drag-output { opacity: ${opacityValue} !important; }
+            #drag-output { opacity: ${opacityValue} !important; }
+            .messages-container { opacity: ${opacityValue} !important; }
+            .answer-this-btn { opacity: ${opacityValue} !important; }
+            .humanize-btn { opacity: ${opacityValue} !important; }
+            .reveal-history-btn { opacity: ${opacityValue} !important; }
+            .action-buttons-container { opacity: ${opacityValue} !important; }
+        `;
+        
+        // Apply directly to elements
+        const elements = [
+            '.minimal-hud',
+            '.drag-output',
+            '.messages-container',
+            '.answer-this-btn',
+            '.humanize-btn',
+            '.reveal-history-btn',
+            '.action-buttons-container'
+        ];
+        
+        elements.forEach(selector => {
+            document.querySelectorAll(selector).forEach(el => {
+                el.style.setProperty('opacity', opacityValue, 'important');
+            });
+        });
+        
+        console.log(`Opacity set to ${opacity}% for all overlay elements`);
+    }
+    
+    setOverlayColor(color) {
+        if (!this.overlay) return;
+        
+        const colors = {
+            white: { bg: '#ffffff', text: '#000000', border: 'rgba(0, 0, 0, 0.2)' },
+            '#ffffff': { bg: '#ffffff', text: '#000000', border: 'rgba(0, 0, 0, 0.2)' },
+            black: { bg: '#000000', text: '#ffffff', border: 'rgba(255, 255, 255, 0.2)' },
+            '#000000': { bg: '#000000', text: '#ffffff', border: 'rgba(255, 255, 255, 0.2)' },
+            pink: { bg: '#ec4899', text: '#ffffff', border: 'rgba(255, 255, 255, 0.2)' },
+            '#ec4899': { bg: '#ec4899', text: '#ffffff', border: 'rgba(255, 255, 255, 0.2)' },
+            blue: { bg: '#4A9EFF', text: '#ffffff', border: 'rgba(255, 255, 255, 0.2)' },
+            '#4A9EFF': { bg: '#4A9EFF', text: '#ffffff', border: 'rgba(255, 255, 255, 0.2)' }
+        };
+        
+        const theme = colors[color] || colors.black;
+        
+        // Store current theme for new messages
+        this.currentTheme = theme;
+        this.currentColor = color;
+        
+        // Update minimal-hud background
+        const minimalHud = this.overlay.querySelector('.minimal-hud');
+        if (minimalHud) {
+            minimalHud.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+            minimalHud.style.borderColor = theme.border;
+        }
+        
+        // Update all drag-output elements (all message outputs)
+        const allDragOutputs = this.overlay.querySelectorAll('.drag-output');
+        allDragOutputs.forEach(output => {
+            output.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.95)`;
+            output.style.color = theme.text;
+            output.style.border = 'none'; // Remove border
+            
+            // Update all text inside
+            const textElements = output.querySelectorAll('*');
+            textElements.forEach(el => {
+                if (el.tagName !== 'SVG' && !el.classList.contains('action-btn')) {
+                    el.style.color = theme.text;
+                }
+            });
+        });
+        
+        // Update text input field - keep it transparent, only change text color
+        const textInput = this.overlay.querySelector('#text-input');
+        if (textInput) {
+            textInput.style.background = 'transparent'; // Keep transparent
+            if (color === 'white') {
+                textInput.style.color = '#333333'; // Dark gray for white overlay
+                textInput.style.setProperty('color', '#333333', 'important');
+            } else {
+                textInput.style.color = theme.text;
+                textInput.style.setProperty('color', theme.text, 'important');
+            }
+            textInput.style.border = 'none'; // No border
+            
+            // Update placeholder color with a style tag
+            let placeholderStyle = document.getElementById('text-input-placeholder-style');
+            if (!placeholderStyle) {
+                placeholderStyle = document.createElement('style');
+                placeholderStyle.id = 'text-input-placeholder-style';
+                document.head.appendChild(placeholderStyle);
+            }
+            if (color === 'white') {
+                placeholderStyle.textContent = `#text-input::placeholder { color: rgba(0, 0, 0, 0.5) !important; }`;
+            } else {
+                placeholderStyle.textContent = `#text-input::placeholder { color: rgba(255, 255, 255, 0.5) !important; }`;
+            }
+        }
+        
+        // Update color preview
+        if (this.colorPreview) {
+            this.colorPreview.style.background = theme.bg;
+        }
+        
+        // Update Answer Screen button
+        const answerBtn = this.overlay.querySelector('.answer-this-btn');
+        if (answerBtn) {
+            answerBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+            answerBtn.style.color = theme.text;
+            answerBtn.style.borderColor = theme.border;
+        }
+        
+        // Update Humanize button
+        const humanizeBtn = this.overlay.querySelector('.humanize-btn');
+        if (humanizeBtn) {
+            humanizeBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+            humanizeBtn.style.color = theme.text;
+            humanizeBtn.style.borderColor = theme.border;
+        }
+        
+        // Update reveal history button
+        const revealHistoryBtn = this.overlay.querySelector('.reveal-history-btn');
+        if (revealHistoryBtn) {
+            revealHistoryBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+            revealHistoryBtn.style.color = theme.text;
+            revealHistoryBtn.style.borderColor = theme.border;
+        }
+        
+        // Save to localStorage
+        localStorage.setItem('jarvis-overlay-color', color);
+    }
+    
+    hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '255, 255, 255';
     }
 
     selectModel(model, modelName) {
@@ -4639,6 +4199,13 @@ Respond with ONLY the JSON, no markdown code blocks, no other text.`;
         if (this.isElectron && window.require) {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.invoke('open-account-window');
+        }
+    }
+    
+    showHotkeysWindow() {
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            ipcRenderer.invoke('open-hotkeys-window');
         }
     }
 
@@ -9069,9 +8636,6 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.notification').forEach(n => n.remove());
             const jarvis = new JarvisOverlay();
             
-            // Set global reference for quiz onclick handlers
-            window.jarvisOverlay = jarvis;
-            
             // Set initial position immediately to prevent drift
             const overlay = document.getElementById('jarvis-overlay');
             if (overlay) {
@@ -9080,6 +8644,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 overlay.style.left = `${centerX}px`;
                 overlay.style.top = `${centerY}px`;
                 overlay.style.transform = 'none';
+                
+                // Initialize overlay color and opacity (default: black, 95% = original)
+                const savedColor = localStorage.getItem('jarvis-overlay-color') || 'black';
+                const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '95';
+                jarvis.currentOpacity = parseInt(savedOpacity);
+                jarvis.setOverlayColor(savedColor);
+                jarvis.setOverlayOpacity(parseInt(savedOpacity));
+                
+                // Initialize opacity slider and display
+                const opacitySlider = document.getElementById('opacity-slider');
+                const opacityDisplay = document.getElementById('opacity-value-display');
+                if (opacitySlider) {
+                    opacitySlider.value = savedOpacity;
+                }
+                if (opacityDisplay) {
+                    opacityDisplay.textContent = savedOpacity + '%';
+                }
             }
             
            window.setOpenAIKey = (key) => {
@@ -9087,6 +8668,54 @@ document.addEventListener('DOMContentLoaded', () => {
                jarvis.showNotification('OpenAI API key updated');
            };
            
+           // Global handlers for inline event handlers (most reliable method)
+           window.handleOpacitySlider = (opacity) => {
+               console.log('🎚️ Opacity slider changed:', opacity + '%');
+               const opacityValue = parseInt(opacity);
+               jarvis.currentOpacity = opacityValue;
+               jarvis.setOverlayOpacity(opacityValue);
+               localStorage.setItem('jarvis-overlay-opacity', opacity);
+               // Update the display
+               const display = document.getElementById('opacity-value-display');
+               if (display) {
+                   display.textContent = opacity + '%';
+               }
+           };
+           
+           window.handleColorPicker = (color) => {
+               console.log('🎨 Color picker changed:', color);
+               jarvis.setOverlayColor(color);
+               // Hide color submenu after selection
+               const colorSubmenu = document.getElementById('color-submenu');
+               if (colorSubmenu) colorSubmenu.classList.add('hidden');
+           };
+           
+           window.toggleColorSubmenu = () => {
+               console.log('🎨 toggleColorSubmenu called');
+               const colorSubmenu = document.getElementById('color-submenu');
+               console.log('🎨 colorSubmenu element:', colorSubmenu);
+               if (colorSubmenu) {
+                   console.log('🎨 Current classes:', colorSubmenu.className);
+                   if (colorSubmenu.classList.contains('hidden')) {
+                       colorSubmenu.classList.remove('hidden');
+                       console.log('🎨 Removed hidden class - submenu should be visible');
+                   } else {
+                       colorSubmenu.classList.add('hidden');
+                       console.log('🎨 Added hidden class - submenu should be hidden');
+           }
+                   console.log('🎨 New classes:', colorSubmenu.className);
+               } else {
+                   console.error('🎨 Color submenu element not found!');
+               }
+           };
+           
+           // Set initial slider value
+           const opacitySlider = document.getElementById('opacity-slider');
+           if (opacitySlider) {
+               opacitySlider.value = savedOpacity;
+           }
 
     try { jarvis.startJarvis(); } catch (e) {}
 });
+
+

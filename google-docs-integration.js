@@ -645,6 +645,9 @@ class GoogleDocsIntegration {
     async typeTextRealistic(documentId, text) {
         const docs = google.docs({ version: 'v1', auth: this.oAuth2Client });
         
+        // Strip HTML tags from input text first
+        text = this.stripHtmlTags(text);
+        
         // Rate limiting: Google Docs API allows 60 write requests per minute per user
         // We'll stay well under this by spreading typing over multiple minutes
         // Target: ~30 calls/minute maximum to leave plenty of buffer
@@ -914,9 +917,9 @@ class GoogleDocsIntegration {
                         // Delay between characters (based on WPM)
                         await sleep(baseDelay);
                         
-                        // Make typos more frequently (5-8% chance) and spread throughout
-                        // Typos are more common when typing faster or when tired
-                        const typoChance = currentWPM > 30 ? 0.08 : 0.05; // More typos when typing faster
+                        // Make occasional typos (~3% chance)
+                        // Typos are slightly more common when typing faster
+                        const typoChance = currentWPM > 30 ? 0.035 : 0.025; // ~3% average typo rate
                         if (Math.random() < typoChance && char.match(/[a-zA-Z]/) && charIdx < word.length - 1) {
                             try {
                                 // Type a wrong character (adjacent key on keyboard)
@@ -1107,21 +1110,31 @@ class GoogleDocsIntegration {
     stripHtmlTags(html) {
         if (!html) return '';
         
-        // Remove the resize handle div and any other UI elements
-        let text = html.replace(/<div[^>]*id="resize-handle[^"]*"[^>]*>.*?<\/div>/gi, '');
+        let text = html;
+        
+        // Remove the resize handle div and any other UI elements (various patterns)
+        text = text.replace(/<div[^>]*id="resize-handle[^"]*"[^>]*>.*?<\/div>/gi, '');
+        text = text.replace(/<div[^>]*class="resize-handle[^"]*"[^>]*>.*?<\/div>/gi, '');
+        text = text.replace(/<div[^>]*resize-handle[^>]*>.*?<\/div>/gi, '');
         
         // Remove script and style tags with their contents
         text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
         text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
         
+        // Remove any inline style attributes from tags before processing
+        text = text.replace(/<(\w+)\s+style="[^"]*"([^>]*)>/gi, '<$1$2>');
+        
         // Replace <br> and <br/> with newlines
         text = text.replace(/<br\s*\/?>/gi, '\n');
         
-        // Replace </p>, </div>, </li> with newlines
-        text = text.replace(/<\/(p|div|li|h[1-6])>/gi, '\n');
+        // Replace block-level closing tags with newlines
+        text = text.replace(/<\/(p|div|li|h[1-6]|blockquote|section|article)>/gi, '\n');
         
         // Replace <li> with bullet point
         text = text.replace(/<li[^>]*>/gi, '• ');
+        
+        // Remove opening block-level tags (p, div, etc.) - these shouldn't add content
+        text = text.replace(/<(p|div|span|section|article|header|footer|main|aside)[^>]*>/gi, '');
         
         // Remove all remaining HTML tags
         text = text.replace(/<[^>]+>/g, '');
@@ -1134,11 +1147,18 @@ class GoogleDocsIntegration {
         text = text.replace(/&quot;/gi, '"');
         text = text.replace(/&#39;/gi, "'");
         text = text.replace(/&apos;/gi, "'");
+        text = text.replace(/&#(\d+);/gi, (match, dec) => String.fromCharCode(dec));
         
         // Clean up multiple newlines
         text = text.replace(/\n{3,}/g, '\n\n');
         
-        // Trim whitespace
+        // Clean up multiple spaces
+        text = text.replace(/  +/g, ' ');
+        
+        // Trim whitespace from each line
+        text = text.split('\n').map(line => line.trim()).join('\n');
+        
+        // Trim overall whitespace
         text = text.trim();
         
         return text;
