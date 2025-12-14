@@ -1,6 +1,6 @@
 {
   "name": "jarvis-6.0",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "AI-powered overlay assistant with voice activation and screen analysis",
   "main": "main.js",
   "scripts": {
@@ -88,6 +88,7 @@
       "onboarding.html",
       "onboarding-features.html",
       "account-window.html",
+      "hotkeys-window.html",
       "password-reset.html",
       "voice-recorder.js",
       "polar-config.js",
@@ -208,6 +209,7 @@
       "onboarding-features.html",
       "paywall.html",
       "account-window.html",
+      "hotkeys-window.html",
       "password-reset.html",
       "index.html",
       "JarvisLogo.png",

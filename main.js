@@ -341,8 +341,60 @@ class JarvisApp {
                     this.mainWindow.webContents.send('trigger-voice-activation');
                 }
             });
+            
+            // Load and register answer screen shortcut
+            this.loadAnswerScreenShortcut();
+            
+            // Setup cleanup handlers
+            this.setupAppCleanup();
         });
+    }
+    
+    loadAnswerScreenShortcut() {
+        const fs = require('fs');
+        const path = require('path');
+        const userDataPath = app.getPath('userData');
+        const shortcutFile = path.join(userDataPath, 'answer-screen-shortcut.json');
+        try {
+            if (fs.existsSync(shortcutFile)) {
+                const data = JSON.parse(fs.readFileSync(shortcutFile, 'utf8'));
+                if (data.shortcut) {
+                    this.registerAnswerScreenShortcut(data.shortcut);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load answer screen shortcut:', e);
+        }
+    }
+    
+    registerAnswerScreenShortcut(shortcut) {
+        if (!shortcut) return;
+        
+        const { globalShortcut } = require('electron');
+        
+        // Unregister previous answer screen shortcut if any
+        if (this.currentAnswerScreenShortcut) {
+            try {
+                globalShortcut.unregister(this.currentAnswerScreenShortcut);
+            } catch (e) {}
+        }
+        
+        // Register the new shortcut
+        try {
+            globalShortcut.register(shortcut, () => {
+                console.log('🖥️ Answer Screen shortcut triggered');
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('trigger-answer-screen');
+                }
+            });
+            this.currentAnswerScreenShortcut = shortcut;
+            console.log('✅ Answer screen shortcut registered:', shortcut);
+        } catch (e) {
+            console.error('Failed to register answer screen shortcut:', e);
+        }
+    }
 
+    setupAppCleanup() {
         // Cleanup shortcuts on quit
         app.on('will-quit', () => {
             const { globalShortcut } = require('electron');
@@ -1770,12 +1822,43 @@ class JarvisApp {
             }
         });
         
+        // Handle getting/setting answer screen shortcut
+        ipcMain.handle('get-answer-screen-shortcut', () => {
+            const fs = require('fs');
+            const path = require('path');
+            const userDataPath = app.getPath('userData');
+            const shortcutFile = path.join(userDataPath, 'answer-screen-shortcut.json');
+            try {
+                if (fs.existsSync(shortcutFile)) {
+                    const data = JSON.parse(fs.readFileSync(shortcutFile, 'utf8'));
+                    return data.shortcut || null;
+                }
+            } catch (e) {}
+            return null;
+        });
+        
+        ipcMain.handle('set-answer-screen-shortcut', async (event, shortcut) => {
+            const fs = require('fs');
+            const path = require('path');
+            const userDataPath = app.getPath('userData');
+            const shortcutFile = path.join(userDataPath, 'answer-screen-shortcut.json');
+            try {
+                fs.writeFileSync(shortcutFile, JSON.stringify({ shortcut }, null, 2));
+                // Register the shortcut
+                this.registerAnswerScreenShortcut(shortcut);
+            } catch (e) {
+                console.error('Failed to save answer screen shortcut:', e);
+            }
+        });
+        
         // Handle shortcut listening
         let shortcutListener = null;
+        let currentListeningAction = null;
         let pressedModifiers = new Set();
         let pressedKey = null;
         
-        ipcMain.on('start-shortcut-listening', () => {
+        ipcMain.on('start-shortcut-listening', (event, action) => {
+            currentListeningAction = action || 'toggle';
             if (shortcutListener) {
                 // Reset if already listening
                 pressedModifiers.clear();
@@ -1811,7 +1894,7 @@ class JarvisApp {
                             const shortcut = parts.join('+');
                             
                             if (this.hotkeysWindow && !this.hotkeysWindow.isDestroyed()) {
-                                this.hotkeysWindow.webContents.send('shortcut-captured', shortcut);
+                                this.hotkeysWindow.webContents.send('shortcut-captured', shortcut, currentListeningAction);
                             }
                             
                             // Clean up

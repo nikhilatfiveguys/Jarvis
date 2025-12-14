@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hotkeys</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000000;
+            color: #fff;
+            margin: 0;
+            padding: 24px;
+            overflow-y: auto;
+            min-height: 100vh;
+        }
+
+        .hotkeys-container {
+            max-width: 500px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .logo {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 16px;
+            border-radius: 12px;
+            object-fit: contain;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+        }
+
+        .card {
+            background: #111111;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .shortcut-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 16px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .shortcut-item:last-child {
+            border-bottom: none;
+        }
+
+        .shortcut-desc {
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 500;
+            flex: 1;
+        }
+
+        .shortcut-key-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            min-width: 200px;
+        }
+
+        .shortcut-key {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            color: #ffffff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+            min-width: 120px;
+            text-align: center;
+        }
+
+        .shortcut-key:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .shortcut-key.editing {
+            background: rgba(100, 150, 255, 0.2);
+            border-color: rgba(100, 150, 255, 0.5);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .rebind-hint {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 11px;
+            margin-top: 4px;
+            font-style: italic;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="hotkeys-container">
+        <div class="header">
+            <img src="ChatGPT Image Oct 18, 2025 at 01_00_33 PM-2.PNG" alt="Jarvis Logo" class="logo" onerror="this.style.display='none'">
+            <h1>Hotkeys</h1>
+            <p class="subtitle">Customize your keyboard shortcuts</p>
+        </div>
+
+        <div class="card">
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Toggle Jarvis</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key" id="toggle-shortcut" data-action="toggle">Option + Space</div>
+                    <div class="rebind-hint">(click to rebind)</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Move to top</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">Double-click ⋮⋮</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Answer screen</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key" id="answer-screen-shortcut" data-action="answer-screen">Not set</div>
+                    <div class="rebind-hint">(click to rebind)</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Add files</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">📎 Paperclip</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Double-click output</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">Docs / Copy / Re-ask</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Drag & drop output</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">Into any text box</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Resize overlay</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">⌘ +/-</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Clear chat history</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">☰ Menu</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        
+        let isListening = false;
+        let currentShortcut = null;
+        let currentAction = null;
+        
+        // Load saved shortcuts
+        ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
+            if (shortcut) {
+                document.getElementById('toggle-shortcut').textContent = shortcut;
+            }
+        });
+        
+        ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
+            if (shortcut) {
+                document.getElementById('answer-screen-shortcut').textContent = shortcut;
+            }
+        });
+        
+        // Toggle Jarvis shortcut
+        document.getElementById('toggle-shortcut').addEventListener('click', () => {
+            if (isListening) return;
+            
+            currentShortcut = document.getElementById('toggle-shortcut');
+            currentAction = 'toggle';
+            currentShortcut.classList.add('editing');
+            currentShortcut.textContent = 'Press keys...';
+            isListening = true;
+            
+            ipcRenderer.send('start-shortcut-listening', 'toggle');
+        });
+        
+        // Answer Screen shortcut
+        document.getElementById('answer-screen-shortcut').addEventListener('click', () => {
+            if (isListening) return;
+            
+            currentShortcut = document.getElementById('answer-screen-shortcut');
+            currentAction = 'answer-screen';
+            currentShortcut.classList.add('editing');
+            currentShortcut.textContent = 'Press keys...';
+            isListening = true;
+            
+            ipcRenderer.send('start-shortcut-listening', 'answer-screen');
+        });
+        
+        // Listen for shortcut captured
+        ipcRenderer.on('shortcut-captured', (event, shortcut, action) => {
+            if (currentShortcut && isListening) {
+                currentShortcut.classList.remove('editing');
+                
+                if (action === 'toggle' || currentAction === 'toggle') {
+                    currentShortcut.textContent = shortcut || 'Option + Space';
+                    if (shortcut) {
+                        ipcRenderer.invoke('set-toggle-shortcut', shortcut);
+                    }
+                } else if (action === 'answer-screen' || currentAction === 'answer-screen') {
+                    currentShortcut.textContent = shortcut || 'Not set';
+                    if (shortcut) {
+                        ipcRenderer.invoke('set-answer-screen-shortcut', shortcut);
+                    }
+                }
+                
+                isListening = false;
+                currentShortcut = null;
+                currentAction = null;
+            }
+        });
+        
+        // Cancel on escape
+        document.addEventListener('keydown', (e) => {
+            if (isListening && e.key === 'Escape') {
+                if (currentShortcut) {
+                    currentShortcut.classList.remove('editing');
+                    if (currentAction === 'toggle') {
+                        ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
+                            currentShortcut.textContent = shortcut || 'Option + Space';
+                        });
+                    } else if (currentAction === 'answer-screen') {
+                        ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
+                            currentShortcut.textContent = shortcut || 'Not set';
+                        });
+                    }
+                    isListening = false;
+                    currentShortcut = null;
+                    currentAction = null;
+                }
+                ipcRenderer.send('cancel-shortcut-listening');
+            }
+        });
+    </script>
+</body>
+</html>
+

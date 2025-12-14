@@ -405,6 +405,12 @@ class JarvisOverlay {
             // Clear the dismissal flag since password is now set
             localStorage.removeItem('jarvis-password-notification-dismissed');
         });
+        
+        // Listen for answer screen shortcut trigger
+        ipcRenderer.on('trigger-answer-screen', () => {
+            console.log('🖥️ Answer screen triggered via shortcut');
+            this.answerThis();
+        });
 
         // Listen for paywall display request
         ipcRenderer.on('show-paywall', () => {
@@ -3524,6 +3530,9 @@ ${currentQuestion}`;
             this.humanizeBtn.classList.remove('hidden');
         }
         
+        // Reapply button colors based on current theme
+        this.reapplyButtonColors();
+        
         document.querySelectorAll('.notification').forEach(n => n.remove());
     }
 
@@ -3873,9 +3882,10 @@ ${currentQuestion}`;
         
         // Update text input field - keep it transparent, only change text color
         const textInput = this.overlay.querySelector('#text-input');
+        const isWhiteTheme = color === 'white' || color === '#ffffff';
         if (textInput) {
             textInput.style.background = 'transparent'; // Keep transparent
-            if (color === 'white') {
+            if (isWhiteTheme) {
                 textInput.style.color = '#333333'; // Dark gray for white overlay
                 textInput.style.setProperty('color', '#333333', 'important');
             } else {
@@ -3891,8 +3901,8 @@ ${currentQuestion}`;
                 placeholderStyle.id = 'text-input-placeholder-style';
                 document.head.appendChild(placeholderStyle);
             }
-            if (color === 'white') {
-                placeholderStyle.textContent = `#text-input::placeholder { color: rgba(0, 0, 0, 0.5) !important; }`;
+            if (isWhiteTheme) {
+                placeholderStyle.textContent = `#text-input::placeholder { color: rgba(0, 0, 0, 0.4) !important; }`;
             } else {
                 placeholderStyle.textContent = `#text-input::placeholder { color: rgba(255, 255, 255, 0.5) !important; }`;
             }
@@ -3903,32 +3913,189 @@ ${currentQuestion}`;
             this.colorPreview.style.background = theme.bg;
         }
         
-        // Update Answer Screen button
-        const answerBtn = this.overlay.querySelector('.answer-this-btn');
-        if (answerBtn) {
-            answerBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
-            answerBtn.style.color = theme.text;
-            answerBtn.style.borderColor = theme.border;
+        // Update icons (drag handle, paperclip, hamburger menu)
+        const isWhite = color === 'white' || color === '#ffffff';
+        const iconColor = isWhite ? '#333333' : 'rgba(255, 255, 255, 0.7)';
+        const iconHoverColor = isWhite ? '#000000' : 'rgba(255, 255, 255, 1)';
+        
+        // Update drag handle color
+        const dragHandle = this.overlay.querySelector('.drag-handle');
+        if (dragHandle) {
+            dragHandle.style.color = iconColor;
+            const dots = dragHandle.querySelectorAll('.dot');
+            dots.forEach(dot => {
+                dot.style.background = iconColor;
+            });
         }
         
-        // Update Humanize button
+        // Update paperclip (add button) color
+        const addBtn = this.overlay.querySelector('.add-btn');
+        if (addBtn) {
+            addBtn.style.color = iconColor;
+        }
+        
+        // Update hamburger menu (settings button) color
+        const settingsBtn = this.overlay.querySelector('.settings-btn');
+        if (settingsBtn) {
+            settingsBtn.style.color = iconColor;
+            const menuIcon = settingsBtn.querySelector('.menu-icon');
+            if (menuIcon) {
+                const spans = menuIcon.querySelectorAll('span');
+                spans.forEach(span => {
+                    span.style.background = iconColor;
+                });
+            }
+        }
+        
+        // Update Answer Screen button - use theme color for colored themes
+        const answerBtn = this.overlay.querySelector('.answer-this-btn');
+        if (answerBtn) {
+            if (isWhite) {
+                // White theme: white button with black text
+                answerBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                answerBtn.style.color = '#000000';
+                answerBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+            } else if (color === 'pink' || color === '#ec4899') {
+                // Pink theme: pink button
+                answerBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                answerBtn.style.color = '#ffffff';
+                answerBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else if (color === 'blue' || color === '#4A9EFF') {
+                // Blue theme: blue button
+                answerBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                answerBtn.style.color = '#ffffff';
+                answerBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else {
+                // Black/default theme
+                answerBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+                answerBtn.style.color = theme.text;
+                answerBtn.style.borderColor = theme.border;
+            }
+        }
+        
+        // Update Humanize button - same logic
         const humanizeBtn = this.overlay.querySelector('.humanize-btn');
         if (humanizeBtn) {
-            humanizeBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
-            humanizeBtn.style.color = theme.text;
-            humanizeBtn.style.borderColor = theme.border;
+            if (isWhite) {
+                humanizeBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                humanizeBtn.style.color = '#000000';
+                humanizeBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+            } else if (color === 'pink' || color === '#ec4899') {
+                humanizeBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                humanizeBtn.style.color = '#ffffff';
+                humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else if (color === 'blue' || color === '#4A9EFF') {
+                humanizeBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                humanizeBtn.style.color = '#ffffff';
+                humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else {
+                humanizeBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+                humanizeBtn.style.color = theme.text;
+                humanizeBtn.style.borderColor = theme.border;
+            }
         }
         
         // Update reveal history button
         const revealHistoryBtn = this.overlay.querySelector('.reveal-history-btn');
         if (revealHistoryBtn) {
-            revealHistoryBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
-            revealHistoryBtn.style.color = theme.text;
-            revealHistoryBtn.style.borderColor = theme.border;
+            if (isWhite) {
+                revealHistoryBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                revealHistoryBtn.style.color = '#000000';
+                revealHistoryBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+            } else if (color === 'pink' || color === '#ec4899') {
+                revealHistoryBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                revealHistoryBtn.style.color = '#ffffff';
+                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else if (color === 'blue' || color === '#4A9EFF') {
+                revealHistoryBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                revealHistoryBtn.style.color = '#ffffff';
+                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else {
+                revealHistoryBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+                revealHistoryBtn.style.color = theme.text;
+                revealHistoryBtn.style.borderColor = theme.border;
+            }
         }
         
         // Save to localStorage
         localStorage.setItem('jarvis-overlay-color', color);
+    }
+    
+    reapplyButtonColors() {
+        // Reapply button colors based on current color theme
+        const color = this.currentColor || localStorage.getItem('jarvis-overlay-color') || 'black';
+        const isWhite = color === 'white' || color === '#ffffff';
+        
+        // Update Answer Screen button
+        const answerBtn = this.overlay?.querySelector('.answer-this-btn');
+        const answerBtnMoved = document.getElementById('answer-this-btn-moved');
+        
+        [answerBtn, answerBtnMoved].forEach(btn => {
+            if (btn) {
+                if (isWhite) {
+                    btn.style.background = 'rgba(255, 255, 255, 0.95)';
+                    btn.style.color = '#000000';
+                    btn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+                } else if (color === 'pink' || color === '#ec4899') {
+                    btn.style.background = 'rgba(236, 72, 153, 0.9)';
+                    btn.style.color = '#ffffff';
+                    btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                } else if (color === 'blue' || color === '#4A9EFF') {
+                    btn.style.background = 'rgba(74, 158, 255, 0.9)';
+                    btn.style.color = '#ffffff';
+                    btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                } else {
+                    // Black/default theme
+                    btn.style.background = 'rgba(0, 0, 0, 0.9)';
+                    btn.style.color = '#ffffff';
+                    btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                }
+            }
+        });
+        
+        // Update Humanize button
+        const humanizeBtn = this.overlay?.querySelector('.humanize-btn');
+        if (humanizeBtn) {
+            if (isWhite) {
+                humanizeBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                humanizeBtn.style.color = '#000000';
+                humanizeBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+            } else if (color === 'pink' || color === '#ec4899') {
+                humanizeBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                humanizeBtn.style.color = '#ffffff';
+                humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else if (color === 'blue' || color === '#4A9EFF') {
+                humanizeBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                humanizeBtn.style.color = '#ffffff';
+                humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else {
+                humanizeBtn.style.background = 'rgba(0, 0, 0, 0.9)';
+                humanizeBtn.style.color = '#ffffff';
+                humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            }
+        }
+        
+        // Update reveal history button
+        const revealHistoryBtn = this.overlay?.querySelector('.reveal-history-btn');
+        if (revealHistoryBtn) {
+            if (isWhite) {
+                revealHistoryBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                revealHistoryBtn.style.color = '#000000';
+                revealHistoryBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+            } else if (color === 'pink' || color === '#ec4899') {
+                revealHistoryBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                revealHistoryBtn.style.color = '#ffffff';
+                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else if (color === 'blue' || color === '#4A9EFF') {
+                revealHistoryBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                revealHistoryBtn.style.color = '#ffffff';
+                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            } else {
+                revealHistoryBtn.style.background = 'rgba(0, 0, 0, 0.9)';
+                revealHistoryBtn.style.color = '#ffffff';
+                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            }
+        }
     }
     
     hexToRgb(hex) {
@@ -5856,6 +6023,9 @@ User Question: ${question}`;
         if (this.humanizeBtn) {
             this.humanizeBtn.classList.remove('hidden');
         }
+        
+        // Reapply button colors based on current theme
+        this.reapplyButtonColors();
         
         document.querySelectorAll('.notification').forEach(n => n.remove());
         
