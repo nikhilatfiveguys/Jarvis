@@ -241,7 +241,7 @@
                 currentShortcut.classList.remove('editing');
                 
                 if (action === 'toggle' || currentAction === 'toggle') {
-                    currentShortcut.textContent = shortcut || 'Option + Space';
+                currentShortcut.textContent = shortcut || 'Option + Space';
                     if (shortcut) {
                         ipcRenderer.invoke('set-toggle-shortcut', shortcut);
                     }
@@ -264,9 +264,9 @@
                 if (currentShortcut) {
                     currentShortcut.classList.remove('editing');
                     if (currentAction === 'toggle') {
-                        ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
-                            currentShortcut.textContent = shortcut || 'Option + Space';
-                        });
+                    ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
+                        currentShortcut.textContent = shortcut || 'Option + Space';
+                    });
                     } else if (currentAction === 'answer-screen') {
                         ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
                             currentShortcut.textContent = shortcut || 'Not set';

@@ -199,6 +199,55 @@ class JarvisOverlay {
         } else {
             console.warn('⚠️ Claude API key not available - Claude tool not added');
         }
+        
+        // Add quiz tool - always available
+        this.tools.push({
+            type: "function",
+            name: "create_quiz",
+            description: "ALWAYS use this tool when user wants a quiz - NEVER write quiz questions as plain text. Creates an interactive quiz UI with clickable buttons. Use for ANY quiz request including: general topics, attached files/documents, or screen content. For screen quizzes, call getscreenshot first. Generate exact number of questions requested (1-20), default 5.",
+            parameters: {
+                type: "object",
+                properties: {
+                    topic: {
+                        type: "string",
+                        description: "The topic or subject of the quiz (e.g. 'Chapter 5: The French Revolution' or 'Attached Document Content')"
+                    },
+                    questions: {
+                        type: "array",
+                        description: "Array of quiz questions - generate exactly the number the user requested",
+                        items: {
+                            type: "object",
+                            properties: {
+                                question: {
+                                    type: "string",
+                                    description: "The question text"
+                                },
+                                options: {
+                                    type: "array",
+                                    description: "Array of 4 answer options",
+                                    items: { type: "string" }
+                                },
+                                correct_index: {
+                                    type: "number",
+                                    description: "Index (0-3) of the correct answer"
+                                },
+                                explanation: {
+                                    type: "string",
+                                    description: "Brief explanation of why the answer is correct"
+                                }
+                            },
+                            required: ["question", "options", "correct_index"]
+                        }
+                    },
+                    num_questions: {
+                        type: "number",
+                        description: "Number of questions (default 5, max 10)"
+                    }
+                },
+                required: ["topic", "questions"]
+            }
+        });
+        console.log('✅ Quiz tool added');
     }
 
     async checkLicense() {
@@ -855,6 +904,57 @@ class JarvisOverlay {
         console.error('Could not extract text from response:', JSON.stringify(data, null, 2));
         return "Error: Could not extract text from response.";
     }
+    
+    // Same as extractText but returns null instead of error message when no text found
+    extractTextSafe(data) {
+        if (!data) return null;
+        if (typeof data === "string") return data;
+        
+        // Handle Responses API output array
+        if (data.output && Array.isArray(data.output)) {
+            for (const out of data.output) {
+                // Message type with content
+                if (out?.type === 'message' && out?.content) {
+                    if (typeof out.content === 'string') return out.content;
+                    if (Array.isArray(out.content)) {
+                        for (const item of out.content) {
+                            if ((item.type === "output_text" || item.type === "text") && item.text) {
+                                return String(item.text);
+                            }
+                        }
+                    }
+                }
+                // Direct output_text type
+                if (out?.type === 'output_text' && out?.text) return String(out.text);
+                // Role-based content
+                if (out?.role === 'assistant' && out?.content) {
+                    if (typeof out.content === 'string') return out.content;
+                    if (Array.isArray(out.content)) {
+                        for (const item of out.content) {
+                            if ((item.type === "output_text" || item.type === "text") && item.text) {
+                                return String(item.text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle Chat Completions format
+        if (data.choices && Array.isArray(data.choices) && data.choices.length > 0) {
+            const choice = data.choices[0];
+            if (choice.message?.content) return String(choice.message.content);
+            if (choice.text) return String(choice.text);
+        }
+        
+        // Handle direct content
+        if (data.text && typeof data.text === 'string') return data.text;
+        if (data.content && typeof data.content === 'string') return data.content;
+        if (data.message?.content && typeof data.message.content === 'string') return data.message.content;
+        
+        // Return null if nothing found (safe version)
+        return null;
+    }
 
     initializeElements() {
         this.overlay = document.getElementById('jarvis-overlay');
@@ -1311,7 +1411,7 @@ class JarvisOverlay {
             this.overlay.addEventListener('mouseenter', () => {
                 // Cancel any pending menu close
                 clearTimeout(menuCloseTimeout);
-                clearTimeout(clickThroughTimeout);
+                    clearTimeout(clickThroughTimeout);
                 
                 if (this.isElectron) {
                     const { ipcRenderer } = require('electron');
@@ -2180,6 +2280,12 @@ class JarvisOverlay {
                 response = await this.callChatGPT(message);
             }
             
+            // Don't show notification if quiz or other interactive content was displayed
+            if (response === '__QUIZ_DISPLAYED__') {
+                console.log('📝 Quiz displayed - skipping showNotification');
+                return;
+            }
+            
             this.showNotification(response, true);
             
             // Increment message count for free users
@@ -2218,11 +2324,13 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                          (this.apiProxyUrl && this.supabaseAnonKey);
             const webSearchHint = hasPerplexityAccess ? ' Use web_search for current events.' : '';
             const claudeHint = this.claudeApiKey ? ' Use the askclaude tool for complex analytical questions, deep reasoning, philosophical questions, or when you need more thorough analysis.' : '';
-            const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${conversationContext}${documentContext}`;
+            const quizHint = ' IMPORTANT: When the user asks to be quizzed, tested, or wants practice questions, you MUST use the create_quiz tool - NEVER write out quiz questions as text. This applies to ALL quiz requests including quizzes about attached files/documents. Generate exactly the number of questions they request (1-20), default 5 if unspecified. For screen-based quizzes, use getscreenshot first then create_quiz.';
+            const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${quizHint}${conversationContext}${documentContext}`;
 
             // Debug: Log available tools
             console.log('🔧 Available tools:', this.tools.map(t => t.name));
             console.log('🔧 Has web_search tool:', this.tools.some(t => t.name === 'web_search'));
+            console.log('🔧 Has create_quiz tool:', this.tools.some(t => t.name === 'create_quiz'));
             console.log('🔧 Perplexity access check:', {
                 hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== ''),
                 hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
@@ -2465,6 +2573,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (toolCalls.length > 0) {
                 console.log('✅ Tool calls detected:', toolCalls);
                 console.log('Tool call names:', toolCalls.map(tc => tc.name));
+                console.log('Is create_quiz in detected tools?', toolCalls.some(tc => tc.name === 'create_quiz'));
                 console.log('Is askclaude in detected tools?', toolCalls.some(tc => tc.name === 'askclaude'));
             } else {
                 console.log('❌ No tool calls detected in response');
@@ -2519,6 +2628,40 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                 console.log('Claude response received, length:', result?.length || 0);
                                 // Pass Claude's full response - don't truncate it
                                 inputContent.push({ type: 'input_text', text: `Claude's detailed analysis:\n\n${result}` });
+                            }
+                        } else if (toolCall.name === 'create_quiz') {
+                            console.log('📝 QUIZ TOOL CALLED! Full toolCall:', JSON.stringify(toolCall, null, 2));
+                            console.log('📝 toolCall.arguments:', toolCall.arguments);
+                            console.log('📝 toolCall.arguments type:', typeof toolCall.arguments);
+                            
+                            try {
+                                const topic = toolCall.arguments?.topic || 'General Knowledge';
+                                const questions = toolCall.arguments?.questions || [];
+                                
+                                console.log('📝 Parsed topic:', topic);
+                                console.log('📝 Parsed questions:', questions);
+                                console.log('📝 Questions length:', questions.length);
+                                
+                                if (questions.length === 0) {
+                                    console.error('📝 Quiz tool called without questions:', toolCall.arguments);
+                                    inputContent.push({ type: 'input_text', text: 'Quiz: No questions provided by AI' });
+                                    this.showNotification('⚠️ Quiz creation failed: No questions generated');
+                                } else {
+                                    console.log('📝 Creating quiz on topic:', topic, 'with', questions.length, 'questions');
+                                    console.log('📝 First question:', JSON.stringify(questions[0], null, 2));
+                                    // Stop loading and show quiz
+                                    this.stopLoadingAnimation();
+                                    if (this.dragOutput) {
+                                        this.dragOutput.classList.remove('loading-notification');
+                                    }
+                                    this.showQuiz(topic, questions);
+                                    // Return special marker to prevent showNotification from overwriting quiz
+                                    return '__QUIZ_DISPLAYED__';
+                                }
+                            } catch (quizError) {
+                                console.error('📝 ERROR creating quiz:', quizError);
+                                inputContent.push({ type: 'input_text', text: `Quiz error: ${quizError.message}` });
+                                this.showNotification(`❌ Quiz error: ${quizError.message}`);
                             }
                         } else {
                             console.warn('Unknown tool call:', toolCall.name);
@@ -2908,6 +3051,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
     async callOpenRouter(message, model) {
         try {
+            // Check if this is a Claude model - route to Claude API directly
+            if (model.startsWith('anthropic/claude-')) {
+                console.log(`🤖 Detected Claude model: ${model}, routing to Claude API`);
+                return await this.callClaudeDirect(message, model);
+            }
+            
             if (!this.openrouterApiKey || this.openrouterApiKey.trim() === '') {
                 console.warn('⚠️ OpenRouter API key not available');
                 return `OpenRouter is not available. Please check your OpenRouter API key configuration.`;
@@ -2997,6 +3146,154 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             return content;
         } catch (error) {
             console.error('OpenRouter API error:', error);
+            throw error;
+        }
+    }
+
+    async callClaudeDirect(message, openRouterModel) {
+        // Check if we have either a direct API key OR Supabase proxy configured
+        const hasDirectKey = this.claudeApiKey && this.claudeApiKey.trim() !== '';
+        const hasProxy = this.apiProxyUrl && this.supabaseAnonKey;
+        
+        if (!hasDirectKey && !hasProxy) {
+            console.warn('⚠️ Claude API key not available and no Supabase proxy configured');
+            return `Claude is not available. Please configure Claude API key in Supabase secrets or set CLAUDE_API_KEY environment variable.`;
+        }
+
+        // Map OpenRouter model names to Claude API model names
+        const modelMap = {
+            'anthropic/claude-sonnet-4.5': 'claude-sonnet-4-5-20250929',
+            'anthropic/claude-opus-4.5': 'claude-3-opus-20240229' // Opus 4.5 maps to Opus 3
+        };
+        
+        let claudeModel = modelMap[openRouterModel] || 'claude-sonnet-4-5-20250929';
+        
+        try {
+            // Build conversation context
+            let conversationContext = '';
+            if (this.conversationHistory.length > 0) {
+                conversationContext = '\n\nPREVIOUS CONVERSATION (remember this context):\n' + 
+                    this.conversationHistory.slice(-10).map((msg, idx) => 
+                        `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.substring(0, 300)}`
+                    ).join('\n');
+            }
+
+            // Add document context if available
+            let documentContext = '';
+            if (this.currentDocument) {
+                documentContext = `\n\nCURRENT DOCUMENT CONTEXT:
+Title: ${this.currentDocument.title}
+URL: ${this.currentDocument.url}
+Content: ${this.currentDocument.content.substring(0, 2000)}...`;
+            }
+
+            const systemMessage = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}`;
+
+            // Build messages array (only user/assistant messages, no system role)
+            const messages = [];
+            
+            // Add current message
+            if (this.currentScreenCapture) {
+                // Extract base64 data from data URL
+                const base64Data = this.currentScreenCapture.includes(',') 
+                    ? this.currentScreenCapture.split(',')[1] 
+                    : this.currentScreenCapture.replace('data:image/png;base64,', '');
+                
+                messages.push({
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: message },
+                        { 
+                            type: 'image', 
+                            source: { 
+                                type: 'base64', 
+                                media_type: 'image/png', 
+                                data: base64Data 
+                            } 
+                        }
+                    ]
+                });
+                this.currentScreenCapture = null;
+            } else {
+                messages.push({
+                    role: 'user',
+                    content: message
+                });
+            }
+
+            // Claude API requires system as a top-level parameter, not in messages array
+            const requestBody = {
+                model: claudeModel,
+                max_tokens: 4096,
+                system: systemMessage, // Top-level system parameter
+                messages: messages
+            };
+
+            console.log(`🤖 Calling Claude API directly with model: ${claudeModel}`);
+            
+            let claudeResponse;
+            
+            // Use Supabase Edge Function proxy if available, otherwise direct API call
+            if (this.apiProxyUrl && this.supabaseAnonKey) {
+                console.log('🔒 Using Supabase Edge Function proxy for Claude');
+                claudeResponse = await fetch(this.apiProxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        provider: 'claude',
+                        payload: requestBody
+                    })
+                });
+            } else if (hasDirectKey) {
+                // Direct API call using Claude API key from Supabase
+                console.log('🔒 Using direct Claude API call with key from Supabase');
+                claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': this.claudeApiKey,
+                        'anthropic-version': '2024-06-20', // Updated version that supports system messages
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+            } else {
+                throw new Error('No Claude API access method available. Please configure Supabase proxy or set CLAUDE_API_KEY.');
+            }
+
+            if (!claudeResponse.ok) {
+                const errorText = await claudeResponse.text();
+                console.error('Claude API error:', errorText);
+                throw new Error(`Claude API error: ${claudeResponse.status} - ${errorText}`);
+            }
+
+            const data = await claudeResponse.json();
+            
+            if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
+                throw new Error('Invalid response structure from Claude API');
+            }
+
+            const content = data.content[0].text;
+            
+            // Update conversation history
+            this.conversationHistory.push({ role: 'user', content: message });
+            this.conversationHistory.push({ 
+                role: 'assistant', 
+                content: content,
+                model: this.selectedModelName || 'Claude'
+            });
+            
+            if (this.conversationHistory.length > 30) {
+                this.conversationHistory = this.conversationHistory.slice(-30);
+            }
+            
+            this.saveConversationHistory();
+            
+            return content;
+        } catch (error) {
+            console.error('Claude API error:', error);
             throw error;
         }
     }
@@ -3356,10 +3653,19 @@ ${currentQuestion}`;
     showNotification(text, isHTML = false) {
         if (!this.dragOutput) return;
         
+        // If quiz is actively displayed, don't overwrite it with regular notifications
+        // Allow error notifications (starting with ❌ or ⚠️) to pass through
+        const textContent = String(text || '');
+        const isError = textContent.startsWith('❌') || textContent.startsWith('⚠️');
+        if (this.quizState && this.dragOutput.classList.contains('quiz-active') && !isError) {
+            console.log('📝 Quiz active - skipping notification:', textContent.substring(0, 50));
+            return;
+        }
+        
         // Stop any active loading animation
         this.stopLoadingAnimation();
         
-        const content = String(text || '');
+        const content = textContent;
         
         // Don't show "message limit reached" notifications if user has premium
         if (this.hasPremiumAccess() && (content.includes('Message limit reached') || content.includes('message limit reached') || content.includes('Message Limit Reached') || content.includes('message limit') || (content.includes('Wait') && content.includes('subscribe')))) {
@@ -3682,6 +3988,319 @@ ${currentQuestion}`;
         if (this.dragOutput) {
             this.dragOutput.classList.remove('loading-notification');
         }
+    }
+
+    showQuiz(topic, questions) {
+        console.log('📝 showQuiz called with topic:', topic);
+        console.log('📝 questions received:', JSON.stringify(questions, null, 2));
+        
+        // Stop any loading animation first
+        this.stopLoadingAnimation();
+        
+        // Ensure dragOutput exists
+        if (!this.dragOutput) {
+            this.dragOutput = document.getElementById('drag-output');
+        }
+        
+        if (!this.dragOutput) {
+            console.error('📝 ERROR: Could not find drag-output element');
+            const overlay = document.getElementById('jarvis-overlay');
+            if (overlay) {
+                const outputDiv = document.createElement('div');
+                outputDiv.id = 'drag-output';
+                outputDiv.className = 'drag-output';
+                overlay.appendChild(outputDiv);
+                this.dragOutput = outputDiv;
+            } else {
+                console.error('📝 ERROR: Could not find overlay element');
+                return;
+            }
+        }
+        
+        // Validate questions array
+        if (!questions || !Array.isArray(questions) || questions.length === 0) {
+            console.error('📝 ERROR: Invalid questions array:', questions);
+            this.dragOutput.innerHTML = `<div style="color: #fff; padding: 8px;">
+                <p style="color: #ef4444; margin: 0;">❌ No quiz questions generated. Try asking again.</p>
+            </div>`;
+            this.dragOutput.classList.remove('hidden');
+            this.dragOutput.classList.remove('loading-notification');
+            this.dragOutput.style.display = 'block';
+            return;
+        }
+        
+        console.log('📝 Valid quiz data - creating quiz with', questions.length, 'questions');
+        
+        // Store quiz state and show type selection
+        this.quizState = {
+            topic: topic,
+            questions: questions,
+            currentIndex: 0,
+            score: 0,
+            answered: false,
+            type: null // 'mcq' or 'frq'
+        };
+        
+        this.showQuizTypeSelection();
+    }
+    
+    showQuizTypeSelection() {
+        if (!this.quizState) return;
+        
+        const { topic, questions } = this.quizState;
+        
+        // Ensure we have a dragOutput element
+        if (!this.dragOutput) {
+            this.dragOutput = document.getElementById('drag-output');
+        }
+        
+        // If dragOutput is inside messagesContainer, we need to use messagesContainer directly
+        // or move dragOutput outside. Let's use messagesContainer and show quiz there.
+        if (this.messagesContainer) {
+            // Clear previous messages and show quiz in the container
+            this.messagesContainer.innerHTML = '';
+            this.messagesContainer.classList.remove('hidden');
+            
+            // Create quiz output element
+            const quizOutput = document.createElement('div');
+            quizOutput.id = 'drag-output';
+            quizOutput.className = 'drag-output quiz-active';
+            quizOutput.style.display = 'block';
+            quizOutput.innerHTML = `<div style="color:#fff;line-height:1.3;"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">📝 ${topic} <span style="font-size:10px;color:rgba(255,255,255,0.5);font-weight:400;">(${questions.length})</span></div><div style="display:flex;gap:6px;"><button onclick="window.jarvisOverlay.startQuiz('mcq')" style="flex:1;padding:6px 10px;background:linear-gradient(135deg,#4A9EFF,#6366f1);border:none;border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">MCQ</button><button onclick="window.jarvisOverlay.startQuiz('frq')" style="flex:1;padding:6px 10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">FRQ</button></div></div>`;
+            
+            this.messagesContainer.appendChild(quizOutput);
+            this.dragOutput = quizOutput;
+            
+            // Set container height to fit content
+            this.messagesContainer.style.height = 'auto';
+            this.messagesContainer.style.maxHeight = '400px';
+        } else if (this.dragOutput) {
+            // Fallback if no messagesContainer
+            this.dragOutput.innerHTML = `<div style="color:#fff;line-height:1.3;"><div style="font-size:12px;font-weight:600;margin-bottom:6px;">📝 ${topic} <span style="font-size:10px;color:rgba(255,255,255,0.5);font-weight:400;">(${questions.length})</span></div><div style="display:flex;gap:6px;"><button onclick="window.jarvisOverlay.startQuiz('mcq')" style="flex:1;padding:6px 10px;background:linear-gradient(135deg,#4A9EFF,#6366f1);border:none;border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">MCQ</button><button onclick="window.jarvisOverlay.startQuiz('frq')" style="flex:1;padding:6px 10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">FRQ</button></div></div>`;
+            this.dragOutput.classList.remove('hidden');
+            this.dragOutput.classList.add('quiz-active');
+            this.dragOutput.style.display = 'block';
+        }
+        
+        // Hide action buttons during quiz
+        if (this.answerThisBtn) this.answerThisBtn.classList.add('hidden');
+        if (this.humanizeBtn) this.humanizeBtn.classList.add('hidden');
+        if (this.actionButtonsContainer) this.actionButtonsContainer.classList.add('hidden');
+    }
+    
+    startQuiz(type) {
+        if (!this.quizState) return;
+        this.quizState.type = type;
+        this.quizState.currentIndex = 0;
+        this.quizState.score = 0;
+        this.quizState.answered = false;
+        this.renderQuizQuestion();
+    }
+    
+    renderQuizQuestion() {
+        if (!this.quizState) return;
+        
+        // Ensure dragOutput exists
+        if (!this.dragOutput || !document.body.contains(this.dragOutput)) {
+            this.dragOutput = document.getElementById('drag-output');
+            if (!this.dragOutput) {
+                console.error('📝 renderQuizQuestion: No drag-output element found');
+                return;
+            }
+        }
+        
+        const { topic, questions, currentIndex, score, type } = this.quizState;
+        const question = questions[currentIndex];
+        
+        if (!question) {
+            this.showQuizResults();
+            return;
+        }
+        
+        // MCQ Quiz
+        if (type === 'mcq') {
+            if (!question.options || !Array.isArray(question.options)) {
+                this.dragOutput.innerHTML = `<div style="color:#ef4444;font-size:11px;">❌ Invalid question format</div>`;
+                return;
+            }
+            
+            const quizHTML = `<div style="color:#fff;line-height:1.35;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-size:11px;font-weight:600;">📝 ${topic}</span><span style="font-size:9px;color:rgba(255,255,255,0.5);">Q${currentIndex + 1}/${questions.length} • ${score}</span></div><div style="font-size:12px;font-weight:500;margin-bottom:8px;">${question.question}</div><div style="display:flex;flex-direction:column;gap:4px;">${question.options.map((opt, i) => `<button class="quiz-option" data-index="${i}" onclick="window.jarvisOverlay.selectQuizAnswer(${i})" style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:4px;cursor:pointer;text-align:left;color:#fff;font-size:11px;"><span style="display:flex;align-items:center;justify-content:center;min-width:18px;height:18px;background:rgba(255,255,255,0.1);border-radius:50%;font-weight:600;font-size:10px;">${String.fromCharCode(65 + i)}</span><span>${opt}</span></button>`).join('')}</div><div id="quiz-feedback" style="display:none;margin-top:6px;padding:6px;background:rgba(255,255,255,0.05);border-radius:4px;text-align:center;"></div></div>`;
+            
+            this.dragOutput.innerHTML = quizHTML;
+        } else {
+            // FRQ Quiz
+            const quizHTML = `<div style="color:#fff;line-height:1.35;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-size:11px;font-weight:600;">📝 ${topic}</span><span style="font-size:9px;color:rgba(255,255,255,0.5);">Q${currentIndex + 1}/${questions.length} • ${score}</span></div><div style="font-size:12px;font-weight:500;margin-bottom:8px;">${question.question}</div><input type="text" id="frq-answer" placeholder="Type your answer..." style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#fff;font-size:11px;outline:none;box-sizing:border-box;" onkeypress="if(event.key==='Enter')window.jarvisOverlay.submitFRQAnswer()"><button onclick="window.jarvisOverlay.submitFRQAnswer()" style="width:100%;margin-top:6px;padding:6px 8px;background:linear-gradient(135deg,#4A9EFF,#6366f1);border:none;border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">Submit</button><div id="quiz-feedback" style="display:none;margin-top:6px;padding:6px;background:rgba(255,255,255,0.05);border-radius:4px;text-align:center;"></div></div>`;
+            
+            this.dragOutput.innerHTML = quizHTML;
+        }
+        
+        this.dragOutput.classList.remove('hidden');
+        this.dragOutput.classList.add('quiz-active');
+        this.dragOutput.removeAttribute('title');
+        this.dragOutput.style.display = 'block';
+        
+        // Ensure messagesContainer is visible (quiz is inside it)
+        if (this.messagesContainer) {
+            this.messagesContainer.classList.remove('hidden');
+            this.messagesContainer.style.height = 'auto';
+            this.messagesContainer.style.maxHeight = '400px';
+        }
+        
+        // Hide action buttons during quiz
+        if (this.answerThisBtn) this.answerThisBtn.classList.add('hidden');
+        if (this.humanizeBtn) this.humanizeBtn.classList.add('hidden');
+        if (this.actionButtonsContainer) this.actionButtonsContainer.classList.add('hidden');
+    }
+    
+    selectQuizAnswer(selectedIndex) {
+        if (!this.quizState || this.quizState.answered) return;
+        
+        this.quizState.answered = true;
+        const question = this.quizState.questions[this.quizState.currentIndex];
+        const isCorrect = selectedIndex === question.correct_index;
+        
+        if (isCorrect) {
+            this.quizState.score++;
+        }
+        
+        // Update option styling
+        const options = this.dragOutput.querySelectorAll('.quiz-option');
+        options.forEach((opt, i) => {
+            opt.disabled = true;
+            opt.style.pointerEvents = 'none';
+            if (i === question.correct_index) {
+                opt.style.background = 'rgba(34, 197, 94, 0.2)';
+                opt.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+            } else if (i === selectedIndex && !isCorrect) {
+                opt.style.background = 'rgba(239, 68, 68, 0.2)';
+                opt.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+            }
+        });
+        
+        // Show feedback
+        const feedback = document.getElementById('quiz-feedback');
+        if (feedback) {
+            feedback.style.display = 'block';
+            feedback.innerHTML = `<div style="font-size:11px;font-weight:600;color:${isCorrect ? '#22c55e' : '#ef4444'};">${isCorrect ? '✅ Correct!' : '❌ Incorrect'}</div>${question.explanation ? `<div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:4px;">${question.explanation}</div>` : ''}<button onclick="window.jarvisOverlay.nextQuizQuestion()" style="padding:4px 12px;margin-top:6px;background:linear-gradient(135deg,#4A9EFF,#6366f1);border:none;border-radius:4px;color:#fff;font-size:10px;font-weight:600;cursor:pointer;">${this.quizState.currentIndex < this.quizState.questions.length - 1 ? 'Next →' : 'Results'}</button>`;
+        }
+    }
+    
+    submitFRQAnswer() {
+        if (!this.quizState || this.quizState.answered) return;
+        
+        const input = document.getElementById('frq-answer');
+        if (!input) return;
+        
+        const userAnswer = input.value.trim().toLowerCase();
+        if (!userAnswer) return;
+        
+        this.quizState.answered = true;
+        const question = this.quizState.questions[this.quizState.currentIndex];
+        
+        // Get correct answer from options (first option is usually correct for MCQ converted to FRQ)
+        const correctAnswer = question.options[question.correct_index].toLowerCase();
+        
+        // Simple matching - check if user answer contains key words from correct answer
+        const isCorrect = correctAnswer.includes(userAnswer) || userAnswer.includes(correctAnswer) || 
+                          this.fuzzyMatch(userAnswer, correctAnswer);
+        
+        if (isCorrect) {
+            this.quizState.score++;
+        }
+        
+        input.disabled = true;
+        input.style.opacity = '0.5';
+        
+        // Show feedback
+        const feedback = document.getElementById('quiz-feedback');
+        if (feedback) {
+            feedback.style.display = 'block';
+            feedback.innerHTML = `<div style="font-size:11px;font-weight:600;color:${isCorrect ? '#22c55e' : '#ef4444'};">${isCorrect ? '✅ Correct!' : '❌ Incorrect'}</div><div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:4px;">Answer: ${question.options[question.correct_index]}</div><button onclick="window.jarvisOverlay.nextQuizQuestion()" style="padding:4px 12px;margin-top:6px;background:linear-gradient(135deg,#4A9EFF,#6366f1);border:none;border-radius:4px;color:#fff;font-size:10px;font-weight:600;cursor:pointer;">${this.quizState.currentIndex < this.quizState.questions.length - 1 ? 'Next →' : 'Results'}</button>`;
+        }
+    }
+    
+    fuzzyMatch(str1, str2) {
+        // Simple fuzzy matching - check if significant words match
+        const words1 = str1.split(/\s+/).filter(w => w.length > 3);
+        const words2 = str2.split(/\s+/).filter(w => w.length > 3);
+        
+        let matches = 0;
+        for (const w1 of words1) {
+            for (const w2 of words2) {
+                if (w1.includes(w2) || w2.includes(w1)) {
+                    matches++;
+                    break;
+                }
+            }
+        }
+        
+        return matches >= Math.min(words1.length, words2.length) * 0.5;
+    }
+    
+    nextQuizQuestion() {
+        if (!this.quizState) return;
+        
+        this.quizState.currentIndex++;
+        this.quizState.answered = false;
+        this.renderQuizQuestion();
+    }
+    
+    showQuizResults() {
+        if (!this.quizState) return;
+        
+        // Ensure dragOutput exists
+        if (!this.dragOutput || !document.body.contains(this.dragOutput)) {
+            this.dragOutput = document.getElementById('drag-output');
+            if (!this.dragOutput) {
+                console.error('📝 showQuizResults: No drag-output element found');
+                return;
+            }
+        }
+        
+        const { topic, questions, score } = this.quizState;
+        const percentage = Math.round((score / questions.length) * 100);
+        
+        let emoji;
+        if (percentage >= 90) emoji = '🏆';
+        else if (percentage >= 70) emoji = '🌟';
+        else if (percentage >= 50) emoji = '👍';
+        else emoji = '📚';
+        
+        const resultsHTML = `<div style="text-align:center;color:#fff;line-height:1.35;"><div style="font-size:18px;">${emoji}</div><div style="font-size:12px;font-weight:600;margin-top:4px;">${topic}</div><div style="font-size:16px;font-weight:700;color:#4A9EFF;margin-top:6px;">${score}/${questions.length} <span style="font-size:10px;color:rgba(255,255,255,0.5);">(${percentage}%)</span></div><div style="display:flex;gap:6px;justify-content:center;margin-top:8px;"><button onclick="window.jarvisOverlay.retakeQuiz()" style="padding:5px 10px;background:linear-gradient(135deg,#4A9EFF,#6366f1);border:none;border-radius:4px;color:#fff;font-size:10px;font-weight:600;cursor:pointer;">🔄 Retake</button><button onclick="window.jarvisOverlay.closeQuiz()" style="padding:5px 10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#fff;font-size:10px;font-weight:600;cursor:pointer;">✕ Close</button></div></div>`;
+        
+        this.dragOutput.innerHTML = resultsHTML;
+        this.dragOutput.classList.add('quiz-active');
+        this.dragOutput.style.display = 'block';
+    }
+    
+    retakeQuiz() {
+        if (!this.quizState) return;
+        this.quizState.currentIndex = 0;
+        this.quizState.score = 0;
+        this.quizState.answered = false;
+        this.quizState.type = null;
+        this.showQuizTypeSelection();
+    }
+    
+    closeQuiz() {
+        this.quizState = null;
+        if (this.dragOutput) {
+            this.dragOutput.classList.add('hidden');
+            this.dragOutput.classList.remove('quiz-active');
+            this.dragOutput.innerHTML = '';
+            this.dragOutput.style.cssText = ''; // Reset all inline styles
+            this.dragOutput.title = 'Drag me to drop text into apps';
+        }
+        // Restore messages container to normal state
+        if (this.messagesContainer) {
+            this.messagesContainer.classList.remove('hidden');
+            this.messagesContainer.classList.remove('quiz-active');
+            this.messagesContainer.style.cssText = ''; // Reset all inline styles
+        }
+        // Show buttons again
+        if (this.answerThisBtn) this.answerThisBtn.classList.remove('hidden');
+        if (this.humanizeBtn) this.humanizeBtn.classList.remove('hidden');
+        if (this.actionButtonsContainer) this.actionButtonsContainer.classList.remove('hidden');
     }
 
     addMessage(sender, content, role = 'user') {
@@ -4622,65 +5241,129 @@ ${currentQuestion}`;
             
             // If using OpenRouter model, send to OpenRouter with file attachments
             if (this.selectedModel && this.selectedModel !== 'default') {
-                // Build message for OpenRouter chat format
-                const messages = [
-                    { role: 'system', content: 'Analyze the provided files and respond to the user succinctly and clearly.' }
-                ];
-                
-                // Convert content to OpenRouter format
-                let textParts = [];
-                let imageUrls = [];
-                for (const item of content) {
-                    if (item.type === 'input_text') {
-                        textParts.push(item.text);
-                    } else if (item.type === 'input_image') {
-                        imageUrls.push(item.image_url);
+                // Check if this is a Claude model - route to Claude API directly
+                if (this.selectedModel.startsWith('anthropic/claude-')) {
+                    console.log(`🤖 Detected Claude model for file analysis: ${this.selectedModel}`);
+                    // Combine all file content into a single message
+                    let combinedMessage = prompt;
+                    for (const item of content) {
+                        if (item.type === 'input_text') {
+                            combinedMessage += '\n\n' + item.text;
+                        }
+                        // Note: Claude API image support would need base64 encoding
                     }
-                }
-                
-                // Build user message with text and images
-                if (imageUrls.length > 0) {
-                    const userContent = [
-                        { type: 'text', text: textParts.join('\n') }
-                    ];
-                    imageUrls.forEach(url => {
-                        userContent.push({ type: 'image_url', image_url: { url } });
-                    });
-                    messages.push({ role: 'user', content: userContent });
+                    analysis = await this.callClaudeDirect(combinedMessage, this.selectedModel);
                 } else {
-                    messages.push({ role: 'user', content: textParts.join('\n') });
+                    // Check if this is a quiz request
+                    const lowerPrompt = prompt.toLowerCase();
+                    const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
+                                         lowerPrompt.includes('question') || lowerPrompt.includes('practice');
+                    
+                    // Build message for OpenRouter chat format
+                    let systemContent = 'Analyze the provided files and respond to the user succinctly and clearly.';
+                    if (isQuizRequest) {
+                        systemContent = `The user wants a QUIZ based on the attached file content. You MUST respond with ONLY a JSON object in this exact format (no other text): {"quiz": true, "topic": "Topic Name", "questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "Why"}]}. Generate questions based on the file content. Default to 5 questions unless user specifies a different number.`;
+                    }
+                    const messages = [
+                        { role: 'system', content: systemContent }
+                    ];
+                    
+                    // Convert content to OpenRouter format
+                    let textParts = [];
+                    let imageUrls = [];
+                    for (const item of content) {
+                        if (item.type === 'input_text') {
+                            textParts.push(item.text);
+                        } else if (item.type === 'input_image') {
+                            imageUrls.push(item.image_url);
+                        }
+                    }
+                    
+                    // Build user message with text and images
+                    if (imageUrls.length > 0) {
+                        const userContent = [
+                            { type: 'text', text: textParts.join('\n') }
+                        ];
+                        imageUrls.forEach(url => {
+                            userContent.push({ type: 'image_url', image_url: { url } });
+                        });
+                        messages.push({ role: 'user', content: userContent });
+                    } else {
+                        messages.push({ role: 'user', content: textParts.join('\n') });
+                    }
+                    
+                    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.openrouterApiKey}`,
+                            'Content-Type': 'application/json',
+                            'HTTP-Referer': 'https://jarvis-ai.app',
+                            'X-Title': 'Jarvis AI'
+                        },
+                        body: JSON.stringify({
+                            model: this.selectedModel,
+                            messages: messages
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+                    }
+                    
+                    const data = await response.json();
+                    const responseContent = data.choices[0].message.content;
+                    
+                    // Check if response contains quiz JSON
+                    try {
+                        const quizMatch = responseContent.match(/\{[\s\S]*"quiz"\s*:\s*true[\s\S]*\}/);
+                        if (quizMatch) {
+                            const quizData = JSON.parse(quizMatch[0]);
+                            if (quizData.quiz && quizData.questions && quizData.questions.length > 0) {
+                                console.log('📝 Quiz detected in OpenRouter response!');
+                                this.stopLoadingAnimation();
+                                if (this.dragOutput) {
+                                    this.dragOutput.classList.remove('loading-notification');
+                                }
+                                this.showQuiz(quizData.topic || 'Document Quiz', quizData.questions);
+                                // Save to history
+                                const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
+                                this.conversationHistory.push({ role: 'user', content: userMessage });
+                                this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${quizData.topic} with ${quizData.questions.length} questions`, model: this.selectedModelName || 'AI' });
+                                if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
+                                this.saveConversationHistory();
+                                if (!this.hasPremiumAccess()) this.incrementMessageCount();
+                                return; // Exit early - quiz is displayed
+                            }
+                        }
+                    } catch (parseError) {
+                        console.log('No quiz JSON found in response, treating as regular analysis');
+                    }
+                    
+                    analysis = responseContent;
                 }
-                
-                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.openrouterApiKey}`,
-                        'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://jarvis-ai.app',
-                        'X-Title': 'Jarvis AI'
-                    },
-                    body: JSON.stringify({
-                        model: this.selectedModel,
-                        messages: messages
-                    })
-                });
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-                }
-                
-                const data = await response.json();
-                analysis = data.choices[0].message.content;
             } else {
                 // Use default Jarvis model (GPT-5 Mini via IPC or proxy)
+                // Check if this is a quiz request
+                const lowerPrompt = prompt.toLowerCase();
+                const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
+                                     lowerPrompt.includes('question') || lowerPrompt.includes('practice');
+                
+                // Include strong quiz instructions if quiz-related words detected
+                let instructions = 'Analyze the provided files and respond to the user succinctly and clearly.';
+                if (isQuizRequest) {
+                    instructions = `The user wants a QUIZ based on the attached file content. You MUST use the create_quiz tool immediately to create an interactive quiz. Do NOT write out questions as text - ONLY use the create_quiz tool. Generate questions based on the file content. Default to 5 questions unless user specifies a different number.`;
+                }
+                
                 const requestPayload = {
                     model: this.currentModel,
-                    instructions: 'Analyze the provided files and respond to the user succinctly and clearly.',
-                    input: [{ role: 'user', content }]
+                    instructions: instructions,
+                    input: [{ role: 'user', content }],
+                    tools: this.tools // Include tools for quiz functionality
                 };
                 
                 let response;
+                let apiData = null;
                 // Try IPC first (most reliable in Electron)
                 if (this.isElectron && window.require) {
                     try {
@@ -4690,7 +5373,7 @@ ${currentQuestion}`;
                         
                         if (result && result.ok && result.data) {
                             console.log('✅ Main process file analysis succeeded');
-                            analysis = this.extractText(result.data) || 'Unable to analyze files';
+                            apiData = result.data;
                         } else {
                             throw new Error(`IPC call failed: ${JSON.stringify(result)}`);
                         }
@@ -4701,7 +5384,7 @@ ${currentQuestion}`;
                 }
                 
                 // Fallback to API proxy if IPC didn't work
-                if (!analysis && !response) {
+                if (!apiData && !response) {
                     if (this.apiProxyUrl && this.supabaseAnonKey) {
                         console.log('🔒 Using Supabase proxy for file analysis');
                         response = await fetch(this.apiProxyUrl, {
@@ -4721,10 +5404,55 @@ ${currentQuestion}`;
                             const errorData = await response.json().catch(() => ({}));
                             throw new Error(errorData.error?.message || `API error: ${response.status}`);
                         }
-                        const data = await response.json();
-                        analysis = this.extractText(data) || 'Unable to analyze files';
+                        apiData = await response.json();
                     } else {
                         throw new Error('No API access method available. Please ensure the app is properly configured.');
+                    }
+                }
+                
+                // Check for tool calls (especially create_quiz)
+                if (apiData) {
+                    const toolCalls = (apiData.output || []).filter(item => item.type === 'function_call');
+                    const quizCall = toolCalls.find(tc => tc.name === 'create_quiz');
+                    
+                    if (quizCall) {
+                        console.log('📝 Quiz tool called from file analysis!', quizCall);
+                        try {
+                            const topic = quizCall.arguments?.topic || 'Document Quiz';
+                            const questions = quizCall.arguments?.questions || [];
+                            
+                            if (questions.length > 0) {
+                                this.stopLoadingAnimation();
+                                if (this.dragOutput) {
+                                    this.dragOutput.classList.remove('loading-notification');
+                                }
+                                this.showQuiz(topic, questions);
+                                // Save to history
+                                const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
+                                this.conversationHistory.push({ role: 'user', content: userMessage });
+                                this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${topic} with ${questions.length} questions`, model: 'Jarvis' });
+                                if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
+                                this.saveConversationHistory();
+                                if (!this.hasPremiumAccess()) this.incrementMessageCount();
+                                return; // Exit early - quiz is displayed
+                            } else {
+                                // Quiz tool called but no questions - treat as regular response
+                                console.log('📝 Quiz tool called but no questions generated');
+                            }
+                        } catch (quizError) {
+                            console.error('📝 Error creating quiz:', quizError);
+                        }
+                    }
+                    
+                    // Extract text response - check if there's any text content
+                    const textResponse = this.extractTextSafe(apiData);
+                    if (textResponse) {
+                        analysis = textResponse;
+                    } else if (toolCalls.length > 0) {
+                        // Only tool calls, no text - this is an error case for non-quiz tools
+                        analysis = 'File analysis complete. The AI processed your request.';
+                    } else {
+                        analysis = 'Unable to analyze files - no response from AI.';
                     }
                 }
             }
@@ -6756,8 +7484,280 @@ User Question: ${question}`;
     }
 
     async humanize() {
-        // Show "coming soon" message
-        this.showNotification('Coming soon', false);
+        // Get the current output text
+        const dragOutput = document.getElementById('drag-output');
+        if (!dragOutput) {
+            this.showNotification('No text to humanize', false);
+            return;
+        }
+        
+        // Get the text content (strip HTML)
+        let text = dragOutput.innerText || dragOutput.textContent;
+        if (!text || text.trim().length === 0) {
+            this.showNotification('No text to humanize', false);
+            return;
+        }
+        
+        // Show loading
+        this.showLoadingNotification('Humanizing text...');
+        
+        try {
+            // Apply humanization transformations
+            const humanizedText = this.humanizeText(text);
+            
+            // Display the humanized text
+            this.showNotification(humanizedText, false);
+            
+            // Add to conversation history
+            this.conversationHistory.push({
+                role: 'assistant',
+                content: humanizedText
+            });
+        } catch (error) {
+            console.error('Humanize error:', error);
+            this.showNotification('❌ Error humanizing text: ' + error.message, false);
+        }
+    }
+    
+    /**
+     * Humanize text to make it sound more natural and less AI-generated
+     * Inspired by https://github.com/DadaNanjesha/AI-Text-Humanizer-App
+     */
+    humanizeText(text) {
+        let result = text;
+        
+        // 1. Expand contractions (makes text more formal/academic)
+        const contractions = {
+            "don't": "do not",
+            "doesn't": "does not",
+            "didn't": "did not",
+            "won't": "will not",
+            "wouldn't": "would not",
+            "couldn't": "could not",
+            "shouldn't": "should not",
+            "can't": "cannot",
+            "isn't": "is not",
+            "aren't": "are not",
+            "wasn't": "was not",
+            "weren't": "were not",
+            "haven't": "have not",
+            "hasn't": "has not",
+            "hadn't": "had not",
+            "it's": "it is",
+            "that's": "that is",
+            "there's": "there is",
+            "here's": "here is",
+            "what's": "what is",
+            "who's": "who is",
+            "let's": "let us",
+            "I'm": "I am",
+            "you're": "you are",
+            "we're": "we are",
+            "they're": "they are",
+            "I've": "I have",
+            "you've": "you have",
+            "we've": "we have",
+            "they've": "they have",
+            "I'll": "I will",
+            "you'll": "you will",
+            "we'll": "we will",
+            "they'll": "they will",
+            "I'd": "I would",
+            "you'd": "you would",
+            "we'd": "we would",
+            "they'd": "they would"
+        };
+        
+        for (const [contraction, expansion] of Object.entries(contractions)) {
+            const regex = new RegExp(contraction.replace("'", "'"), 'gi');
+            result = result.replace(regex, (match) => {
+                // Preserve case
+                if (match[0] === match[0].toUpperCase()) {
+                    return expansion.charAt(0).toUpperCase() + expansion.slice(1);
+                }
+                return expansion;
+            });
+        }
+        
+        // 2. Replace common AI-sounding words with more natural alternatives
+        const aiWordReplacements = {
+            'utilize': 'use',
+            'utilizes': 'uses',
+            'utilized': 'used',
+            'utilizing': 'using',
+            'implementation': 'setup',
+            'implement': 'set up',
+            'implements': 'sets up',
+            'implemented': 'set up',
+            'facilitate': 'help',
+            'facilitates': 'helps',
+            'facilitated': 'helped',
+            'leveraging': 'using',
+            'leverage': 'use',
+            'leveraged': 'used',
+            'subsequently': 'then',
+            'furthermore': 'also',
+            'additionally': 'also',
+            'consequently': 'so',
+            'nevertheless': 'but',
+            'nonetheless': 'still',
+            'henceforth': 'from now on',
+            'whereby': 'where',
+            'thereof': 'of it',
+            'therein': 'in it',
+            'aforementioned': 'mentioned',
+            'pertaining to': 'about',
+            'in order to': 'to',
+            'due to the fact that': 'because',
+            'in the event that': 'if',
+            'at this point in time': 'now',
+            'in close proximity to': 'near',
+            'a large number of': 'many',
+            'a significant amount of': 'much',
+            'in spite of the fact that': 'although',
+            'with regard to': 'about',
+            'in reference to': 'about',
+            'it is important to note that': '',
+            'it should be noted that': '',
+            'it is worth mentioning that': '',
+            'as a matter of fact': 'actually',
+            'in essence': 'basically',
+            'in conclusion': 'finally',
+            'to summarize': 'in short',
+            'delve': 'explore',
+            'delves': 'explores',
+            'delving': 'exploring',
+            'delved': 'explored',
+            'crucial': 'important',
+            'pivotal': 'key',
+            'paramount': 'essential',
+            'endeavor': 'try',
+            'endeavors': 'tries',
+            'endeavored': 'tried',
+            'endeavoring': 'trying',
+            'plethora': 'many',
+            'myriad': 'many',
+            'multitude': 'many',
+            'commence': 'start',
+            'commences': 'starts',
+            'commenced': 'started',
+            'terminate': 'end',
+            'terminates': 'ends',
+            'terminated': 'ended',
+            'ascertain': 'find out',
+            'elucidate': 'explain',
+            'elucidates': 'explains',
+            'elucidated': 'explained',
+            'substantiate': 'prove',
+            'substantiates': 'proves',
+            'substantiated': 'proved',
+            'delineate': 'describe',
+            'delineates': 'describes',
+            'delineated': 'described',
+            'extrapolate': 'extend',
+            'extrapolates': 'extends',
+            'extrapolated': 'extended'
+        };
+        
+        for (const [aiWord, replacement] of Object.entries(aiWordReplacements)) {
+            const regex = new RegExp('\\b' + aiWord + '\\b', 'gi');
+            result = result.replace(regex, (match) => {
+                if (match[0] === match[0].toUpperCase()) {
+                    return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+                }
+                return replacement;
+            });
+        }
+        
+        // 3. Remove redundant AI phrases
+        const redundantPhrases = [
+            /\bAs an AI( language model)?,?\s*/gi,
+            /\bI('m| am) an AI( assistant)?,?\s*/gi,
+            /\bAs a language model,?\s*/gi,
+            /\bBased on my training( data)?,?\s*/gi,
+            /\bI don't have personal (opinions|experiences|feelings),? but\s*/gi,
+            /\bCertainly!\s*/gi,
+            /\bOf course!\s*/gi,
+            /\bAbsolutely!\s*/gi,
+            /\bGreat question!\s*/gi,
+            /\bThat's a great question!\s*/gi,
+            /\bI'd be happy to help( with that)?[.!]?\s*/gi,
+            /\bSure thing!\s*/gi,
+            /\bHere's (the|my|a) (answer|response|explanation)[.:]\s*/gi,
+            /\bLet me (explain|help you understand)[.:]\s*/gi
+        ];
+        
+        for (const phrase of redundantPhrases) {
+            result = result.replace(phrase, '');
+        }
+        
+        // 4. Add natural sentence starters (randomly to some sentences)
+        const sentences = result.split(/(?<=[.!?])\s+/);
+        const naturalStarters = [
+            'Actually, ',
+            'In fact, ',
+            'Well, ',
+            'You see, ',
+            'The thing is, ',
+            'Honestly, ',
+            'To be fair, ',
+            'From what I understand, ',
+            'As far as I know, '
+        ];
+        
+        // Only add starters to 20% of sentences (randomly)
+        const processedSentences = sentences.map((sentence, index) => {
+            if (index > 0 && Math.random() < 0.15 && sentence.length > 30) {
+                // Don't add if sentence already starts with a transition
+                const hasTransition = /^(However|Moreover|Furthermore|Additionally|Therefore|Thus|Hence|Consequently|Nevertheless|Also|Besides|Meanwhile|Otherwise|Nonetheless|Still|Yet|So|But|And|Or|Well|Actually|In fact|You see)/i.test(sentence);
+                if (!hasTransition) {
+                    const starter = naturalStarters[Math.floor(Math.random() * naturalStarters.length)];
+                    // Lowercase the first letter of the original sentence
+                    return starter + sentence.charAt(0).toLowerCase() + sentence.slice(1);
+                }
+            }
+            return sentence;
+        });
+        
+        result = processedSentences.join(' ');
+        
+        // 5. Vary sentence length (split very long sentences occasionally)
+        result = result.replace(/([^.!?]{150,}?)(,\s*)(and|but|so|because|which|that|where|when)\s/gi, '$1. $3 ');
+        
+        // 6. Add occasional filler words for naturalness
+        const fillerInsertions = [
+            { pattern: /\bI think\b/gi, replacements: ['I believe', 'I feel', 'My sense is', 'It seems to me'] },
+            { pattern: /\bvery\b/gi, replacements: ['quite', 'really', 'pretty', 'fairly'] },
+            { pattern: /\bimportant\b/gi, replacements: ['key', 'significant', 'notable', 'essential'] },
+            { pattern: /\bgood\b/gi, replacements: ['solid', 'great', 'decent', 'fine'] },
+            { pattern: /\bbad\b/gi, replacements: ['poor', 'not great', 'problematic', 'rough'] }
+        ];
+        
+        for (const { pattern, replacements } of fillerInsertions) {
+            result = result.replace(pattern, (match) => {
+                // 50% chance to replace
+                if (Math.random() < 0.5) {
+                    const replacement = replacements[Math.floor(Math.random() * replacements.length)];
+                    if (match[0] === match[0].toUpperCase()) {
+                        return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+                    }
+                    return replacement;
+                }
+                return match;
+            });
+        }
+        
+        // 7. Clean up any double spaces or weird punctuation
+        result = result.replace(/\s+/g, ' ').trim();
+        result = result.replace(/\s+([.,!?;:])/g, '$1');
+        result = result.replace(/([.,!?;:])\s*([.,!?;:])/g, '$1');
+        
+        // Capitalize first letter
+        if (result.length > 0) {
+            result = result.charAt(0).toUpperCase() + result.slice(1);
+        }
+        
+        return result;
     }
 
     // ========== OUTPUT TOOLBAR FUNCTIONS ==========
@@ -8805,6 +9805,7 @@ If you cannot find clear event information, return null. Be precise with dates a
 document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.notification').forEach(n => n.remove());
             const jarvis = new JarvisOverlay();
+            window.jarvisOverlay = jarvis; // Expose for quiz button handlers
             
             // Set initial position immediately to prevent drift
             const overlay = document.getElementById('jarvis-overlay');
