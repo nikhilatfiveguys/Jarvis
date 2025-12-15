@@ -256,5 +256,13 @@
     "oneClick": false,
     "allowToChangeInstallationDirectory": true
   },
-  "linux": null
+  "linux": null,
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "nikhilatfiveguys",
+      "repo": "Jarvis",
+      "releaseType": "release"
+    }
+  ]
 }

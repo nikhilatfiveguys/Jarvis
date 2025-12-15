@@ -26,21 +26,8 @@
         <!-- Screen Recording Permission Banner -->
         <div id="permission-banner" class="permission-banner hidden">
             <div class="permission-content">
-                <div class="permission-title">Enable screen recording & system audio recording</div>
-                <div class="permission-instructions">Open System Settings → Enable Jarvis 6.0. It will ask you to Quit & Reopen. (if nothing shows up press answer screen)</div>
-                <div class="permission-notice">
-                    <strong>DOES NOT screenshot unless specifically prompted or by pressing "answer screen"</strong> (no images are stored, all information is local on your computer).
-                </div>
-            </div>
-        </div>
-        
-        <!-- Set Password Notification -->
-        <div id="set-password-notification" class="set-password-notification hidden">
-            <div class="password-notification-content">
-                <span class="password-notification-icon">🔐</span>
-                <span class="password-notification-text">Set a password to secure your account</span>
-                <button id="password-notification-open-btn" class="password-notification-btn">Open</button>
-                <button id="password-notification-dismiss-btn" class="password-notification-dismiss">×</button>
+                <span class="permission-icon">📺</span>
+                <span class="permission-text">Enable screen & system audio recording. Open System Settings → Enable Jarvis 6.0. It will ask you to Quit & Reopen. (if nothing shows up press answer screen)</span>
             </div>
         </div>
         
@@ -96,12 +83,29 @@
                 <span id="message-count-text">0/10</span>
             </div>
             
-            <!-- Add file button -->
-            <button id="add-btn" class="add-btn" title="Add file">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </button>
+            <!-- Add button with popup -->
+            <div class="add-btn-container">
+                <button id="add-btn" class="add-btn" title="Add file or screenshot">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
+                <div id="add-popup" class="add-popup hidden">
+                    <button id="add-file-btn" class="add-popup-item" title="Attach file">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M14 10V12.667C14 13.0203 13.8595 13.3594 13.6095 13.6095C13.3594 13.8595 13.0203 14 12.667 14H3.333C2.97971 14 2.64057 13.8595 2.39052 13.6095C2.14048 13.3594 2 13.0203 2 12.667V10M11.333 5.333L8 2M8 2L4.667 5.333M8 2V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <span>File</span>
+                    </button>
+                    <button id="add-screenshot-btn" class="add-popup-item" title="Take screenshot">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/>
+                            <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.5"/>
+                        </svg>
+                        <span>Screenshot</span>
+                    </button>
+                </div>
+            </div>
             <input type="file" id="file-input" class="hidden" multiple accept="image/*,.pdf,.txt,.doc,.docx,.md,.json,.csv">
             <!-- Settings button -->
             <button id="settings-btn" class="settings-btn" title="Settings">
@@ -194,45 +198,16 @@
                     <span class="toggle-slider"></span>
                 </label>
             </div>
-            <div class="settings-item settings-item-submenu" id="settings-submenu-btn">
-                <span class="settings-text">Settings</span>
-                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
-                    <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </div>
-            <div id="settings-submenu" class="settings-submenu hidden">
-                <div class="settings-item" id="opacity-slider-item">
-                    <span class="settings-text">Opacity</span>
-                    <div class="slider-container">
-                        <input type="range" id="opacity-slider" min="5" max="95" value="95" 
-                               ondblclick="this.value=95; window.handleOpacitySlider(95);"
-                               oninput="window.handleOpacitySlider(this.value)" 
-                               onchange="window.handleOpacitySlider(this.value)">
-                    </div>
-                </div>
-                <div class="settings-item" id="color-picker-item">
-                    <span class="settings-text">Color</span>
-                    <div class="color-options-row">
-                        <div class="color-dot" data-color="#000000" style="background: #000000; border: 1px solid rgba(255,255,255,0.3);" onclick="event.stopPropagation(); window.handleColorPicker('#000000')"></div>
-                        <div class="color-dot" data-color="#ffffff" style="background: #ffffff;" onclick="event.stopPropagation(); window.handleColorPicker('#ffffff')"></div>
-                        <div class="color-dot" data-color="#ec4899" style="background: #ec4899;" onclick="event.stopPropagation(); window.handleColorPicker('#ec4899')"></div>
-                        <div class="color-dot" data-color="#4A9EFF" style="background: #4A9EFF;" onclick="event.stopPropagation(); window.handleColorPicker('#4A9EFF')"></div>
-                    </div>
-                </div>
-                <div class="settings-item" id="hotkeys-btn">
-                    <span class="settings-text">Hotkeys</span>
-                </div>
-                <div class="settings-item" id="check-updates-btn">
-                    <span class="settings-text">Check for Updates</span>
-                    <span class="settings-version" id="app-version-display">v1.0.0</span>
-                </div>
-                <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
-                    <span class="settings-text">🔄 Update Available</span>
-                    <span class="settings-version" id="update-version-display">v1.0.0</span>
-                </div>
-            </div>
             <div class="settings-item" id="account-info-btn">
                 <span class="settings-text">Account</span>
+            </div>
+            <div class="settings-item" id="check-updates-btn">
+                <span class="settings-text">Check for Updates</span>
+                <span class="settings-version" id="app-version-display">v1.0.0</span>
+            </div>
+            <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
+                <span class="settings-text">🔄 Update Available</span>
+                <span class="settings-version" id="update-version-display">v1.0.0</span>
             </div>
             <div class="settings-item" id="clear-chat-btn">
                 <span class="settings-text">Clear Chat History</span>
