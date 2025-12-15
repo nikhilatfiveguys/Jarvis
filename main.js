@@ -216,12 +216,19 @@ class JarvisApp {
         });
         
         updater.on('error', (err) => {
-            // Silently ignore update errors - don't show to user or log
-            // Only log critical errors (not network timeouts)
-            if (err && err.message && !err.message.includes('504') && !err.message.includes('timeout') && !err.message.includes('time-out')) {
-                console.error('Error in auto-updater:', err);
+            // Log all update errors for debugging
+            console.error('Error in auto-updater:', err);
+            if (err && err.message) {
+                console.error('Error message:', err.message);
+                console.error('Error stack:', err.stack);
             }
-            // Don't send error to renderer - user doesn't need to see update check failures
+            // Send error to renderer so user can see what's wrong
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-error', {
+                    message: err.message || 'Unknown error occurred',
+                    error: err.toString()
+                });
+            }
         });
         
         updater.on('download-progress', (progressObj) => {
