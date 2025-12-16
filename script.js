@@ -3189,7 +3189,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
             const systemMessage = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}`;
 
-            // Build messages array (only user/assistant messages, no system role)
+            // Build messages array (Claude API uses top-level system param, not system role in messages)
             const messages = [];
             
             // Add current message
@@ -3221,11 +3221,10 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 });
             }
 
-            // Claude API requires system as a top-level parameter, not in messages array
             const requestBody = {
                 model: claudeModel,
                 max_tokens: 4096,
-                system: systemMessage, // Top-level system parameter
+                system: systemMessage,  // Claude API uses top-level system parameter
                 messages: messages
             };
 
@@ -5259,59 +5258,59 @@ ${currentQuestion}`;
                     const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
                                          lowerPrompt.includes('question') || lowerPrompt.includes('practice');
                     
-                // Build message for OpenRouter chat format
+                    // Build message for OpenRouter chat format
                     let systemContent = 'Analyze the provided files and respond to the user succinctly and clearly.';
                     if (isQuizRequest) {
                         systemContent = `The user wants a QUIZ based on the attached file content. You MUST respond with ONLY a JSON object in this exact format (no other text): {"quiz": true, "topic": "Topic Name", "questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "Why"}]}. Generate questions based on the file content. Default to 5 questions unless user specifies a different number.`;
                     }
-                const messages = [
+                    const messages = [
                         { role: 'system', content: systemContent }
-                ];
-                
-                // Convert content to OpenRouter format
-                let textParts = [];
-                let imageUrls = [];
-                for (const item of content) {
-                    if (item.type === 'input_text') {
-                        textParts.push(item.text);
-                    } else if (item.type === 'input_image') {
-                        imageUrls.push(item.image_url);
-                    }
-                }
-                
-                // Build user message with text and images
-                if (imageUrls.length > 0) {
-                    const userContent = [
-                        { type: 'text', text: textParts.join('\n') }
                     ];
-                    imageUrls.forEach(url => {
-                        userContent.push({ type: 'image_url', image_url: { url } });
+                    
+                    // Convert content to OpenRouter format
+                    let textParts = [];
+                    let imageUrls = [];
+                    for (const item of content) {
+                        if (item.type === 'input_text') {
+                            textParts.push(item.text);
+                        } else if (item.type === 'input_image') {
+                            imageUrls.push(item.image_url);
+                        }
+                    }
+                    
+                    // Build user message with text and images
+                    if (imageUrls.length > 0) {
+                        const userContent = [
+                            { type: 'text', text: textParts.join('\n') }
+                        ];
+                        imageUrls.forEach(url => {
+                            userContent.push({ type: 'image_url', image_url: { url } });
+                        });
+                        messages.push({ role: 'user', content: userContent });
+                    } else {
+                        messages.push({ role: 'user', content: textParts.join('\n') });
+                    }
+                    
+                    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.openrouterApiKey}`,
+                            'Content-Type': 'application/json',
+                            'HTTP-Referer': 'https://jarvis-ai.app',
+                            'X-Title': 'Jarvis AI'
+                        },
+                        body: JSON.stringify({
+                            model: this.selectedModel,
+                            messages: messages
+                        })
                     });
-                    messages.push({ role: 'user', content: userContent });
-                } else {
-                    messages.push({ role: 'user', content: textParts.join('\n') });
-                }
-                
-                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.openrouterApiKey}`,
-                        'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://jarvis-ai.app',
-                        'X-Title': 'Jarvis AI'
-                    },
-                    body: JSON.stringify({
-                        model: this.selectedModel,
-                        messages: messages
-                    })
-                });
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-                }
-                
-                const data = await response.json();
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+                    }
+                    
+                    const data = await response.json();
                     const responseContent = data.choices[0].message.content;
                     
                     // Check if response contains quiz JSON
