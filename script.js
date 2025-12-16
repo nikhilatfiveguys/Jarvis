@@ -12,6 +12,10 @@ class JarvisOverlay {
         this.loadingMessageIndex = 0; // Index for rotating loading messages
         this.selectedModel = 'default'; // Track selected AI model
         this.selectedModelName = 'Jarvis'; // Track displayed model name
+        this.grokFreakyMode = false; // Track Grok freaky mode state
+        this.grokVoiceMode = false; // Track Grok voice mode state
+        this.elevenLabsApiKey = 'sk_da38cfd86748d0dbf709c4668986b9c97ca72056b07ed224';
+        this.elevenLabsVoiceId = 'vO7hjeAjmsdlGgUdvPpe';
         this.hasBeenPositioned = false; // Track if overlay has been positioned (to avoid recentering)
         this.stealthModeEnabled = false; // Track stealth mode state
         
@@ -1165,12 +1169,34 @@ class JarvisOverlay {
             const modelItems = this.modelSubmenu.querySelectorAll('.model-item');
             modelItems.forEach(item => {
                 item.addEventListener('click', (e) => {
+                    // Don't trigger model selection if clicking the freaky toggle
+                    if (e.target.classList.contains('freaky-toggle')) {
+                        return;
+                    }
                     e.stopPropagation();
                     const model = item.getAttribute('data-model');
                     const modelName = item.querySelector('.model-name').textContent;
                     this.selectModel(model, modelName);
                     this.hideModelSubmenu();
                 });
+            });
+            
+            // Freaky mode toggle for Grok
+            const freakyToggle = document.getElementById('freaky-toggle');
+            if (freakyToggle) {
+                freakyToggle.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.toggleGrokFreakyMode();
+                });
+            }
+        }
+        
+        // Grok voice mode toggle
+        const grokVoiceBtn = document.getElementById('grok-voice-btn');
+        if (grokVoiceBtn) {
+            grokVoiceBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleGrokVoiceMode();
             });
         }
         
@@ -3080,7 +3106,13 @@ URL: ${this.currentDocument.url}
 Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
 
-            const instructions = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}`;
+            // Special instructions for Grok voice mode - brief conversational responses
+            let voiceInstructions = '';
+            if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode) {
+                voiceInstructions = '\n\nIMPORTANT: Keep your response very brief and conversational, like someone talking casually. Use 1-3 short sentences max. No bullet points, no formatting, no long explanations. Just quick, punchy responses like a friend would say.';
+            }
+
+            const instructions = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}${voiceInstructions}`;
 
             console.log(`🤖 Calling OpenRouter with model: ${model}`);
             
@@ -3142,6 +3174,11 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
             
             this.saveConversationHistory();
+            
+            // Speak the response if Grok voice mode is enabled
+            if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode && content) {
+                this.speakWithElevenLabs(content);
+            }
             
             return content;
         } catch (error) {
@@ -4290,16 +4327,34 @@ ${currentQuestion}`;
             this.dragOutput.style.cssText = ''; // Reset all inline styles
             this.dragOutput.title = 'Drag me to drop text into apps';
         }
-        // Restore messages container to normal state
+        // Hide messages container (no output to show)
         if (this.messagesContainer) {
-            this.messagesContainer.classList.remove('hidden');
+            this.messagesContainer.classList.add('hidden');
             this.messagesContainer.classList.remove('quiz-active');
             this.messagesContainer.style.cssText = ''; // Reset all inline styles
         }
-        // Show buttons again
-        if (this.answerThisBtn) this.answerThisBtn.classList.remove('hidden');
-        if (this.humanizeBtn) this.humanizeBtn.classList.remove('hidden');
-        if (this.actionButtonsContainer) this.actionButtonsContainer.classList.remove('hidden');
+        // Hide floating close button (X)
+        if (this.closeOutputFloating) {
+            this.closeOutputFloating.classList.add('hidden');
+        }
+        // Hide reveal history button
+        if (this.revealHistoryBtn) {
+            this.revealHistoryBtn.classList.add('hidden');
+            this.revealHistoryBtn.classList.remove('rotated');
+        }
+        // Reset to default state - only show original Answer Screen button (no output visible)
+        if (this.answerThisBtn) {
+            this.answerThisBtn.classList.remove('hidden');
+            this.answerThisBtn.classList.add('answer-this-default');
+        }
+        // Hide action buttons container since there's no output to act on
+        if (this.actionButtonsContainer) this.actionButtonsContainer.classList.add('hidden');
+        if (this.humanizeBtn) this.humanizeBtn.classList.add('hidden');
+        // Hide moved answer button
+        const answerBtnMoved = document.getElementById('answer-this-btn-moved');
+        if (answerBtnMoved) answerBtnMoved.classList.add('hidden');
+        // Hide output toolbar
+        this.hideOutputToolbar();
     }
 
     addMessage(sender, content, role = 'user') {
@@ -4748,6 +4803,21 @@ ${currentQuestion}`;
                     item.classList.remove('active');
                 }
             });
+        }
+        
+        // Hide voice button and reset freaky/voice mode when switching away from Grok
+        if (model !== 'x-ai/grok-4.1-fast') {
+            const voiceBtn = document.getElementById('grok-voice-btn');
+            const freakyToggle = document.getElementById('freaky-toggle');
+            if (voiceBtn) {
+                voiceBtn.classList.add('hidden');
+                voiceBtn.classList.remove('active');
+            }
+            if (freakyToggle) {
+                freakyToggle.textContent = '😇';
+            }
+            this.grokFreakyMode = false;
+            this.grokVoiceMode = false;
         }
         
         console.log(`🤖 [MODEL SWITCHER] Successfully switched to ${modelName} (${model})`);
@@ -5243,15 +5313,62 @@ ${currentQuestion}`;
                 // Check if this is a Claude model - route to Claude API directly
                 if (this.selectedModel.startsWith('anthropic/claude-')) {
                     console.log(`🤖 Detected Claude model for file analysis: ${this.selectedModel}`);
+                    
+                    // Check if this is a quiz request
+                    const lowerPrompt = prompt.toLowerCase();
+                    const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
+                                         lowerPrompt.includes('question') || lowerPrompt.includes('practice');
+                    
                     // Combine all file content into a single message
                     let combinedMessage = prompt;
+                    if (isQuizRequest) {
+                        combinedMessage = `IMPORTANT: You MUST respond with ONLY a JSON object for this quiz request. No other text before or after.
+
+The user wants a QUIZ based on this content. Respond with ONLY this JSON format:
+{"quiz": true, "topic": "Topic Name", "questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "Why"}]}
+
+Generate 5 questions (or the number they specified) based on the following content:
+
+User request: ${prompt}`;
+                    }
+                    
                     for (const item of content) {
                         if (item.type === 'input_text') {
                             combinedMessage += '\n\n' + item.text;
                         }
                         // Note: Claude API image support would need base64 encoding
                     }
-                    analysis = await this.callClaudeDirect(combinedMessage, this.selectedModel);
+                    
+                    const claudeResponse = await this.callClaudeDirect(combinedMessage, this.selectedModel);
+                    
+                    // Check if Claude response contains quiz JSON
+                    if (isQuizRequest) {
+                        try {
+                            const quizMatch = claudeResponse.match(/\{[\s\S]*"quiz"\s*:\s*true[\s\S]*\}/);
+                            if (quizMatch) {
+                                const quizData = JSON.parse(quizMatch[0]);
+                                if (quizData.quiz && quizData.questions && quizData.questions.length > 0) {
+                                    console.log('📝 Quiz detected in Claude response!');
+                                    this.stopLoadingAnimation();
+                                    if (this.dragOutput) {
+                                        this.dragOutput.classList.remove('loading-notification');
+                                    }
+                                    this.showQuiz(quizData.topic || 'Document Quiz', quizData.questions);
+                                    const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
+                                    this.conversationHistory.push({ role: 'user', content: userMessage });
+                                    this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${quizData.topic} with ${quizData.questions.length} questions`, model: this.selectedModelName || 'Claude' });
+                                    if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
+                                    this.saveConversationHistory();
+                                    if (!this.hasPremiumAccess()) this.incrementMessageCount();
+                                    return; // Exit early - quiz is displayed
+                                }
+                            }
+                        } catch (parseError) {
+                            console.log('No quiz JSON found in Claude response, treating as regular analysis');
+                        }
+                    }
+                    
+                    analysis = claudeResponse;
                 } else {
                     // Check if this is a quiz request
                     const lowerPrompt = prompt.toLowerCase();
@@ -5417,8 +5534,13 @@ ${currentQuestion}`;
                     if (quizCall) {
                         console.log('📝 Quiz tool called from file analysis!', quizCall);
                         try {
-                            const topic = quizCall.arguments?.topic || 'Document Quiz';
-                            const questions = quizCall.arguments?.questions || [];
+                            // Parse arguments if they're a string
+                            let args = quizCall.arguments;
+                            if (typeof args === 'string') {
+                                args = JSON.parse(args);
+                            }
+                            const topic = args?.topic || 'Document Quiz';
+                            const questions = args?.questions || [];
                             
                             if (questions.length > 0) {
                                 this.stopLoadingAnimation();
@@ -5447,6 +5569,15 @@ ${currentQuestion}`;
                     const textResponse = this.extractTextSafe(apiData);
                     if (textResponse) {
                         analysis = textResponse;
+                    } else if (isQuizRequest && toolCalls.length > 0) {
+                        // Quiz was requested but tool didn't work - try again by returning early
+                        // This forces the user to see the loading finished without weird message
+                        this.stopLoadingAnimation();
+                        if (this.dragOutput) {
+                            this.dragOutput.classList.remove('loading-notification');
+                        }
+                        this.showNotification('Quiz generation failed. Please try again.', false);
+                        return;
                     } else if (toolCalls.length > 0) {
                         // Only tool calls, no text - this is an error case for non-quiz tools
                         analysis = 'File analysis complete. The AI processed your request.';
@@ -5801,6 +5932,97 @@ ${currentQuestion}`;
             }
             
             this.addMessage('Jarvis', 'Pink mode deactivated! 🖤', 'assistant');
+        }
+    }
+
+    toggleGrokFreakyMode() {
+        const freakyToggle = document.getElementById('freaky-toggle');
+        const voiceBtn = document.getElementById('grok-voice-btn');
+        this.grokFreakyMode = !this.grokFreakyMode;
+        
+        if (freakyToggle) {
+            freakyToggle.textContent = this.grokFreakyMode ? '😈' : '😇';
+        }
+        
+        // Show/hide voice button based on freaky mode
+        if (voiceBtn) {
+            if (this.grokFreakyMode) {
+                voiceBtn.classList.remove('hidden');
+            } else {
+                voiceBtn.classList.add('hidden');
+                // Also disable voice mode when freaky mode is turned off
+                this.grokVoiceMode = false;
+                voiceBtn.classList.remove('active');
+            }
+        }
+        
+        // Select Grok model if not already selected
+        if (this.selectedModel !== 'x-ai/grok-4.1-fast') {
+            this.selectModel('x-ai/grok-4.1-fast', 'Grok 4.1 Fast');
+        }
+        
+        // Send the freaky mode toggle message
+        const message = this.grokFreakyMode ? 'turn on freaky mode' : 'turn off freaky mode';
+        this.processMessage(message);
+        
+        // Hide the model submenu
+        this.hideModelSubmenu();
+    }
+    
+    toggleGrokVoiceMode() {
+        const voiceBtn = document.getElementById('grok-voice-btn');
+        this.grokVoiceMode = !this.grokVoiceMode;
+        
+        if (voiceBtn) {
+            if (this.grokVoiceMode) {
+                voiceBtn.classList.add('active');
+            } else {
+                voiceBtn.classList.remove('active');
+            }
+        }
+    }
+    
+    async speakWithElevenLabs(text) {
+        try {
+            // Clean up the text - remove emojis and special characters for cleaner speech
+            const cleanText = text.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
+            
+            if (!cleanText) return;
+            
+            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${this.elevenLabsVoiceId}`, {
+                method: 'POST',
+                headers: {
+                    'xi-api-key': this.elevenLabsApiKey,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    text: cleanText,
+                    model_id: 'eleven_turbo_v2_5',
+                    voice_settings: {
+                        stability: 0.3,
+                        similarity_boost: 0.8,
+                        style: 0.5,
+                        use_speaker_boost: true
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                console.error('ElevenLabs API error:', response.status);
+                return;
+            }
+            
+            const audioBlob = await response.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            audio.play();
+            
+            // Clean up the URL after playing
+            audio.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+            };
+        } catch (error) {
+            console.error('ElevenLabs TTS error:', error);
         }
     }
 

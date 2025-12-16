@@ -157,6 +157,7 @@
                 <div class="model-item" data-model="x-ai/grok-4.1-fast">
                     <span class="model-name">Grok 4.1 Fast</span>
                     <span class="model-desc">xAI's fast model</span>
+                    <span class="freaky-toggle" id="freaky-toggle" title="Toggle Freaky Mode">😇</span>
                 </div>
                 <div class="model-item" data-model="allenai/olmo-3-32b-think">
                     <span class="model-name">OLMO 3 32B Think</span>
@@ -271,6 +272,21 @@
             <button id="answer-this-btn-moved" class="answer-this-btn hidden" title="Answer what's on screen">Answer Screen</button>
             <!-- Humanize button -->
             <button id="humanize-btn" class="humanize-btn hidden" title="Make it sound more human">Humanize</button>
+            <!-- Grok Voice button (only shows in freaky mode) -->
+            <button id="grok-voice-btn" class="grok-voice-btn hidden" title="Toggle voice responses">
+                <svg class="voice-inactive" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="10" r="1.2" fill="currentColor"/>
+                    <circle cx="8" cy="10" r="1.2" fill="currentColor"/>
+                    <circle cx="12" cy="10" r="1.2" fill="currentColor"/>
+                    <circle cx="16" cy="10" r="1.2" fill="currentColor"/>
+                </svg>
+                <svg class="voice-active" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="2" y="7" width="2" height="6" rx="1" fill="currentColor"/>
+                    <rect x="6" y="4" width="2" height="12" rx="1" fill="currentColor"/>
+                    <rect x="10" y="2" width="2" height="16" rx="1" fill="currentColor"/>
+                    <rect x="14" y="4" width="2" height="12" rx="1" fill="currentColor"/>
+                </svg>
+            </button>
         </div>
         
         <!-- Output Toolbar (icon buttons) - appears on double-click -->
