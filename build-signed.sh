@@ -156,39 +156,36 @@ DMG_NAME="Jarvis-6.0-${VERSION}-SIGNED.dmg"
 DMG_PATH="dist/$DMG_NAME"
 rm -f "$DMG_PATH"
 
-# Unmount any existing Jarvis volumes
-hdiutil info 2>/dev/null | grep "Jarvis" | awk '{print $1}' | xargs -I {} hdiutil detach {} 2>/dev/null || true
+# Unmount any existing volumes with the same name
+for vol in "/Volumes/Install Jarvis 5.0"*; do
+    hdiutil detach "$vol" 2>/dev/null || true
+done
+hdiutil detach /tmp/jarvis-dmg-mount 2>/dev/null || true
+# Also unmount by finding all "Install Jarvis" volumes
+hdiutil info | grep -A 1 "Install Jarvis" | grep "^/dev/" | awk '{print $1}' | xargs -I {} hdiutil detach {} 2>/dev/null || true
 
 # Create temporary directory for DMG contents
-DMG_STAGING="/tmp/jarvis-dmg-staging-$$"
-rm -rf "$DMG_STAGING"
-mkdir -p "$DMG_STAGING"
+DMG_TEMP=$(mktemp -d)
+trap "rm -rf $DMG_TEMP" EXIT
 
-# Copy signed app to staging directory (using ditto to strip extended attributes)
-echo "  Copying signed app..."
-ditto --norsrc --noextattr "$APP_PATH" "$DMG_STAGING/Jarvis 6.0.app"
+# Copy signed app to temp directory
+cp -R "$APP_PATH" "$DMG_TEMP/"
 
-# Create Applications symlink for drag-to-install
-ln -s /Applications "$DMG_STAGING/Applications"
-
-echo "  Creating DMG with drag-to-install layout..."
-
-# Create DMG with hdiutil (includes Applications symlink)
-# Use unique volume name to avoid conflicts with mounted volumes
-UNIQUE_VOL="Jarvis-Install-$(date +%s)"
-hdiutil create -volname "$UNIQUE_VOL" \
-    -srcfolder "$DMG_STAGING" \
+# Create DMG with unique volume name to avoid conflicts
+VOLUME_NAME="Jarvis5-$(date +%s)"
+echo "  Creating DMG with volume name: $VOLUME_NAME..."
+hdiutil create -volname "$VOLUME_NAME" \
+    -srcfolder "$DMG_TEMP" \
     -ov \
     -format UDZO \
-    "$DMG_PATH"
+    "$DMG_PATH" || {
+    echo "  ⚠️ DMG creation failed"
+    DMG_PATH=""
+}
 
-# Clean up staging
-rm -rf "$DMG_STAGING"
-
-if [ -f "$DMG_PATH" ]; then
+if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
     echo "🔐 Signing DMG..."
     codesign --sign "$IDENTITY" --timestamp "$DMG_PATH" 2>&1 | grep -v "resource fork" || echo "  ⚠️ DMG signing had warnings, but DMG exists"
-    echo "  ✅ Created: $DMG_NAME"
 else
     echo "  ⚠️ DMG creation failed, but app is signed at: $APP_PATH"
     DMG_PATH=""

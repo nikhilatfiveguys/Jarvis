@@ -159,14 +159,6 @@ class JarvisApp {
         // Enable app to restart after install
         updater.autoRunAppAfterInstall = true;
         
-        // macOS-specific configuration for unsigned apps
-        if (process.platform === 'darwin') {
-            // For unsigned apps on macOS, we need to ensure proper update handling
-            updater.allowPrerelease = false;
-            // Set update channel (use 'latest' for stable releases)
-            updater.channel = 'latest';
-        }
-        
         // Create a custom logger that suppresses notifications
         updater.logger = {
             info: (msg) => console.log('[updater]', msg),
@@ -216,19 +208,12 @@ class JarvisApp {
         });
         
         updater.on('error', (err) => {
-            // Log all update errors for debugging
-            console.error('Error in auto-updater:', err);
-            if (err && err.message) {
-                console.error('Error message:', err.message);
-                console.error('Error stack:', err.stack);
+            // Silently ignore update errors - don't show to user or log
+            // Only log critical errors (not network timeouts)
+            if (err && err.message && !err.message.includes('504') && !err.message.includes('timeout') && !err.message.includes('time-out')) {
+                console.error('Error in auto-updater:', err);
             }
-            // Send error to renderer so user can see what's wrong
-            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                this.mainWindow.webContents.send('update-error', {
-                    message: err.message || 'Unknown error occurred',
-                    error: err.toString()
-                });
-            }
+            // Don't send error to renderer - user doesn't need to see update check failures
         });
         
         updater.on('download-progress', (progressObj) => {
@@ -2205,63 +2190,29 @@ class JarvisApp {
             }
         });
 
-        ipcMain.handle('install-update', async () => {
+        ipcMain.handle('install-update', () => {
             try {
                 console.log('📦 Installing update...');
-                // Set a flag so we know we're updating - this prevents window close handlers from blocking
+                // Set a flag so we know we're updating
                 app.isQuitting = true;
-                this.isUpdating = true; // Set a flag on the app instance too
                 
-                // Close all windows properly before quitting
-                // Remove close handlers that might prevent quitting
-                const windows = BrowserWindow.getAllWindows();
-                for (const window of windows) {
-                    if (!window.isDestroyed()) {
-                        // Remove any close event listeners that might prevent closing
-                        window.removeAllListeners('close');
-                        // Force close without prompting
-                        window.destroy();
-                    }
-                }
-                
-                // Wait a moment for windows to fully close
-                await new Promise(resolve => setTimeout(resolve, 300));
-                
-                // Get the updater
-                const updater = getAutoUpdater();
-                
-                // For macOS unsigned apps, quitAndInstall should work but may need special handling
-                console.log('Calling quitAndInstall...');
-                
-                // Use quitAndInstall with proper flags
-                // isSilent: false = show any needed prompts  
-                // isForceRunAfter: true = definitely restart the app after install
-                updater.quitAndInstall(false, true);
-                
-                // If quitAndInstall doesn't trigger immediately, force quit after a short delay
-                // This ensures the app quits even if quitAndInstall has issues
+                // Use setTimeout to ensure IPC response is sent before quitting
                 setTimeout(() => {
-                    console.log('Force quitting app for update (fallback)...');
-                    // Remove all listeners that might prevent quit
-                    app.removeAllListeners('before-quit');
-                    app.removeAllListeners('will-quit');
-                    app.quit();
-                }, 1500);
+                    try {
+                        // quitAndInstall params:
+                        // isSilent: false = show any needed prompts
+                        // isForceRunAfter: true = definitely restart the app
+                        getAutoUpdater().quitAndInstall(false, true);
+                    } catch (e) {
+                        console.error('quitAndInstall failed:', e);
+                        // Fallback: manually quit and let Squirrel handle restart
+                        app.quit();
+                    }
+                }, 100);
                 
                 return { success: true };
             } catch (error) {
                 console.error('Error installing update:', error);
-                // Fallback: try to quit anyway after cleanup
-                app.isQuitting = true;
-                setTimeout(() => {
-                    try {
-                        app.removeAllListeners('before-quit');
-                        app.removeAllListeners('will-quit');
-                        app.quit();
-                    } catch (e) {
-                        console.error('Failed to quit:', e);
-                    }
-                }, 1000);
                 return { success: false, error: error.message };
             }
         });
