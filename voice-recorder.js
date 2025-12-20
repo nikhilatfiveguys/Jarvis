@@ -12,6 +12,61 @@ class VoiceRecorder {
         this.tempDir = os.tmpdir();
         this.audioFile = null;
         this.apiKey = apiKey;
+        this.platform = process.platform;
+    }
+
+    getRecordingCommands() {
+        const audioFile = this.audioFile;
+        
+        if (this.platform === 'win32') {
+            // Windows recording commands
+            return [
+                // FFmpeg with DirectShow (most common on Windows)
+                ['ffmpeg', '-f', 'dshow', '-i', 'audio=Microphone', '-ar', '16000', '-ac', '1', '-y', audioFile],
+                // FFmpeg with default audio device
+                ['ffmpeg', '-f', 'dshow', '-i', 'audio=@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\\wave_{00000000-0000-0000-0000-000000000000}', '-ar', '16000', '-ac', '1', '-y', audioFile],
+                // SoX on Windows (if installed)
+                ['sox', '-t', 'waveaudio', '-d', '-r', '16000', '-c', '1', audioFile],
+                ['rec', '-r', '16000', '-c', '1', '-t', 'wav', audioFile],
+                // PowerShell-based recording as fallback
+                ['powershell', '-Command', `
+                    Add-Type -AssemblyName System.Speech;
+                    Add-Type -TypeDefinition @"
+                    using System;
+                    using System.Runtime.InteropServices;
+                    public class AudioRecorder {
+                        [DllImport("winmm.dll")]
+                        public static extern int mciSendString(string command, System.Text.StringBuilder returnValue, int returnLength, IntPtr callback);
+                    }
+"@;
+                    [AudioRecorder]::mciSendString("open new Type waveaudio Alias recsound", $null, 0, 0);
+                    [AudioRecorder]::mciSendString("record recsound", $null, 0, 0);
+                    Start-Sleep -Seconds 30;
+                    [AudioRecorder]::mciSendString("save recsound ${audioFile}", $null, 0, 0);
+                    [AudioRecorder]::mciSendString("close recsound", $null, 0, 0);
+                `]
+            ];
+        } else if (this.platform === 'darwin') {
+            // macOS recording commands
+            return [
+                ['/opt/homebrew/bin/rec', '-r', '16000', '-c', '1', '-t', 'wav', audioFile],
+                ['/opt/homebrew/bin/sox', '-t', 'coreaudio', 'default', '-r', '16000', '-c', '1', audioFile],
+                ['/usr/local/bin/rec', '-r', '16000', '-c', '1', '-t', 'wav', audioFile],
+                ['/usr/local/bin/sox', '-t', 'coreaudio', 'default', '-r', '16000', '-c', '1', audioFile],
+                ['rec', '-r', '16000', '-c', '1', '-t', 'wav', audioFile],
+                ['sox', '-t', 'coreaudio', 'default', '-r', '16000', '-c', '1', audioFile],
+                ['ffmpeg', '-f', 'avfoundation', '-i', ':0', '-ar', '16000', '-ac', '1', '-y', audioFile]
+            ];
+        } else {
+            // Linux recording commands
+            return [
+                ['arecord', '-f', 'S16_LE', '-r', '16000', '-c', '1', audioFile],
+                ['sox', '-t', 'alsa', 'default', '-r', '16000', '-c', '1', audioFile],
+                ['rec', '-r', '16000', '-c', '1', '-t', 'wav', audioFile],
+                ['ffmpeg', '-f', 'alsa', '-i', 'default', '-ar', '16000', '-ac', '1', '-y', audioFile],
+                ['ffmpeg', '-f', 'pulse', '-i', 'default', '-ar', '16000', '-ac', '1', '-y', audioFile]
+            ];
+        }
     }
 
     async startRecording() {
@@ -21,23 +76,21 @@ class VoiceRecorder {
         this.audioFile = path.join(this.tempDir, `jarvis-recording-${Date.now()}.wav`);
         
         try {
-            // Use macOS's built-in recording with sox (try different approaches)
-            const recordingCommands = [
-                ['/opt/homebrew/bin/rec', '-r', '16000', '-c', '1', '-t', 'wav', this.audioFile],
-                ['/opt/homebrew/bin/sox', '-t', 'coreaudio', '-r', '16000', '-c', '1', this.audioFile],
-                ['/usr/local/bin/rec', '-r', '16000', '-c', '1', '-t', 'wav', this.audioFile],
-                ['/usr/local/bin/sox', '-t', 'coreaudio', '-r', '16000', '-c', '1', this.audioFile],
-                ['rec', '-r', '16000', '-c', '1', '-t', 'wav', this.audioFile],
-                ['sox', '-t', 'coreaudio', '-r', '16000', '-c', '1', this.audioFile],
-                ['ffmpeg', '-f', 'avfoundation', '-i', ':0', '-ar', '16000', '-ac', '1', this.audioFile]
-            ];
+            const recordingCommands = this.getRecordingCommands();
 
             let commandFound = false;
             for (const cmd of recordingCommands) {
                 try {
-                    this.recordingProcess = spawn(cmd[0], cmd.slice(1), {
+                    const spawnOptions = {
                         stdio: 'pipe'
-                    });
+                    };
+                    
+                    // On Windows, hide the console window
+                    if (this.platform === 'win32') {
+                        spawnOptions.windowsHide = true;
+                    }
+                    
+                    this.recordingProcess = spawn(cmd[0], cmd.slice(1), spawnOptions);
 
                     this.recordingProcess.on('error', (error) => {
                         console.log(`Recording command ${cmd[0]} failed:`, error.message);
@@ -79,7 +132,13 @@ class VoiceRecorder {
             }
 
             if (!commandFound) {
-                throw new Error('No working recording command found. Please install sox: brew install sox\n\nTried paths:\n- /opt/homebrew/bin/rec\n- /opt/homebrew/bin/sox\n- /usr/local/bin/rec\n- /usr/local/bin/sox\n- rec (from PATH)\n- sox (from PATH)\n- ffmpeg (from PATH)');
+                const installInstructions = this.platform === 'win32'
+                    ? 'Please install FFmpeg: https://ffmpeg.org/download.html and add it to your PATH'
+                    : this.platform === 'darwin'
+                    ? 'Please install sox: brew install sox'
+                    : 'Please install sox or arecord: sudo apt install sox or sudo apt install alsa-utils';
+                    
+                throw new Error(`No working recording command found. ${installInstructions}`);
             }
 
             return this.audioFile;
@@ -97,15 +156,31 @@ class VoiceRecorder {
         
         return new Promise((resolve, reject) => {
             this.recordingProcess.on('close', (code) => {
-                if (code === 0) {
+                // Accept code 0 or code 1 (ffmpeg returns 1 when killed)
+                if (code === 0 || code === 1 || code === null) {
                     resolve(this.audioFile);
                 } else {
                     reject(new Error(`Recording process exited with code ${code}`));
                 }
             });
 
-            // Send SIGTERM to stop recording
-            this.recordingProcess.kill('SIGTERM');
+            // On Windows, use different signal
+            if (this.platform === 'win32') {
+                // Send 'q' to stdin for ffmpeg, or kill for other processes
+                if (this.recordingProcess.stdin) {
+                    this.recordingProcess.stdin.write('q');
+                    this.recordingProcess.stdin.end();
+                }
+                // Give it a moment, then force kill if needed
+                setTimeout(() => {
+                    if (this.recordingProcess && !this.recordingProcess.killed) {
+                        this.recordingProcess.kill();
+                    }
+                }, 500);
+            } else {
+                // Send SIGTERM to stop recording on Unix
+                this.recordingProcess.kill('SIGTERM');
+            }
         });
     }
 

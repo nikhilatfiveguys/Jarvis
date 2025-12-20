@@ -11,7 +11,7 @@
     "build:win:unsigned": "electron-builder --config electron-builder-unsigned.json --win",
     "rebuild-native": "cd native/mac-content-protection && electron-rebuild -f -w mac_content_protection",
     "install-native": "cd native/mac-content-protection && npm install",
-    "postinstall": "npm run install-native",
+    "postinstall": "node -e \"if(process.platform==='darwin'){require('child_process').execSync('npm run install-native',{stdio:'inherit'})}\"",
     "validate": "node validate-config.js",
     "test-auth": "node test-auth.js",
     "test-user": "node test-user-experience.js",

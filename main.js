@@ -2,37 +2,38 @@ const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShort
 const path = require('path');
 const { exec } = require('child_process');
 
-// Handle Squirrel events for macOS auto-updates
+// Handle Squirrel events for auto-updates (macOS and Windows)
 // This MUST be at the very top before anything else
-if (process.platform === 'darwin') {
-    const handleSquirrelEvent = () => {
-        if (process.argv.length === 1) {
-            return false;
-        }
-
-        const squirrelEvent = process.argv[1];
-        switch (squirrelEvent) {
-            case '--squirrel-install':
-            case '--squirrel-updated':
-                // App was installed or updated, quit immediately
-                app.quit();
-                return true;
-            case '--squirrel-uninstall':
-                // App is being uninstalled
-                app.quit();
-                return true;
-            case '--squirrel-obsolete':
-                // App is being replaced by a newer version
-                app.quit();
-                return true;
-        }
+const handleSquirrelEvent = () => {
+    if (process.argv.length === 1) {
         return false;
-    };
-
-    if (handleSquirrelEvent()) {
-        // Squirrel event handled, app will quit
-        process.exit(0);
     }
+
+    const squirrelEvent = process.argv[1];
+    switch (squirrelEvent) {
+        case '--squirrel-install':
+        case '--squirrel-updated':
+            // App was installed or updated, quit immediately
+            app.quit();
+            return true;
+        case '--squirrel-uninstall':
+            // App is being uninstalled
+            app.quit();
+            return true;
+        case '--squirrel-obsolete':
+            // App is being replaced by a newer version
+            app.quit();
+            return true;
+        case '--squirrel-firstrun':
+            // First run after install - just continue normally
+            return false;
+    }
+    return false;
+};
+
+if (handleSquirrelEvent()) {
+    // Squirrel event handled, app will quit
+    process.exit(0);
 }
 
 // Delay loading electron-updater until app is ready

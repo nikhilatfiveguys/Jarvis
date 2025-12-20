@@ -1,7 +1,6 @@
 {
   "appId": "com.aaronsoni.jarvis",
   "productName": "Jarvis 6.0",
-  "icon": "icon.icns",
   "directories": {
     "output": "dist"
   },
@@ -250,7 +249,17 @@
   },
   "nsis": {
     "oneClick": false,
-    "allowToChangeInstallationDirectory": true
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
   },
-  "linux": null
+  "linux": null,
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "nikhilatfiveguys",
+      "repo": "Jarvis",
+      "releaseType": "release"
+    }
+  ]
 }
