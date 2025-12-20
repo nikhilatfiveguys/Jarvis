@@ -69,7 +69,11 @@ echo "  Signing components..."
 # Sign all nested libraries and helpers
 if [ -d "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries" ]; then
     echo "    Signing Electron Framework libraries..."
-    codesign --force --sign "$IDENTITY" --timestamp "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/"*.dylib 2>/dev/null || true
+    for lib in "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/"*.dylib; do
+        if [ -f "$lib" ]; then
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp "$lib" 2>/dev/null || true
+        fi
+    done
 fi
 
 if [ -f "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler" ]; then
@@ -83,7 +87,11 @@ if [ -f "$SIGN_APP/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/S
 fi
 
 echo "    Signing frameworks..."
-codesign --force --sign "$IDENTITY" --timestamp "$SIGN_APP/Contents/Frameworks/"*.framework
+for framework in "$SIGN_APP/Contents/Frameworks/"*.framework; do
+    if [ -d "$framework" ]; then
+        codesign --force --sign "$IDENTITY" --options runtime --timestamp "$framework"
+    fi
+done
 
 echo "    Signing helper apps..."
 # Sign all Electron helper apps (GPU, Renderer, Plugin, and base Helper)
@@ -102,19 +110,27 @@ for helper in "$SIGN_APP/Contents/Frameworks/"*Helper*.app; do
     fi
 done
 
+# Clean ALL extended attributes and resource forks from entire bundle BEFORE signing
+echo "  Cleaning all extended attributes from app bundle..."
+find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
+xattr -cr "$SIGN_APP" 2>/dev/null || true
+
+# Use ditto to create a completely clean copy
+echo "  Creating clean copy of app bundle..."
+CLEAN_APP="$HOME/Desktop/Jarvis-CLEAN.app"
+rm -rf "$CLEAN_APP"
+ditto --norsrc --noextattr --noacl "$SIGN_APP" "$CLEAN_APP"
+rm -rf "$SIGN_APP"
+mv "$CLEAN_APP" "$SIGN_APP"
+
 # Sign main executable
 echo "  Signing main executable..."
 MAIN_EXEC="$SIGN_APP/Contents/MacOS/Jarvis 6.0"
 if [ -f "$MAIN_EXEC" ]; then
     echo "    Found main executable: Jarvis 6.0"
-    # More aggressive resource fork removal
-    xattr -cr "$MAIN_EXEC"
-    # Remove ._ files if any
-    rm -f "$SIGN_APP/Contents/MacOS/._Jarvis 6.0" 2>/dev/null || true
-    # Strip resource fork using cat
-    cat "$MAIN_EXEC" > "$MAIN_EXEC.tmp" && mv "$MAIN_EXEC.tmp" "$MAIN_EXEC" && chmod +x "$MAIN_EXEC"
-    xattr -cr "$MAIN_EXEC"
-    echo "    Stripped resource forks from main executable"
+    # Verify no extended attributes
+    xattr "$MAIN_EXEC" 2>/dev/null || true
+    # Sign with all required flags
     codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$MAIN_EXEC"
     echo "    Verifying main executable signature..."
     codesign --verify --verbose "$MAIN_EXEC" && echo "    ✅ Main executable signed" || echo "    ❌ Main executable signing failed"
@@ -123,14 +139,9 @@ else
     ls -la "$SIGN_APP/Contents/MacOS/"
 fi
 
-# Clean all resource forks from entire bundle
-echo "  Cleaning all resource forks from app bundle..."
-find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
-xattr -cr "$SIGN_APP"
-
-# Sign main app bundle
+# Sign main app bundle (not using --deep, sign components individually for better control)
 echo "  Signing main app bundle..."
-codesign --force --deep --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP"
 echo "  Verifying app bundle signature..."
 codesign --verify --deep --strict "$SIGN_APP" && echo "  ✅ App bundle signed" || echo "  ⚠️ App bundle verification had issues"
 

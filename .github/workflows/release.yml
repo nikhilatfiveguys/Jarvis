@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:  # Allows manual triggering
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     runs-on: macos-latest

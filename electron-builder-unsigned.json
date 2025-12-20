@@ -254,12 +254,5 @@
     "createStartMenuShortcut": true
   },
   "linux": null,
-  "publish": [
-    {
-      "provider": "github",
-      "owner": "nikhilatfiveguys",
-      "repo": "Jarvis",
-      "releaseType": "release"
-    }
-  ]
+  "publish": null
 }
