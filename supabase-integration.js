@@ -826,6 +826,451 @@ class SupabaseIntegration {
         
         return { success: true };
     }
+
+    // ============================================
+    // COST-BASED USAGE TRACKING & LIMITING
+    // ============================================
+
+    // Pricing per 1K tokens (in cents) - Updated Dec 2024
+    // Based on: GPT-5.2 ($1.75/1M in, $14/1M out), Claude Opus 4.5 ($5/1M in, $25/1M out), Gemini ($2/1M in, $12/1M out)
+    // Format: { input: cents per 1K input tokens, output: cents per 1K output tokens }
+    MODEL_PRICING = {
+        // ============ CLAUDE MODELS - Use Claude Opus 4.5 pricing ($5/1M in, $25/1M out) ============
+        'claude': { input: 0.5, output: 2.5 },
+        'claude-3-opus': { input: 0.5, output: 2.5 },
+        'claude-3-opus-20240229': { input: 0.5, output: 2.5 },
+        'claude-3-sonnet': { input: 0.5, output: 2.5 },
+        'claude-3-5-sonnet': { input: 0.5, output: 2.5 },
+        'claude-3-5-sonnet-20241022': { input: 0.5, output: 2.5 },
+        'claude-sonnet-4-5-20250929': { input: 0.5, output: 2.5 },
+        'claude-opus-4-5': { input: 0.5, output: 2.5 },
+        'claude-3-haiku': { input: 0.5, output: 2.5 },
+        'anthropic/claude-sonnet-4.5': { input: 0.5, output: 2.5 },
+        'anthropic/claude-opus-4.5': { input: 0.5, output: 2.5 },
+        'anthropic/claude-3-opus': { input: 0.5, output: 2.5 },
+        'anthropic/claude-3-sonnet': { input: 0.5, output: 2.5 },
+        'anthropic/claude-3-haiku': { input: 0.5, output: 2.5 },
+        
+        // ============ GEMINI MODELS - Use Gemini pricing ($2/1M in, $12/1M out) ============
+        'gemini': { input: 0.2, output: 1.2 },
+        'gemini-pro': { input: 0.2, output: 1.2 },
+        'gemini-2.5-pro': { input: 0.2, output: 1.2 },
+        'gemini-1.5-pro': { input: 0.2, output: 1.2 },
+        'gemini-1.5-flash': { input: 0.2, output: 1.2 },
+        'google/gemini-pro': { input: 0.2, output: 1.2 },
+        'google/gemini-2.5-pro': { input: 0.2, output: 1.2 },
+        'google/gemini-1.5-pro': { input: 0.2, output: 1.2 },
+        'google/gemini-flash': { input: 0.2, output: 1.2 },
+        
+        // ============ ALL OTHER MODELS - Use GPT-5.2 pricing ($1.75/1M in, $14/1M out) ============
+        // OpenAI models
+        'gpt-5.2': { input: 0.175, output: 1.4 },
+        'gpt-5': { input: 0.175, output: 1.4 },
+        'gpt-4': { input: 0.175, output: 1.4 },
+        'gpt-4-turbo': { input: 0.175, output: 1.4 },
+        'gpt-4-turbo-preview': { input: 0.175, output: 1.4 },
+        'gpt-4o': { input: 0.175, output: 1.4 },
+        'gpt-4o-mini': { input: 0.175, output: 1.4 },
+        'gpt-3.5-turbo': { input: 0.175, output: 1.4 },
+        'o1-preview': { input: 0.175, output: 1.4 },
+        'o1-mini': { input: 0.175, output: 1.4 },
+        'openai/gpt-4o': { input: 0.175, output: 1.4 },
+        'openai/gpt-4o-mini': { input: 0.175, output: 1.4 },
+        'openai/gpt-4': { input: 0.175, output: 1.4 },
+        'openai/o1-preview': { input: 0.175, output: 1.4 },
+        
+        // Perplexity models - use GPT-5.2 pricing
+        'llama-3.1-sonar-small-128k-online': { input: 0.175, output: 1.4 },
+        'llama-3.1-sonar-large-128k-online': { input: 0.175, output: 1.4 },
+        'llama-3.1-sonar-huge-128k-online': { input: 0.175, output: 1.4 },
+        'perplexity': { input: 0.175, output: 1.4 },
+        
+        // Other OpenRouter models - use GPT-5.2 pricing
+        'meta-llama/llama-3.1-70b-instruct': { input: 0.175, output: 1.4 },
+        'mistral': { input: 0.175, output: 1.4 },
+        'mixtral': { input: 0.175, output: 1.4 },
+        
+        // Default fallback - use GPT-5.2 pricing
+        'default': { input: 0.175, output: 1.4 }
+    };
+
+    /**
+     * Calculate cost in cents for a given usage
+     * Pricing: Claude ($5/1M in, $25/1M out), Gemini ($2/1M in, $12/1M out), Default/GPT ($1.75/1M in, $14/1M out)
+     */
+    calculateCost(tokensInput, tokensOutput, model) {
+        // Get pricing for model, fallback to default
+        let pricing = this.MODEL_PRICING[model];
+        
+        // Try partial match if exact match not found
+        if (!pricing) {
+            const modelLower = (model || '').toLowerCase();
+            
+            // Check for Claude models first (use Claude Opus 4.5 pricing)
+            if (modelLower.includes('claude') || modelLower.includes('anthropic')) {
+                pricing = { input: 0.5, output: 2.5 };  // $5/1M in, $25/1M out
+            }
+            // Check for Gemini models (use Gemini pricing)
+            else if (modelLower.includes('gemini') || modelLower.includes('google')) {
+                pricing = { input: 0.2, output: 1.2 };  // $2/1M in, $12/1M out
+            }
+            // Everything else uses GPT-5.2 pricing (default)
+            else {
+                pricing = this.MODEL_PRICING['default'];  // $1.75/1M in, $14/1M out
+            }
+        }
+        
+        if (!pricing) {
+            pricing = this.MODEL_PRICING['default'];
+        }
+        
+        // Calculate cost: (tokens / 1000) * price per 1K tokens (pricing is in cents per 1K)
+        const inputCost = (tokensInput / 1000) * pricing.input;
+        const outputCost = (tokensOutput / 1000) * pricing.output;
+        const totalCostCents = inputCost + outputCost;
+        
+        // Return cost in cents, minimum 1 cent per request
+        return Math.max(1, Math.round(totalCostCents));
+    }
+
+    /**
+     * Record usage with cost for a user
+     * @param {string} email - User email
+     * @param {number} tokensInput - Input tokens
+     * @param {number} tokensOutput - Output tokens
+     * @param {string} model - Model name
+     * @param {string} provider - Provider name (openai, openrouter, etc.)
+     * @param {string} requestType - Type of request (chat, web_search, etc.)
+     * @param {number|null} apiProvidedCost - Cost in dollars if provided by API (optional)
+     */
+    async recordUsage(email, tokensInput, tokensOutput, model = 'gpt-4', provider = 'openai', requestType = 'chat', apiProvidedCost = null) {
+        try {
+            const tokensTotal = (tokensInput || 0) + (tokensOutput || 0);
+            
+            // Use API-provided cost if available (convert from dollars to cents), otherwise calculate
+            let costCents;
+            if (apiProvidedCost !== null && apiProvidedCost !== undefined) {
+                costCents = Math.round(apiProvidedCost * 100); // Convert dollars to cents
+                console.log(`💰 Using API-provided cost: $${apiProvidedCost} (${costCents} cents)`);
+            } else {
+                costCents = this.calculateCost(tokensInput || 0, tokensOutput || 0, model);
+                console.log(`💰 Calculated cost: $${(costCents / 100).toFixed(4)} (${costCents} cents)`);
+            }
+            
+            console.log(`💰 Recording usage for ${email}: ${tokensTotal} tokens, $${(costCents / 100).toFixed(4)} (${model})`);
+            
+            const { data, error } = await this.supabase
+                .from('usage_tracking')
+                .insert({
+                    email: email,
+                    tokens_input: tokensInput || 0,
+                    tokens_output: tokensOutput || 0,
+                    tokens_total: tokensTotal,
+                    cost_cents: costCents,
+                    model: model,
+                    provider: provider,
+                    request_type: requestType
+                })
+                .select()
+                .single();
+
+            if (error) {
+                console.error('❌ Error recording usage:', error);
+                return { success: false, error: error.message };
+            }
+
+            console.log(`✅ Usage recorded: $${(costCents / 100).toFixed(4)} (ID: ${data.id})`);
+            return { success: true, usage: data, costCents: costCents };
+        } catch (error) {
+            console.error('❌ Error recording usage:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // Alias for backward compatibility
+    async recordTokenUsage(email, tokensInput, tokensOutput, model = 'gpt-4', provider = 'openai', requestType = 'chat', apiProvidedCost = null) {
+        return this.recordUsage(email, tokensInput, tokensOutput, model, provider, requestType, apiProvidedCost);
+    }
+
+    /**
+     * Check if user is within their cost limits
+     */
+    async checkUserLimits(email) {
+        try {
+            console.log(`🔍 Checking cost limits for ${email}`);
+            
+            // First check if user is blocked or has limits set
+            const { data: subscription, error: subError } = await this.supabase
+                .from('subscriptions')
+                .select('cost_limit_cents, is_blocked, block_reason, status')
+                .eq('email', email)
+                .single();
+
+            if (subError && subError.code !== 'PGRST116') {
+                throw subError;
+            }
+
+            // No subscription found - allow (free tier handled elsewhere)
+            if (!subscription) {
+                return { allowed: true, reason: 'No subscription found' };
+            }
+
+            // Check if blocked by admin
+            if (subscription.is_blocked) {
+                return { 
+                    allowed: false, 
+                    reason: subscription.block_reason || 'Account blocked by admin',
+                    isBlocked: true
+                };
+            }
+
+            // Check subscription status
+            if (subscription.status !== 'active' && subscription.status !== 'trialing') {
+                return { allowed: false, reason: 'Subscription not active' };
+            }
+
+            // If no limit set (NULL), allow unlimited
+            if (subscription.cost_limit_cents === null || subscription.cost_limit_cents === undefined) {
+                return { allowed: true, reason: 'Unlimited', costUsedCents: 0, costLimitCents: null };
+            }
+
+            // Get monthly cost
+            const usage = await this.getMonthlyCost(email);
+            
+            if (usage.totalCostCents >= subscription.cost_limit_cents) {
+                return { 
+                    allowed: false, 
+                    reason: `Monthly spending limit of $${(subscription.cost_limit_cents / 100).toFixed(2)} reached`,
+                    costUsedCents: usage.totalCostCents,
+                    costUsedDollars: (usage.totalCostCents / 100).toFixed(2),
+                    costLimitCents: subscription.cost_limit_cents,
+                    costLimitDollars: (subscription.cost_limit_cents / 100).toFixed(2),
+                    isBlocked: false // Not admin blocked, just limit reached
+                };
+            }
+
+            return { 
+                allowed: true, 
+                reason: 'OK',
+                costUsedCents: usage.totalCostCents,
+                costUsedDollars: (usage.totalCostCents / 100).toFixed(2),
+                costLimitCents: subscription.cost_limit_cents,
+                costLimitDollars: (subscription.cost_limit_cents / 100).toFixed(2),
+                costRemainingCents: subscription.cost_limit_cents - usage.totalCostCents,
+                costRemainingDollars: ((subscription.cost_limit_cents - usage.totalCostCents) / 100).toFixed(2)
+            };
+        } catch (error) {
+            console.error('❌ Error checking user limits:', error);
+            // On error, allow the request (fail open)
+            return { allowed: true, reason: 'Error checking limits', error: error.message };
+        }
+    }
+
+    /**
+     * Get monthly cost usage for a user
+     */
+    async getMonthlyCost(email) {
+        try {
+            const startOfMonth = new Date();
+            startOfMonth.setDate(1);
+            startOfMonth.setHours(0, 0, 0, 0);
+
+            const { data, error } = await this.supabase
+                .from('usage_tracking')
+                .select('tokens_input, tokens_output, tokens_total, cost_cents')
+                .eq('email', email)
+                .gte('created_at', startOfMonth.toISOString());
+
+            if (error) {
+                throw error;
+            }
+
+            const totalCostCents = data.reduce((sum, row) => sum + (row.cost_cents || 0), 0);
+            const totalTokens = data.reduce((sum, row) => sum + (row.tokens_total || 0), 0);
+            const totalInput = data.reduce((sum, row) => sum + (row.tokens_input || 0), 0);
+            const totalOutput = data.reduce((sum, row) => sum + (row.tokens_output || 0), 0);
+            const requestCount = data.length;
+
+            return {
+                totalCostCents,
+                totalCostDollars: (totalCostCents / 100).toFixed(2),
+                totalTokens,
+                totalInput,
+                totalOutput,
+                requestCount,
+                periodStart: startOfMonth.toISOString()
+            };
+        } catch (error) {
+            console.error('❌ Error getting monthly cost:', error);
+            return { totalCostCents: 0, totalCostDollars: '0.00', totalTokens: 0, totalInput: 0, totalOutput: 0, requestCount: 0, error: error.message };
+        }
+    }
+
+    // Alias for backward compatibility
+    async getMonthlyUsage(email) {
+        return this.getMonthlyCost(email);
+    }
+
+    /**
+     * Get detailed usage history for a user
+     */
+    async getUsageHistory(email, days = 30) {
+        try {
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - days);
+
+            const { data, error } = await this.supabase
+                .from('usage_tracking')
+                .select('*')
+                .eq('email', email)
+                .gte('created_at', startDate.toISOString())
+                .order('created_at', { ascending: false })
+                .limit(1000);
+
+            if (error) {
+                throw error;
+            }
+
+            return { success: true, history: data };
+        } catch (error) {
+            console.error('❌ Error getting usage history:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Get all users' usage summary (admin function)
+     */
+    async getAllUsersUsage() {
+        try {
+            console.log('📊 Getting all users usage summary');
+            
+            const startOfMonth = new Date();
+            startOfMonth.setDate(1);
+            startOfMonth.setHours(0, 0, 0, 0);
+
+            // Get all subscriptions with their usage
+            const { data: subscriptions, error: subError } = await this.supabase
+                .from('subscriptions')
+                .select('email, status, token_limit, is_blocked, block_reason, current_period_end, created_at');
+
+            if (subError) {
+                throw subError;
+            }
+
+            // Get usage for each user
+            const usersWithUsage = await Promise.all(subscriptions.map(async (sub) => {
+                const usage = await this.getMonthlyUsage(sub.email);
+                return {
+                    email: sub.email,
+                    status: sub.status,
+                    tokenLimit: sub.token_limit,
+                    isBlocked: sub.is_blocked,
+                    blockReason: sub.block_reason,
+                    tokensUsedThisMonth: usage.totalTokens,
+                    requestsThisMonth: usage.requestCount,
+                    subscriptionEnd: sub.current_period_end,
+                    createdAt: sub.created_at
+                };
+            }));
+
+            // Sort by usage (highest first)
+            usersWithUsage.sort((a, b) => b.tokensUsedThisMonth - a.tokensUsedThisMonth);
+
+            return { success: true, users: usersWithUsage };
+        } catch (error) {
+            console.error('❌ Error getting all users usage:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Set token limit for a user (admin function)
+     */
+    async setUserTokenLimit(email, tokenLimit) {
+        try {
+            console.log(`🔧 Setting token limit for ${email}: ${tokenLimit === null ? 'unlimited' : tokenLimit}`);
+            
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .update({
+                    token_limit: tokenLimit,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('email', email)
+                .select()
+                .single();
+
+            if (error) {
+                throw error;
+            }
+
+            console.log('✅ Token limit updated for:', email);
+            return { success: true, subscription: data };
+        } catch (error) {
+            console.error('❌ Error setting token limit:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Block or unblock a user (admin function)
+     */
+    async setUserBlocked(email, isBlocked, reason = null) {
+        try {
+            console.log(`🔧 ${isBlocked ? 'Blocking' : 'Unblocking'} user: ${email}`);
+            
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .update({
+                    is_blocked: isBlocked,
+                    block_reason: isBlocked ? reason : null,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('email', email)
+                .select()
+                .single();
+
+            if (error) {
+                throw error;
+            }
+
+            console.log(`✅ User ${isBlocked ? 'blocked' : 'unblocked'}:`, email);
+            return { success: true, subscription: data };
+        } catch (error) {
+            console.error('❌ Error blocking/unblocking user:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Set default token limit for all new users (updates existing unlimited users too)
+     */
+    async setDefaultTokenLimit(tokenLimit) {
+        try {
+            console.log(`🔧 Setting default token limit: ${tokenLimit === null ? 'unlimited' : tokenLimit}`);
+            
+            // Update all users that currently have no limit
+            const { data, error } = await this.supabase
+                .from('subscriptions')
+                .update({
+                    token_limit: tokenLimit,
+                    updated_at: new Date().toISOString()
+                })
+                .is('token_limit', null)
+                .select();
+
+            if (error) {
+                throw error;
+            }
+
+            console.log(`✅ Updated ${data.length} users with default limit`);
+            return { success: true, updatedCount: data.length };
+        } catch (error) {
+            console.error('❌ Error setting default token limit:', error);
+            return { success: false, error: error.message };
+        }
+    }
 }
 
 module.exports = SupabaseIntegration;

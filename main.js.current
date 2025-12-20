@@ -1,3 +1,4 @@
+
 const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut, systemPreferences, clipboard } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
@@ -248,7 +249,6 @@ class JarvisApp {
             this.loadVoiceShortcut(); // Load custom voice shortcut before setting up defaults
             this.setupVoiceRecording();
             this.setupAutoUpdater(); // Setup auto-updater after app is ready
-            this.loadCurrentUserEmail(); // Load user email for token tracking
             
             // Trigger screen recording permission request early
             // This makes macOS add the app to Screen Recording permissions list
@@ -2681,31 +2681,28 @@ class JarvisApp {
         });
 
         // Handle OpenAI API call via main process (to avoid Electron fetch issues)
-        ipcMain.handle('call-openai-api', async (_event, requestPayload, isLowModel = false) => {
+        ipcMain.handle('call-openai-api', async (_event, requestPayload, userEmail = null) => {
             try {
                 // Get user email for tracking
-                const email = this.currentUserEmail;
+                const email = userEmail || this.currentUserEmail;
                 
-                // Check user cost limits before making the call
-                // Skip limit check for Low model (GPT-5 Mini) - it's free/unlimited
-                if (!isLowModel && email && this.supabaseIntegration) {
+                // Check user limits before making the call
+                if (email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
                         console.log(`🚫 User ${email} blocked: ${limitCheck.reason}`);
-                        return {
-                            ok: false,
-                            status: 429,
-                            statusText: 'Limit Exceeded',
-                            data: {
+                        return { 
+                            ok: false, 
+                            status: 429, 
+                            statusText: 'Limit Exceeded', 
+                            data: { 
                                 error: limitCheck.reason,
-                                costUsedDollars: limitCheck.costUsedDollars,
-                                costLimitDollars: limitCheck.costLimitDollars,
+                                tokensUsed: limitCheck.tokensUsed,
+                                tokenLimit: limitCheck.tokenLimit,
                                 isBlocked: limitCheck.isBlocked
-                            }
+                            } 
                         };
                     }
-                } else if (isLowModel) {
-                    console.log('🆓 Low model (OpenAI) - skipping cost limit check');
                 }
                 
                 const supabaseConfig = this.secureConfig.getSupabaseConfig();
@@ -2749,18 +2746,10 @@ class JarvisApp {
                                     console.log('✅ Main process OpenAI: Successfully parsed response');
                                     
                                     // Track token usage if we have email and usage data
-                                    // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
-                                    console.log(`📊 OpenAI tracking check - Email: ${email || 'NOT SET'}, Supabase: ${this.supabaseIntegration ? 'YES' : 'NO'}, Usage in response: ${responseData.usage ? 'YES' : 'NO'}, isLowModel: ${isLowModel}`);
-                                    
-                                    if (isLowModel) {
-                                        console.log('🆓 Low model - skipping cost tracking');
-                                    } else if (email && this.supabaseIntegration && responseData.usage) {
-                                        console.log(`📊 OpenAI FULL usage object:`, JSON.stringify(responseData.usage, null, 2));
+                                    if (email && this.supabaseIntegration && responseData.usage) {
                                         const tokensInput = responseData.usage.input_tokens || responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.output_tokens || responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'gpt-4';
-                                        
-                                        console.log(`📊 OpenAI usage - Input: ${tokensInput}, Output: ${tokensOutput}, Model: ${model}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         this.supabaseIntegration.recordTokenUsage(
@@ -2770,10 +2759,7 @@ class JarvisApp {
                                             model, 
                                             'openai', 
                                             'chat'
-                                        ).then(() => console.log('✅ OpenAI token usage recorded successfully'))
-                                        .catch(err => console.error('❌ Failed to record OpenAI token usage:', err));
-                                    } else {
-                                        console.log('⚠️ OpenAI tracking skipped - missing email, supabase, or usage data');
+                                        ).catch(err => console.error('Failed to record token usage:', err));
                                     }
                                     
                                     resolve({ ok: true, status: res.statusCode, statusText: res.statusMessage, data: responseData });
@@ -2806,31 +2792,28 @@ class JarvisApp {
         });
 
         // Handle OpenRouter API call via main process (for token tracking and limit enforcement)
-        ipcMain.handle('call-openrouter-api', async (_event, requestPayload, isLowModel = false) => {
+        ipcMain.handle('call-openrouter-api', async (_event, requestPayload, userEmail = null) => {
             try {
                 // Get user email for tracking
-                const email = this.currentUserEmail;
+                const email = userEmail || this.currentUserEmail;
                 
-                // Check user cost limits before making the call
-                // Skip limit check for Low model (GPT-5 Mini) - it's free/unlimited
-                if (!isLowModel && email && this.supabaseIntegration) {
+                // Check user limits before making the call
+                if (email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
                         console.log(`🚫 User ${email} blocked from OpenRouter: ${limitCheck.reason}`);
-                        return {
-                            ok: false,
-                            status: 429,
-                            statusText: 'Limit Exceeded',
-                            data: {
+                        return { 
+                            ok: false, 
+                            status: 429, 
+                            statusText: 'Limit Exceeded', 
+                            data: { 
                                 error: limitCheck.reason,
-                                costUsedDollars: limitCheck.costUsedDollars,
-                                costLimitDollars: limitCheck.costLimitDollars,
+                                tokensUsed: limitCheck.tokensUsed,
+                                tokenLimit: limitCheck.tokenLimit,
                                 isBlocked: limitCheck.isBlocked
-                            }
+                            } 
                         };
                     }
-                } else if (isLowModel) {
-                    console.log('🆓 Low model call - skipping cost limit check');
                 }
                 
                 const openrouterConfig = this.secureConfig.getOpenRouterConfig();
@@ -2871,35 +2854,22 @@ class JarvisApp {
                                     console.log('✅ Main process OpenRouter: Successfully parsed response');
                                     
                                     // Track token usage if we have email and usage data
-                                    // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
-                                    console.log(`📊 OpenRouter tracking check - Email: ${email || 'NOT SET'}, Usage in response: ${responseData.usage ? 'YES' : 'NO'}, isLowModel: ${isLowModel}`);
-                                    
-                                    if (isLowModel) {
-                                        console.log('🆓 Low model - skipping cost tracking');
-                                    } else if (email && this.supabaseIntegration && responseData.usage) {
-                                        console.log(`📊 OpenRouter FULL usage object:`, JSON.stringify(responseData.usage, null, 2));
+                                    if (email && this.supabaseIntegration && responseData.usage) {
                                         const tokensInput = responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'openrouter';
-                                        // OpenRouter may return cost directly - check for it
-                                        const apiCost = responseData.usage.total_cost || responseData.usage.cost || null;
                                         
-                                        console.log(`📊 OpenRouter usage - Input: ${tokensInput}, Output: ${tokensOutput}, Model: ${model}, API Cost: ${apiCost || 'not provided'}`);
+                                        console.log(`📊 OpenRouter usage - Input: ${tokensInput}, Output: ${tokensOutput}`);
                                         
                                         // Record usage asynchronously (don't wait)
-                                        // Pass API-provided cost if available
                                         this.supabaseIntegration.recordTokenUsage(
                                             email, 
                                             tokensInput, 
                                             tokensOutput, 
                                             model, 
                                             'openrouter', 
-                                            'chat',
-                                            apiCost  // Pass API cost if available
-                                        ).then(() => console.log('✅ OpenRouter usage recorded successfully'))
-                                        .catch(err => console.error('❌ Failed to record OpenRouter usage:', err));
-                                    } else {
-                                        console.log('⚠️ OpenRouter tracking skipped - missing email or usage data');
+                                            'chat'
+                                        ).catch(err => console.error('Failed to record OpenRouter token usage:', err));
                                     }
                                     
                                     resolve({ ok: true, status: res.statusCode, statusText: res.statusMessage, data: responseData });
@@ -2937,21 +2907,21 @@ class JarvisApp {
                 // Get user email for tracking
                 const email = userEmail || this.currentUserEmail;
                 
-                // Check user cost limits before making the call
+                // Check user limits before making the call
                 if (email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
                         console.log(`🚫 User ${email} blocked from Perplexity: ${limitCheck.reason}`);
-                        return {
-                            ok: false,
-                            status: 429,
-                            statusText: 'Limit Exceeded',
-                            data: {
+                        return { 
+                            ok: false, 
+                            status: 429, 
+                            statusText: 'Limit Exceeded', 
+                            data: { 
                                 error: limitCheck.reason,
-                                costUsedDollars: limitCheck.costUsedDollars,
-                                costLimitDollars: limitCheck.costLimitDollars,
+                                tokensUsed: limitCheck.tokensUsed,
+                                tokenLimit: limitCheck.tokenLimit,
                                 isBlocked: limitCheck.isBlocked
-                            }
+                            } 
                         };
                     }
                 }
@@ -3091,21 +3061,21 @@ class JarvisApp {
                 // Get user email for tracking
                 const email = userEmail || this.currentUserEmail;
                 
-                // Check user cost limits before making the call
+                // Check user limits before making the call
                 if (email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
                         console.log(`🚫 User ${email} blocked from Claude: ${limitCheck.reason}`);
-                        return {
-                            ok: false,
-                            status: 429,
-                            statusText: 'Limit Exceeded',
-                            data: {
+                        return { 
+                            ok: false, 
+                            status: 429, 
+                            statusText: 'Limit Exceeded', 
+                            data: { 
                                 error: limitCheck.reason,
-                                costUsedDollars: limitCheck.costUsedDollars,
-                                costLimitDollars: limitCheck.costLimitDollars,
+                                tokensUsed: limitCheck.tokensUsed,
+                                tokenLimit: limitCheck.tokenLimit,
                                 isBlocked: limitCheck.isBlocked
-                            }
+                            } 
                         };
                     }
                 }
@@ -3372,7 +3342,6 @@ class JarvisApp {
                     
                     // Track current user email for token usage tracking
                     this.currentUserEmail = email;
-                    console.log(`📧 Token tracking: User email set to ${email} (sign-in)`);
 
                     console.log('✅ User signed in successfully with active subscription');
                     return {
@@ -3854,30 +3823,6 @@ class JarvisApp {
                 return { success: true, checkoutUrl: checkoutResult.checkoutUrl };
             } catch (error) {
                 console.error('❌ Error creating checkout session:', error);
-                return { success: false, error: error.message };
-            }
-        });
-
-        // Handle creating checkout session for adding credits
-        ipcMain.handle('create-credits-checkout', async (event, productId) => {
-            try {
-                console.log('🛒 Creating credits checkout for product:', productId);
-                
-                // Get user email (optional - user can enter it during checkout)
-                const userEmail = this.getUserEmail();
-                
-                // Use Polar integration to create checkout session
-                const checkoutResult = await this.polarIntegration.createCheckoutSession(productId, userEmail || null);
-                
-                if (!checkoutResult.success) {
-                    throw new Error(checkoutResult.error || 'Failed to create checkout session');
-                }
-                
-                shell.openExternal(checkoutResult.checkoutUrl);
-                
-                return { success: true, checkoutUrl: checkoutResult.checkoutUrl };
-            } catch (error) {
-                console.error('❌ Error creating credits checkout:', error);
                 return { success: false, error: error.message };
             }
         });
@@ -4651,31 +4596,6 @@ class JarvisApp {
 
 
 
-    // Load current user email from saved subscription on app startup
-    loadCurrentUserEmail() {
-        try {
-            const fs = require('fs');
-            const path = require('path');
-            const userDataPath = app.getPath('userData');
-            const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
-            
-            if (fs.existsSync(subscriptionFile)) {
-                const subscriptionData = JSON.parse(fs.readFileSync(subscriptionFile, 'utf8'));
-                
-                if (subscriptionData.email) {
-                    this.currentUserEmail = subscriptionData.email;
-                    console.log(`📧 Token tracking: User email loaded on startup: ${subscriptionData.email}`);
-                } else {
-                    console.log('⚠️ Token tracking: No email found in saved subscription');
-                }
-            } else {
-                console.log('⚠️ Token tracking: No saved subscription file found');
-            }
-        } catch (error) {
-            console.error('❌ Error loading user email for token tracking:', error);
-        }
-    }
-
     async checkActiveSubscription() {
         try {
             const fs = require('fs');
@@ -4691,7 +4611,6 @@ class JarvisApp {
                     // Track current user email for token usage
                     if (subscriptionData.email) {
                         this.currentUserEmail = subscriptionData.email;
-                        console.log(`📧 Token tracking: User email set to ${subscriptionData.email}`);
                     }
                     
                     return {

@@ -156,32 +156,104 @@ DMG_NAME="Jarvis-6.0-${VERSION}-SIGNED.dmg"
 DMG_PATH="dist/$DMG_NAME"
 rm -f "$DMG_PATH"
 
-# Unmount any existing volumes with the same name
-for vol in "/Volumes/Install Jarvis 5.0"*; do
-    hdiutil detach "$vol" 2>/dev/null || true
+# Clean up any existing mounted volumes
+for vol in "/Volumes/JarvisInstall"*; do
+    hdiutil detach "$vol" -force 2>/dev/null || true
 done
-hdiutil detach /tmp/jarvis-dmg-mount 2>/dev/null || true
-# Also unmount by finding all "Install Jarvis" volumes
-hdiutil info | grep -A 1 "Install Jarvis" | grep "^/dev/" | awk '{print $1}' | xargs -I {} hdiutil detach {} 2>/dev/null || true
+hdiutil detach /dev/disk4 -force 2>/dev/null || true
+hdiutil detach /dev/disk5 -force 2>/dev/null || true
 
-# Create temporary directory for DMG contents
-DMG_TEMP=$(mktemp -d)
-trap "rm -rf $DMG_TEMP" EXIT
+# Create DMG source directory in project folder
+DMG_TEMP="$PWD/dmg-staging"
+rm -rf "$DMG_TEMP"
+mkdir -p "$DMG_TEMP"
 
-# Copy signed app to temp directory
+# Copy signed app to staging directory
+echo "  Copying app to staging directory..."
 cp -R "$APP_PATH" "$DMG_TEMP/"
 
-# Create DMG with unique volume name to avoid conflicts
-VOLUME_NAME="Jarvis5-$(date +%s)"
-echo "  Creating DMG with volume name: $VOLUME_NAME..."
-hdiutil create -volname "$VOLUME_NAME" \
+# Create Applications symlink
+ln -s /Applications "$DMG_TEMP/Applications"
+
+echo "  Creating styled DMG with drag-to-Applications layout..."
+
+# Remove any existing DMG first
+rm -f "$DMG_PATH"
+
+# Step 1: Create initial compressed DMG (using a simple name to avoid issues)
+echo "  Creating initial DMG..."
+hdiutil create -volname "JarvisInstall" \
     -srcfolder "$DMG_TEMP" \
-    -ov \
     -format UDZO \
-    "$DMG_PATH" || {
+    -ov \
+    "$DMG_PATH"
+
+if [ -f "$DMG_PATH" ]; then
+    # Step 2: Convert to writable format for styling
+    echo "  Converting to writable format for styling..."
+    TEMP_DMG="/tmp/jarvis-temp-rw.dmg"
+    rm -f "$TEMP_DMG"
+    hdiutil convert "$DMG_PATH" -format UDRW -o "$TEMP_DMG" -ov
+    
+    # Step 3: Mount and apply styling
+    echo "  Mounting and styling DMG..."
+    MOUNT_INFO=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify)
+    
+    if echo "$MOUNT_INFO" | grep -q "JarvisInstall"; then
+        # Apply styling with AppleScript
+        osascript <<'APPLESCRIPT'
+tell application "Finder"
+    tell disk "JarvisInstall"
+        open
+        delay 1
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set bounds of container window to {100, 100, 700, 500}
+        set theViewOptions to icon view options of container window
+        set arrangement of theViewOptions to not arranged
+        set icon size of theViewOptions to 100
+        set background color of theViewOptions to {60000, 60000, 60000}
+        try
+            set position of item "Jarvis 6.0.app" to {150, 190}
+        end try
+        try
+            set position of item "Applications" to {450, 190}
+        end try
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+APPLESCRIPT
+        
+        echo "  Styling applied!"
+        
+        # Sync and unmount
+        sync
+        hdiutil detach /dev/disk5 -force 2>/dev/null || hdiutil detach /dev/disk4 -force 2>/dev/null || true
+        
+        # Step 4: Convert back to compressed format
+        echo "  Converting to final DMG..."
+        rm -f "$DMG_PATH"
+        hdiutil convert "$TEMP_DMG" -format UDZO -o "$DMG_PATH"
+    else
+        echo "  ⚠️ Could not mount DMG for styling, using basic DMG"
+    fi
+    
+    # Clean up temp DMG
+    rm -f "$TEMP_DMG"
+else
+    echo "  ⚠️ Failed to create initial DMG"
+fi
+
+# Clean up staging directory
+rm -rf "$DMG_TEMP"
+
+if [ ! -f "$DMG_PATH" ]; then
     echo "  ⚠️ DMG creation failed"
     DMG_PATH=""
-}
+fi
 
 if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
     echo "🔐 Signing DMG..."

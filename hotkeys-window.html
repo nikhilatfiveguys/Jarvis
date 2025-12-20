@@ -139,8 +139,8 @@
             <div class="shortcut-item">
                 <div class="shortcut-desc">Toggle Jarvis</div>
                 <div class="shortcut-key-wrapper">
-                    <div class="shortcut-key" id="toggle-shortcut" data-action="toggle">Option + Space</div>
-                    <div class="rebind-hint">(click to rebind)</div>
+                    <div class="shortcut-key" id="toggle-shortcut" data-action="toggle">Not set</div>
+                    <div class="rebind-hint">(click to rebind, double-click to unbind)</div>
                 </div>
             </div>
             <div class="shortcut-item">
@@ -153,7 +153,21 @@
                 <div class="shortcut-desc">Answer screen</div>
                 <div class="shortcut-key-wrapper">
                     <div class="shortcut-key" id="answer-screen-shortcut" data-action="answer-screen">Not set</div>
-                    <div class="rebind-hint">(click to rebind)</div>
+                    <div class="rebind-hint">(click to rebind, double-click to unbind)</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Speech to text</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key" id="voice-shortcut" data-action="voice">Not set</div>
+                    <div class="rebind-hint">(click to rebind, double-click to unbind)</div>
+                </div>
+            </div>
+            <div class="shortcut-item">
+                <div class="shortcut-desc">Push-to-talk</div>
+                <div class="shortcut-key-wrapper">
+                    <div class="shortcut-key">Hold ⌃ Control</div>
+                    <div class="rebind-hint">(hold to record, release to stop)</div>
                 </div>
             </div>
             <div class="shortcut-item">
@@ -198,42 +212,60 @@
         
         // Load saved shortcuts
         ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
-            if (shortcut) {
-                document.getElementById('toggle-shortcut').textContent = shortcut;
-            }
+            document.getElementById('toggle-shortcut').textContent = shortcut || 'Not set';
         });
         
         ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
-            if (shortcut) {
-                document.getElementById('answer-screen-shortcut').textContent = shortcut;
-            }
+            document.getElementById('answer-screen-shortcut').textContent = shortcut || 'Not set';
         });
+        
+        ipcRenderer.invoke('get-voice-shortcut').then(shortcut => {
+            document.getElementById('voice-shortcut').textContent = shortcut || 'Not set';
+        });
+        
+        // Double-click detection helper
+        function setupShortcutHandlers(elementId, action, defaultText) {
+            const element = document.getElementById(elementId);
+            let clickCount = 0;
+            let clickTimer = null;
+            
+            element.addEventListener('click', (e) => {
+                if (isListening) return;
+                
+                clickCount++;
+                
+                if (clickCount === 1) {
+                    // Wait for potential second click
+                    clickTimer = setTimeout(() => {
+                        // Single click - start rebinding
+                        clickCount = 0;
+                        currentShortcut = element;
+                        currentAction = action;
+                        currentShortcut.classList.add('editing');
+                        currentShortcut.textContent = 'Press 1-2 keys...';
+                        isListening = true;
+                        
+                        ipcRenderer.send('start-shortcut-listening', action);
+                    }, 250);
+                } else if (clickCount === 2) {
+                    // Double click - unbind
+                    clearTimeout(clickTimer);
+                    clickCount = 0;
+                    
+                    element.textContent = 'Not set';
+                    ipcRenderer.invoke(`unbind-${action}-shortcut`);
+                }
+            });
+        }
         
         // Toggle Jarvis shortcut
-        document.getElementById('toggle-shortcut').addEventListener('click', () => {
-            if (isListening) return;
-            
-            currentShortcut = document.getElementById('toggle-shortcut');
-            currentAction = 'toggle';
-            currentShortcut.classList.add('editing');
-            currentShortcut.textContent = 'Press keys...';
-            isListening = true;
-            
-            ipcRenderer.send('start-shortcut-listening', 'toggle');
-        });
+        setupShortcutHandlers('toggle-shortcut', 'toggle', 'Not set');
         
         // Answer Screen shortcut
-        document.getElementById('answer-screen-shortcut').addEventListener('click', () => {
-            if (isListening) return;
-            
-            currentShortcut = document.getElementById('answer-screen-shortcut');
-            currentAction = 'answer-screen';
-            currentShortcut.classList.add('editing');
-            currentShortcut.textContent = 'Press keys...';
-            isListening = true;
-            
-            ipcRenderer.send('start-shortcut-listening', 'answer-screen');
-        });
+        setupShortcutHandlers('answer-screen-shortcut', 'answer-screen', 'Not set');
+        
+        // Voice/Speech to text shortcut
+        setupShortcutHandlers('voice-shortcut', 'voice', 'Not set');
         
         // Listen for shortcut captured
         ipcRenderer.on('shortcut-captured', (event, shortcut, action) => {
@@ -241,7 +273,7 @@
                 currentShortcut.classList.remove('editing');
                 
                 if (action === 'toggle' || currentAction === 'toggle') {
-                currentShortcut.textContent = shortcut || 'Option + Space';
+                    currentShortcut.textContent = shortcut || 'Not set';
                     if (shortcut) {
                         ipcRenderer.invoke('set-toggle-shortcut', shortcut);
                     }
@@ -249,6 +281,11 @@
                     currentShortcut.textContent = shortcut || 'Not set';
                     if (shortcut) {
                         ipcRenderer.invoke('set-answer-screen-shortcut', shortcut);
+                    }
+                } else if (action === 'voice' || currentAction === 'voice') {
+                    currentShortcut.textContent = shortcut || 'Not set';
+                    if (shortcut) {
+                        ipcRenderer.invoke('set-voice-shortcut', shortcut);
                     }
                 }
                 
@@ -264,11 +301,15 @@
                 if (currentShortcut) {
                     currentShortcut.classList.remove('editing');
                     if (currentAction === 'toggle') {
-                    ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
-                        currentShortcut.textContent = shortcut || 'Option + Space';
-                    });
+                        ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
+                            currentShortcut.textContent = shortcut || 'Not set';
+                        });
                     } else if (currentAction === 'answer-screen') {
                         ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
+                            currentShortcut.textContent = shortcut || 'Not set';
+                        });
+                    } else if (currentAction === 'voice') {
+                        ipcRenderer.invoke('get-voice-shortcut').then(shortcut => {
                             currentShortcut.textContent = shortcut || 'Not set';
                         });
                     }

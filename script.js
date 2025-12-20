@@ -15,7 +15,9 @@ class JarvisOverlay {
         this.grokFreakyMode = false; // Track Grok freaky mode state
         this.grokVoiceMode = false; // Track Grok voice mode state
         this.elevenLabsApiKey = 'sk_da38cfd86748d0dbf709c4668986b9c97ca72056b07ed224';
-        this.elevenLabsVoiceId = 'vO7hjeAjmsdlGgUdvPpe';
+        this.elevenLabsVoiceId = 'ShB6BQqbEXZxWO5511Qq'; // Female voice
+        this.elevenLabsVoiceId2 = '4NejU5DwQjevnR6mh3mb'; // Male voice
+        this.useSecondVoice = false; // Toggle between voices
         this.hasBeenPositioned = false; // Track if overlay has been positioned (to avoid recentering)
         this.stealthModeEnabled = false; // Track stealth mode state
         
@@ -39,9 +41,19 @@ class JarvisOverlay {
         this.subscriptionActivatedTime = null;
         this.countdownTimerInterval = null; // Track countdown timer to stop it
         
-        // Message tracking for free users
+        // Message tracking for free users (High tier models)
         this.maxFreeMessages = 5;
         this.messageCount = this.loadMessageCount();
+        
+        // Low model tracking for free users (30/day)
+        this.maxFreeLowMessages = 30;
+        this.lowMessageCount = this.loadLowMessageCount();
+        this.isLowModelMode = false; // Track if we're in low model mode (due to credits exhausted)
+        this.lowModelId = 'gpt-5-mini'; // GPT-5 Mini model ID for OpenAI API
+        this.lowModelCharLimit = 2000; // Character limit for Low model input
+        
+        // Check and reset Low model message count if 24 hours have passed
+        this.checkAndResetLowMessageCount();
         
         // Check for free access
         this.checkFreeAccess();
@@ -427,17 +439,28 @@ class JarvisOverlay {
         // Listen for voice recording events from main process
         ipcRenderer.on('voice-recording-started', () => {
             this.showVoiceRecordingIndicator();
+            this.showVoiceShortcutHint();
+        });
+
+        ipcRenderer.on('voice-recording-processing', () => {
+            // Immediately hide recording indicator and show thinking state
+            this.hideVoiceRecordingIndicator();
+            this.hideVoiceShortcutHint();
+            this.showVoiceProcessingState();
         });
 
         ipcRenderer.on('voice-recording-stopped', () => {
             this.hideVoiceRecordingIndicator();
+            this.hideVoiceShortcutHint();
         });
 
         ipcRenderer.on('voice-transcription', (event, text) => {
+            this.hideVoiceProcessingState();
             this.handleVoiceTranscription(text);
         });
 
         ipcRenderer.on('voice-recording-error', (event, error) => {
+            this.hideVoiceProcessingState();
             this.showVoiceError(error);
         });
 
@@ -469,6 +492,49 @@ class JarvisOverlay {
         ipcRenderer.on('show-paywall', () => {
             this.showPaywall();
         });
+
+        // Setup push-to-talk (hold Control key to record, release to stop)
+        this.setupPushToTalk();
+    }
+
+    setupPushToTalk() {
+        // Track if we started recording via push-to-talk
+        this.isPushToTalkActive = false;
+        this.pushToTalkKey = 'Control'; // The key to hold for push-to-talk
+        
+        // Listen for keydown - start recording when Control is held
+        document.addEventListener('keydown', (e) => {
+            // Only trigger on Control key alone (not with other modifiers as part of a combo)
+            if (e.key === 'Control' && !e.repeat && !this.isPushToTalkActive) {
+                // Small delay to distinguish from Ctrl+key combos
+                this.pushToTalkTimeout = setTimeout(() => {
+                    if (!this.isPushToTalkActive) {
+                        this.isPushToTalkActive = true;
+                        console.log('🎤 Push-to-talk: Starting recording (Control held)');
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('start-push-to-talk');
+                    }
+                }, 150); // 150ms delay to avoid triggering on Ctrl+key combos
+            }
+        });
+
+        // Listen for keyup - stop recording when Control is released
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'Control') {
+                // Clear the timeout if key was released quickly (it was a combo)
+                if (this.pushToTalkTimeout) {
+                    clearTimeout(this.pushToTalkTimeout);
+                    this.pushToTalkTimeout = null;
+                }
+                
+                if (this.isPushToTalkActive) {
+                    this.isPushToTalkActive = false;
+                    console.log('🎤 Push-to-talk: Stopping recording (Control released)');
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('stop-push-to-talk');
+                }
+            }
+        });
     }
 
     async requestMicrophonePermission() {
@@ -488,7 +554,7 @@ class JarvisOverlay {
             indicator = document.createElement('div');
             indicator.id = 'voice-recording-indicator';
             indicator.className = 'voice-recording-indicator';
-            indicator.innerHTML = 'recording...';
+            indicator.innerHTML = '● recording';
             document.body.appendChild(indicator);
         }
         indicator.style.display = 'block';
@@ -499,6 +565,53 @@ class JarvisOverlay {
         if (indicator) {
             indicator.style.display = 'none';
         }
+    }
+
+    showVoiceShortcutHint() {
+        // Only show hint the first few times
+        const hintCount = parseInt(localStorage.getItem('jarvis-voice-hint-count') || '0');
+        if (hintCount >= 3) return; // Stop showing after 3 times
+        
+        localStorage.setItem('jarvis-voice-hint-count', String(hintCount + 1));
+        
+        let hint = document.getElementById('voice-shortcut-hint');
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.id = 'voice-shortcut-hint';
+            hint.className = 'voice-shortcut-hint';
+            // Show different hint based on whether it was push-to-talk
+            hint.innerHTML = this.isPushToTalkActive 
+                ? 'Release <kbd>⌃</kbd> to stop'
+                : 'Press <kbd>⌘S</kbd> to stop';
+            document.body.appendChild(hint);
+        } else {
+            hint.innerHTML = this.isPushToTalkActive 
+                ? 'Release <kbd>⌃</kbd> to stop'
+                : 'Press <kbd>⌘S</kbd> to stop';
+        }
+        hint.style.display = 'block';
+        
+        // Auto-hide after 3 seconds
+        setTimeout(() => this.hideVoiceShortcutHint(), 3000);
+    }
+
+    hideVoiceShortcutHint() {
+        const hint = document.getElementById('voice-shortcut-hint');
+        if (hint) {
+            hint.style.display = 'none';
+        }
+    }
+
+    showVoiceProcessingState() {
+        // Show thinking indicator in the output area
+        if (this.outputArea) {
+            this.outputArea.innerHTML = '<div class="thinking">transcribing...</div>';
+            this.outputArea.style.display = 'block';
+        }
+    }
+
+    hideVoiceProcessingState() {
+        // Will be replaced by actual content or cleared on error
     }
 
     handleVoiceTranscription(text) {
@@ -1011,6 +1124,7 @@ class JarvisOverlay {
         this.modelSwitcherBtn = document.getElementById('model-switcher-btn');
         this.modelSubmenu = document.getElementById('model-submenu');
         this.currentModelDisplay = document.getElementById('current-model-display');
+        this.tierToggleCheckbox = document.getElementById('tier-toggle-checkbox');
         this.settingsSubmenuBtn = document.getElementById('settings-submenu-btn');
         this.settingsSubmenu = document.getElementById('settings-submenu');
         this.opacitySlider = document.getElementById('opacity-slider');
@@ -1109,14 +1223,6 @@ class JarvisOverlay {
         if (this.modelSwitcherBtn) {
             this.modelSwitcherBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                
-                // Check if user has premium access before showing model options
-                if (!this.hasPremiumAccess()) {
-                    this.showNotification('🔒 OpenRouter models require Jarvis Premium. Upgrade to access GPT-5.1, Claude, Gemini, and more!', false);
-                    this.showUpgradePrompt();
-                    return;
-                }
-                
                 this.toggleModelSubmenu();
             });
         }
@@ -1183,10 +1289,25 @@ class JarvisOverlay {
             
             // Freaky mode toggle for Grok
             const freakyToggle = document.getElementById('freaky-toggle');
+            const freakyCheckbox = document.getElementById('freaky-toggle-checkbox');
             if (freakyToggle) {
                 freakyToggle.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.toggleGrokFreakyMode();
+                });
+            }
+            if (freakyCheckbox) {
+                freakyCheckbox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    this.toggleGrokFreakyMode(freakyCheckbox.checked);
+                });
+            }
+            
+            // "More models" button
+            const moreModelsBtn = document.getElementById('model-more-btn');
+            if (moreModelsBtn) {
+                moreModelsBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.toggleMoreModels();
                 });
             }
         }
@@ -1197,6 +1318,15 @@ class JarvisOverlay {
             grokVoiceBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleGrokVoiceMode();
+            });
+        }
+        
+        // Voice selector toggle (switch between voices)
+        const voiceSelectBtn = document.getElementById('voice-select-btn');
+        if (voiceSelectBtn) {
+            voiceSelectBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleVoiceSelection();
             });
         }
         
@@ -1260,7 +1390,7 @@ class JarvisOverlay {
         if (checkUpdatesBtn) {
             checkUpdatesBtn.addEventListener('click', () => {
                 this.checkForUpdates();
-                this.showNotification('Checking for updates...', 'info');
+                this.showUpdateNotification('🔍 Checking for updates...', 'info');
             });
         }
         
@@ -1385,6 +1515,9 @@ class JarvisOverlay {
         if (this.accountModalOk) {
             this.accountModalOk.addEventListener('click', () => this.hideAccountModal());
         }
+        
+        // Jarvis Low/High tier toggle (inside dropdown)
+        this.setupTierToggle();
         
         
         // Close account modal when clicking outside
@@ -1663,39 +1796,106 @@ class JarvisOverlay {
             this.pendingUpdate = info;
             this.updateReadyToInstall = false;
             this.showUpdateInMenu(info.version, 'available');
+            this.showUpdateNotification(`🔄 Update v${info.version} available`, 'update', false, info);
         });
-        
+
         ipcRenderer.on('update-download-progress', (event, progress) => {
             console.log('📥 Download progress:', progress.percent);
             this.showUpdateInMenu(null, 'downloading', progress.percent);
+            this.showUpdateNotification(`⬇️ Downloading... ${Math.round(progress.percent)}%`, 'downloading');
         });
-        
+
         ipcRenderer.on('update-downloaded', (event, info) => {
             console.log('✅ Update downloaded:', info);
             this.pendingUpdate = info;
             this.updateReadyToInstall = true;
             this.showUpdateInMenu(info.version, 'ready');
+            this.showUpdateNotification(`✅ Update v${info.version} ready to install`, 'ready');
         });
         
         ipcRenderer.on('update-error', (event, error) => {
             // Ignore network/timeout errors - don't show to user
             if (error && (error.includes('504') || error.includes('timeout') || error.includes('time-out') || error.includes('Gateway'))) {
+                this.hideUpdateNotification();
                 return; // Silently ignore
             }
-            
+
             // Only show critical errors (like code signature issues)
             if (error && error.includes('code signature')) {
-                this.showNotification('Opening download page...', 'info');
+                this.showUpdateNotification('Opening download page...', 'info');
                 const { shell } = require('electron');
                 shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
             }
             // Don't show other update errors - they're not critical
+            this.hideUpdateNotification();
         });
         
         ipcRenderer.on('update-not-available', (event) => {
             console.log('✅ App is up to date');
-            this.showNotification("You're up to date! ✅", 'success');
+            this.showUpdateNotification("You're up to date! ✅", 'success', true);
         });
+    }
+
+    showUpdateNotification(message, type = 'info', allowDismissForever = false, updateInfo = null) {
+        // Check if user dismissed "up to date" notifications
+        if (type === 'success' && localStorage.getItem('jarvis-hide-uptodate-notification') === 'true') {
+            return;
+        }
+
+        // Remove any existing update notification
+        this.hideUpdateNotification();
+
+        const notification = document.createElement('div');
+        notification.id = 'update-notification';
+        notification.className = `update-notification ${type === 'success' ? 'success' : type === 'update' ? 'update-available' : ''}`;
+
+        let html = `<div class="update-notification-text">${message}</div>`;
+
+        // Add action buttons based on type
+        if (type === 'update' && updateInfo) {
+            html += `
+                <div class="update-notification-actions">
+                    <button class="update-notification-btn dismiss" onclick="window.jarvisApp.hideUpdateNotification()">Later</button>
+                    <button class="update-notification-btn primary" onclick="window.jarvisApp.downloadUpdate()">Update</button>
+                </div>
+            `;
+        } else if (type === 'ready') {
+            html += `
+                <div class="update-notification-actions">
+                    <button class="update-notification-btn dismiss" onclick="window.jarvisApp.hideUpdateNotification()">Later</button>
+                    <button class="update-notification-btn primary" onclick="window.jarvisApp.installUpdate()">Install & Restart</button>
+                </div>
+            `;
+        } else if (type === 'downloading') {
+            // No buttons during download, just show progress
+        } else if (allowDismissForever) {
+            html += `
+                <div class="update-notification-actions">
+                    <button class="update-notification-btn dismiss" onclick="window.jarvisApp.dismissUpToDateForever()">Don't show again</button>
+                    <button class="update-notification-btn" onclick="window.jarvisApp.hideUpdateNotification()">OK</button>
+                </div>
+            `;
+        }
+
+        notification.innerHTML = html;
+        document.body.appendChild(notification);
+
+        // Auto-hide success notifications after 5 seconds (unless they have important actions)
+        if (type === 'success' || type === 'info') {
+            setTimeout(() => this.hideUpdateNotification(), 5000);
+        }
+    }
+
+    hideUpdateNotification() {
+        const notification = document.getElementById('update-notification');
+        if (notification) {
+            notification.remove();
+        }
+    }
+
+    dismissUpToDateForever() {
+        localStorage.setItem('jarvis-hide-uptodate-notification', 'true');
+        this.hideUpdateNotification();
     }
     
     showUpdateInMenu(version, status, progress = 0) {
@@ -1715,49 +1915,163 @@ class JarvisOverlay {
             menuItem.onclick = () => this.installUpdate();
         }
     }
+
+    // Show limit exceeded notification with button to add credits
+    showLimitExceededNotification() {
+        // Remove any existing limit notification
+        this.hideLimitExceededNotification();
+        
+        // Auto-switch to Low model
+        this.switchToLowModel(true); // silent = true
+
+        const notification = document.createElement('div');
+        notification.id = 'limit-exceeded-notification';
+        notification.className = 'update-notification limit-exceeded';
+        
+        notification.innerHTML = `
+            <div class="update-notification-text">
+                ⚠️ Credits exhausted!
+            </div>
+            <div class="update-notification-actions">
+                <button class="update-notification-btn dismiss" id="limit-close-btn">OK</button>
+                <button class="update-notification-btn primary" id="limit-add-credits-btn">Add Credits</button>
+            </div>
+        `;
+
+        document.body.appendChild(notification);
+
+        // Make window interactive immediately and keep it interactive
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Make interactive immediately
+            ipcRenderer.invoke('make-interactive');
+            
+            // Keep making it interactive on any mouse movement over the notification
+            notification.addEventListener('mousemove', () => {
+                ipcRenderer.invoke('make-interactive');
+            });
+            
+            notification.addEventListener('mouseenter', () => {
+                ipcRenderer.invoke('make-interactive');
+            });
+        }
+
+        const closeBtn = document.getElementById('limit-close-btn');
+        const addCreditsBtn = document.getElementById('limit-add-credits-btn');
+
+        // Use mousedown with one-time flag
+        let closeTriggered = false;
+        let addCreditsTriggered = false;
+        
+        const handleClose = (e) => {
+            if (closeTriggered) return;
+            closeTriggered = true;
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('🔵 Close button triggered');
+            this.hideLimitExceededNotification();
+        };
+        
+        const handleAddCredits = (e) => {
+            if (addCreditsTriggered) return;
+            addCreditsTriggered = true;
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('🔵 Add Credits button triggered');
+            this.openAddCredits();
+        };
+
+        closeBtn.addEventListener('mousedown', handleClose);
+        closeBtn.addEventListener('click', handleClose);
+        
+        addCreditsBtn.addEventListener('mousedown', handleAddCredits);
+        addCreditsBtn.addEventListener('click', handleAddCredits);
+
+        // Trigger animation
+        setTimeout(() => notification.classList.add('visible'), 10);
+    }
+
+    hideLimitExceededNotification() {
+        const notification = document.getElementById('limit-exceeded-notification');
+        if (notification) {
+            notification.classList.remove('visible');
+            setTimeout(() => notification.remove(), 300);
+            
+            // Restore click-through mode
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                ipcRenderer.invoke('make-click-through').catch(() => {});
+            }
+        }
+    }
+
+    async openAddCredits() {
+        // Polar product ID for adding credits
+        const creditsProductId = 'f1c1e554-61c7-40fd-802f-b79c238383a2';
+        
+        console.log('🛒 Opening Polar checkout for credits...');
+
+        if (this.isElectron && window.require) {
+            try {
+                const { ipcRenderer } = window.require('electron');
+                const result = await ipcRenderer.invoke('create-credits-checkout', creditsProductId);
+                
+                if (!result.success) {
+                    console.error('Failed to create checkout:', result.error);
+                    this.showNotification('❌ Failed to open checkout: ' + result.error, false);
+                }
+            } catch (e) {
+                console.error('Failed to open checkout:', e);
+                this.showNotification('❌ Failed to open checkout', false);
+            }
+        }
+
+        this.hideLimitExceededNotification();
+    }
     
     async downloadUpdate() {
         try {
-            this.showNotification('Starting download...', 'info');
+            this.showUpdateNotification('⬇️ Starting download...', 'downloading');
             const { ipcRenderer } = require('electron');
             const result = await ipcRenderer.invoke('download-update');
             if (!result.success) {
                 // Check for code signature error - open download page instead
                 if (result.error && result.error.includes('code signature')) {
-                    this.showNotification('Opening download page...', 'info');
+                    this.showUpdateNotification('Opening download page...', 'info');
                     const { shell } = require('electron');
                     shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
                 } else {
-                    this.showNotification('Download failed: ' + result.error, 'error');
+                    this.showUpdateNotification('❌ Download failed: ' + result.error, 'error');
                 }
             }
         } catch (error) {
             console.error('Download error:', error);
             // Check for code signature error
             if (error.message && error.message.includes('code signature')) {
-                this.showNotification('Opening download page...', 'info');
+                this.showUpdateNotification('Opening download page...', 'info');
                 const { shell } = require('electron');
                 shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
             } else {
-                this.showNotification('Download failed: ' + error.message, 'error');
+                this.showUpdateNotification('❌ Download failed: ' + error.message, 'error');
             }
         }
     }
-    
+
     async installUpdate() {
         try {
-            this.showNotification('Installing update and restarting...', 'info');
+            this.showUpdateNotification('🔄 Installing update and restarting...', 'info');
             const { ipcRenderer } = require('electron');
             await ipcRenderer.invoke('install-update');
         } catch (error) {
             console.error('Install error:', error);
             // Check for code signature error
             if (error.message && error.message.includes('code signature')) {
-                this.showNotification('Opening download page...', 'info');
+                this.showUpdateNotification('Opening download page...', 'info');
                 const { shell } = require('electron');
                 shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
             } else {
-                this.showNotification('Install failed: ' + error.message, 'error');
+                this.showUpdateNotification('❌ Install failed: ' + error.message, 'error');
             }
         }
     }
@@ -1778,11 +2092,11 @@ class JarvisOverlay {
             const { ipcRenderer } = require('electron');
             const result = await ipcRenderer.invoke('check-for-updates');
             if (!result.success) {
-                this.showNotification('Update check failed: ' + result.error, 'error');
+                this.showUpdateNotification('❌ Update check failed: ' + result.error, 'error');
             }
         } catch (error) {
             console.error('Update check error:', error);
-            this.showNotification('Update check failed: ' + error.message, 'error');
+            this.showUpdateNotification('❌ Update check failed: ' + error.message, 'error');
         }
     }
     
@@ -2297,7 +2611,17 @@ class JarvisOverlay {
             
             // Route to OpenRouter if a specific model is selected, otherwise use default ChatGPT
             let response;
-            if (this.selectedModel && this.selectedModel !== 'default') {
+            
+            // Handle Jarvis Low (GPT-5 Mini) model - uses OpenAI API directly
+            if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
+                console.log(`🤖 [MODEL SWITCHER] Using Jarvis Low (GPT-5 Mini) via OpenAI API: ${this.lowModelId}`);
+                response = await this.callLowModel(message);
+                
+                // Increment low message count for free users
+                if (!this.hasPremiumAccess()) {
+                    this.incrementLowMessageCount();
+                }
+            } else if (this.selectedModel && this.selectedModel !== 'default') {
                 console.log(`🤖 [MODEL SWITCHER] Using OpenRouter model: ${this.selectedModel} (${this.selectedModelName})`);
                 console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
                 response = await this.callOpenRouter(message, this.selectedModel);
@@ -2314,8 +2638,8 @@ class JarvisOverlay {
             
             this.showNotification(response, true);
             
-            // Increment message count for free users
-            if (!this.hasPremiumAccess()) {
+            // Increment message count for free users (for non-low models)
+            if (!this.hasPremiumAccess() && !this.isUsingLowModel()) {
                 this.incrementMessageCount();
             }
         } catch (error) {
@@ -2397,6 +2721,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         };
                     } else {
                         console.error('❌ Main process OpenAI call failed:', result);
+                        // Check if it's a limit exceeded error (429 with cost data)
+                        if (result?.status === 429 && (result?.data?.costLimitDollars !== undefined || result?.data?.isBlocked !== undefined)) {
+                            console.error('🚫 OpenAI blocked - limit exceeded');
+                            this.showLimitExceededNotification();
+                            throw new Error('LIMIT_EXCEEDED');
+                        }
                         // Create error response
                         response = {
                             ok: false,
@@ -2407,6 +2737,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         };
                     }
                 } catch (ipcError) {
+                    if (ipcError.message === 'LIMIT_EXCEEDED') {
+                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                    }
                     console.error('❌ IPC OpenAI call failed, falling back to fetch:', ipcError);
                     // Fall through to fetch backup below
                     response = null;
@@ -2470,19 +2803,25 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     // If 401 and using proxy, it's likely a Supabase Secrets issue
                     if (response.status === 401 && this.apiProxyUrl) {
                         const details = errorData.details || errorData.error?.message || errorData.message || errorText;
-                        const fullError = `Status: ${response.status}\nUsing Proxy: YES\nProxy URL: ${this.apiProxyUrl}\nAnon Key: ${this.supabaseAnonKey ? 'Present' : 'MISSING'}\n\nError Details:\n${details}`;
-                        alert(`❌ 401 ERROR DEBUG INFO:\n\n${fullError}`);
+                        console.error(`❌ 401 ERROR: API keys may be missing or invalid in Supabase Secrets. Details: ${details}`);
                         throw new Error(`Unauthorized (401): API keys may be missing or invalid in Supabase Secrets. Details: ${details}`);
+                    }
+                    
+                    // Check if it's a cost limit exceeded error (429)
+                    if (response.status === 429 && (errorData.costLimitDollars || errorData.isBlocked !== undefined)) {
+                        console.error('🚫 OpenAI blocked via proxy - limit exceeded');
+                        this.showLimitExceededNotification();
+                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
                     }
                     
                     // Check if it's a Supabase Edge Function error
                     if (errorData.error || errorData.details) {
                         const errorMsg = errorData.error?.message || errorData.details || errorData.message || JSON.stringify(errorData);
-                        alert(`❌ API ERROR ${response.status}:\n\n${errorMsg}`);
+                        console.error(`❌ API ERROR ${response.status}:`, errorMsg);
                         throw new Error(`API error: ${response.status} - ${errorMsg}`);
                     }
                     const finalError = errorData.error?.message || errorData.message || errorText;
-                    alert(`❌ ERROR ${response.status}:\n\n${finalError}`);
+                    console.error(`❌ ERROR ${response.status}:`, finalError);
                     throw new Error(`API error: ${response.status} - ${finalError}`);
                 } catch (parseError) {
                     console.error('OpenAI API Error (parse failed):', {
@@ -2730,9 +3069,18 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             data = result.data;
                         } else {
                             console.error('❌ Second OpenAI call via IPC failed:', result);
+                            // Check if it's a limit exceeded error
+                            if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
+                                console.error('🚫 OpenAI (second call) blocked - limit exceeded');
+                                this.showLimitExceededNotification();
+                                throw new Error('LIMIT_EXCEEDED');
+                            }
                             throw new Error(`API error: ${result?.status || 500} - ${result?.data?.error || 'IPC call failed'}`);
                         }
                     } catch (ipcError) {
+                        if (ipcError.message === 'LIMIT_EXCEEDED') {
+                            return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                        }
                         console.error('❌ IPC second call failed, falling back to fetch:', ipcError);
                         // Fall through to fetch below
                         response = await fetch('https://api.openai.com/v1/responses', {
@@ -2897,6 +3245,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     } else if (result) {
                         console.error('❌ Main process API call failed:', result);
                         this.stopLoadingAnimation();
+                        // Check if it's a limit exceeded error
+                        if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
+                            console.error('🚫 Perplexity blocked - limit exceeded');
+                            this.showLimitExceededNotification();
+                            return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                        }
                         const errorData = result.data || {};
                         const errorMsg = errorData.error?.message || errorData.details || errorData.error || `HTTP ${result.status}: ${result.statusText}`;
                         const fullError = `Web search failed: ${errorMsg}`;
@@ -2906,6 +3260,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         throw new Error('IPC returned null/undefined');
                     }
                 } catch (ipcError) {
+                    if (ipcError.message === 'LIMIT_EXCEEDED') {
+                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                    }
                     console.error('❌ IPC call failed:', ipcError);
                     this.showNotification(`❌ IPC call failed: ${ipcError.message}. Trying direct fetch...`, false);
                     // Fall through to direct fetch
@@ -3075,17 +3432,130 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
         }
     }
 
+    // Jarvis Low model - uses OpenAI API with gpt-4o-mini (no cost tracking)
+    async callLowModel(message) {
+        try {
+            // Build conversation context
+            let conversationContext = '';
+            if (this.conversationHistory.length > 0) {
+                conversationContext = '\n\nPREVIOUS CONVERSATION:\n' + 
+                    this.conversationHistory.slice(-6).map((msg, idx) => 
+                        `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Jarvis'}: ${msg.content.substring(0, 200)}`
+                    ).join('\n');
+            }
+
+            // Add document context if available
+            let documentContext = '';
+            if (this.currentDocument) {
+                documentContext = `\n\nDOCUMENT CONTEXT:\nTitle: ${this.currentDocument.title}\nContent: ${this.currentDocument.content.substring(0, 1500)}...`;
+            }
+
+            const instructions = `You are Jarvis Low, a fast and efficient AI assistant. Answer directly without any preface. Be concise but helpful.${conversationContext}${documentContext}`;
+
+            // Add user message to conversation history
+            this.conversationHistory.push({
+                role: 'user',
+                content: message,
+                model: 'Jarvis Low'
+            });
+
+            this.showLoadingNotification();
+
+            // Build request for OpenAI Responses API
+            const requestPayload = {
+                model: this.lowModelId, // gpt-4o-mini
+                instructions: instructions,
+                input: [{ role: 'user', content: [{ type: 'input_text', text: message }] }]
+            };
+
+            let response;
+            
+            // Use IPC to call OpenAI through main process (skips cost tracking for low model)
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    console.log('🔒 Calling OpenAI (Low Model) via main process IPC');
+                    const result = await ipcRenderer.invoke('call-openai-api', requestPayload, true); // true = isLowModel
+                    
+                    if (result && result.ok && result.data) {
+                        console.log('✅ Low model call succeeded');
+                        const content = this.extractText(result.data) || 'No response generated';
+                        
+                        // Add to conversation history
+                        this.conversationHistory.push({
+                            role: 'assistant',
+                            content: content,
+                            model: 'Jarvis Low'
+                        });
+                        
+                        this.showLoadingNotification(null, 'default');
+                        return content;
+                    } else {
+                        console.error('❌ Low model call failed:', result);
+                        throw new Error(`API error: ${result?.status || 500} - ${result?.data?.error || 'Unknown error'}`);
+                    }
+                } catch (ipcError) {
+                    console.error('❌ IPC low model call failed:', ipcError);
+                    throw ipcError;
+                }
+            }
+
+            // Fallback to direct API call if IPC not available
+            if (this.apiProxyUrl && this.supabaseAnonKey) {
+                response = await fetch(this.apiProxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        provider: 'openai',
+                        endpoint: 'responses',
+                        payload: requestPayload
+                    })
+                });
+            } else if (this.apiKey) {
+                response = await fetch('https://api.openai.com/v1/responses', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestPayload)
+                });
+            } else {
+                throw new Error('No API access available');
+            }
+
+            if (!response.ok) {
+                throw new Error(`API error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const content = this.extractText(data) || 'No response generated';
+
+            // Add to conversation history
+            this.conversationHistory.push({
+                role: 'assistant',
+                content: content,
+                model: 'Jarvis Low'
+            });
+
+            this.showLoadingNotification(null, 'default');
+            return content;
+        } catch (error) {
+            this.stopLoadingAnimation();
+            console.error('Low model error:', error);
+            return `Error: ${error.message}`;
+        }
+    }
+
     async callOpenRouter(message, model) {
         try {
             // Check if this is a Claude model - route to Claude API directly
             if (model.startsWith('anthropic/claude-')) {
                 console.log(`🤖 Detected Claude model: ${model}, routing to Claude API`);
                 return await this.callClaudeDirect(message, model);
-            }
-            
-            if (!this.openrouterApiKey || this.openrouterApiKey.trim() === '') {
-                console.warn('⚠️ OpenRouter API key not available');
-                return `OpenRouter is not available. Please check your OpenRouter API key configuration.`;
             }
 
             // Build conversation context
@@ -3130,57 +3600,122 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 userContent = message;
             }
             
-            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.openrouterApiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': 'https://jarvis-ai.app', // Optional but recommended
-                    'X-Title': 'Jarvis AI' // Optional but recommended
-                },
-                body: JSON.stringify({
+            // Use IPC to call OpenRouter through main process (for token tracking and limit enforcement)
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                
+                const requestPayload = {
                     model: model,
                     messages: [
                         { role: 'system', content: instructions },
                         { role: 'user', content: userContent }
                     ]
-                })
-            });
+                };
+                
+                console.log('🔒 Calling OpenRouter via main process IPC');
+                const result = await ipcRenderer.invoke('call-openrouter-api', requestPayload, false); // false = not low model (low model uses OpenAI API)
+                
+                if (!result.ok) {
+                    // Check if it's a limit exceeded error
+                    if (result.status === 429 && result.data?.isBlocked !== undefined) {
+                        const errorMsg = result.data.error || 'Usage limit exceeded';
+                        console.error('🚫 OpenRouter blocked:', errorMsg);
+                        // Show notification with button to add credits
+                        this.showLimitExceededNotification();
+                        return `⚠️ Switched to Jarvis Low. Add credits for other models.`;
+                    }
+                    throw new Error(`OpenRouter API error: ${result.status} - ${result.data?.error || result.statusText}`);
+                }
+                
+                const data = result.data;
+                
+                if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                    throw new Error('Invalid response structure from OpenRouter');
+                }
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('OpenRouter API error:', errorText);
-                throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-            }
+                const content = data.choices[0].message.content;
+                
+                // Update conversation history
+                this.conversationHistory.push({ role: 'user', content: message });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: content,
+                    model: this.selectedModelName || 'Jarvis'
+                });
+                
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                
+                this.saveConversationHistory();
+                
+                // Speak the response if Grok voice mode is enabled
+                if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode && content) {
+                    this.speakWithElevenLabs(content);
+                }
+                
+                return content;
+            } else {
+                // Fallback to direct fetch if not in Electron (shouldn't happen in normal use)
+                console.warn('⚠️ Not in Electron environment, using direct fetch (no token tracking)');
+                
+                if (!this.openrouterApiKey || this.openrouterApiKey.trim() === '') {
+                    console.warn('⚠️ OpenRouter API key not available');
+                    return `OpenRouter is not available. Please check your OpenRouter API key configuration.`;
+                }
+                
+                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.openrouterApiKey}`,
+                        'Content-Type': 'application/json',
+                        'HTTP-Referer': 'https://jarvis-ai.app',
+                        'X-Title': 'Jarvis AI'
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [
+                            { role: 'system', content: instructions },
+                            { role: 'user', content: userContent }
+                        ]
+                    })
+                });
 
-            const data = await response.json();
-            
-            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-                throw new Error('Invalid response structure from OpenRouter');
-            }
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('OpenRouter API error:', errorText);
+                    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+                }
 
-            const content = data.choices[0].message.content;
-            
-            // Update conversation history
-            this.conversationHistory.push({ role: 'user', content: message });
-            this.conversationHistory.push({ 
-                role: 'assistant', 
-                content: content,
-                model: this.selectedModelName || 'Jarvis'
-            });
-            
-            if (this.conversationHistory.length > 30) {
-                this.conversationHistory = this.conversationHistory.slice(-30);
+                const data = await response.json();
+                
+                if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                    throw new Error('Invalid response structure from OpenRouter');
+                }
+
+                const content = data.choices[0].message.content;
+                
+                // Update conversation history
+                this.conversationHistory.push({ role: 'user', content: message });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: content,
+                    model: this.selectedModelName || 'Jarvis'
+                });
+                
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                
+                this.saveConversationHistory();
+                
+                // Speak the response if Grok voice mode is enabled
+                if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode && content) {
+                    this.speakWithElevenLabs(content);
+                }
+                
+                return content;
             }
-            
-            this.saveConversationHistory();
-            
-            // Speak the response if Grok voice mode is enabled
-            if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode && content) {
-                this.speakWithElevenLabs(content);
-            }
-            
-            return content;
         } catch (error) {
             console.error('OpenRouter API error:', error);
             throw error;
@@ -3188,15 +3723,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
     }
 
     async callClaudeDirect(message, openRouterModel) {
-        // Check if we have either a direct API key OR Supabase proxy configured
-        const hasDirectKey = this.claudeApiKey && this.claudeApiKey.trim() !== '';
-        const hasProxy = this.apiProxyUrl && this.supabaseAnonKey;
-        
-        if (!hasDirectKey && !hasProxy) {
-            console.warn('⚠️ Claude API key not available and no Supabase proxy configured');
-            return `Claude is not available. Please configure Claude API key in Supabase secrets or set CLAUDE_API_KEY environment variable.`;
-        }
-
         // Map OpenRouter model names to Claude API model names
         const modelMap = {
             'anthropic/claude-sonnet-4.5': 'claude-sonnet-4-5-20250929',
@@ -3265,69 +3791,118 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 messages: messages
             };
 
-            console.log(`🤖 Calling Claude API directly with model: ${claudeModel}`);
+            console.log(`🤖 Calling Claude API with model: ${claudeModel}`);
             
-            let claudeResponse;
-            
-            // Use Supabase Edge Function proxy if available, otherwise direct API call
-            if (this.apiProxyUrl && this.supabaseAnonKey) {
-                console.log('🔒 Using Supabase Edge Function proxy for Claude');
-                claudeResponse = await fetch(this.apiProxyUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        provider: 'claude',
-                        payload: requestBody
-                    })
+            // Use IPC to call Claude through main process (for token tracking and limit enforcement)
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                
+                console.log('🔒 Calling Claude via main process IPC');
+                const result = await ipcRenderer.invoke('call-claude-api', requestBody);
+                
+                if (!result.ok) {
+                    // Check if it's a limit exceeded error
+                    if (result.status === 429 && result.data?.isBlocked !== undefined) {
+                        const errorMsg = result.data.error || 'Usage limit exceeded';
+                        console.error('🚫 Claude blocked:', errorMsg);
+                        // Show notification with button to add credits
+                        if (result.data.costLimitDollars) {
+                            this.showLimitExceededNotification();
+                        }
+                        return `⚠️ Switched to Jarvis Low. Add credits for other models.`;
+                    }
+                    throw new Error(`Claude API error: ${result.status} - ${result.data?.error || result.statusText}`);
+                }
+                
+                const data = result.data;
+                
+                if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
+                    throw new Error('Invalid response structure from Claude API');
+                }
+
+                const content = data.content[0].text;
+                
+                // Update conversation history
+                this.conversationHistory.push({ role: 'user', content: message });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: content,
+                    model: this.selectedModelName || 'Claude'
                 });
-            } else if (hasDirectKey) {
-                // Direct API call using Claude API key from Supabase
-                console.log('🔒 Using direct Claude API call with key from Supabase');
-                claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-                    method: 'POST',
-                    headers: {
-                        'x-api-key': this.claudeApiKey,
-                        'anthropic-version': '2024-06-20', // Updated version that supports system messages
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestBody)
-                });
+                
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                
+                this.saveConversationHistory();
+                
+                return content;
             } else {
-                throw new Error('No Claude API access method available. Please configure Supabase proxy or set CLAUDE_API_KEY.');
-            }
+                // Fallback to direct fetch if not in Electron (shouldn't happen in normal use)
+                console.warn('⚠️ Not in Electron environment, using direct fetch (no token tracking)');
+                
+                const hasDirectKey = this.claudeApiKey && this.claudeApiKey.trim() !== '';
+                const hasProxy = this.apiProxyUrl && this.supabaseAnonKey;
+                
+                if (!hasDirectKey && !hasProxy) {
+                    return `Claude is not available. Please configure Claude API key.`;
+                }
+                
+                let claudeResponse;
+                
+                if (this.apiProxyUrl && this.supabaseAnonKey) {
+                    claudeResponse = await fetch(this.apiProxyUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            provider: 'claude',
+                            payload: requestBody
+                        })
+                    });
+                } else {
+                    claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': this.claudeApiKey,
+                            'anthropic-version': '2023-06-01',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+                }
 
-            if (!claudeResponse.ok) {
-                const errorText = await claudeResponse.text();
-                console.error('Claude API error:', errorText);
-                throw new Error(`Claude API error: ${claudeResponse.status} - ${errorText}`);
-            }
+                if (!claudeResponse.ok) {
+                    const errorText = await claudeResponse.text();
+                    throw new Error(`Claude API error: ${claudeResponse.status} - ${errorText}`);
+                }
 
-            const data = await claudeResponse.json();
-            
-            if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
-                throw new Error('Invalid response structure from Claude API');
-            }
+                const data = await claudeResponse.json();
+                
+                if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
+                    throw new Error('Invalid response structure from Claude API');
+                }
 
-            const content = data.content[0].text;
-            
-            // Update conversation history
-            this.conversationHistory.push({ role: 'user', content: message });
-            this.conversationHistory.push({ 
-                role: 'assistant', 
-                content: content,
-                model: this.selectedModelName || 'Claude'
-            });
-            
-            if (this.conversationHistory.length > 30) {
-                this.conversationHistory = this.conversationHistory.slice(-30);
+                const content = data.content[0].text;
+                
+                // Update conversation history
+                this.conversationHistory.push({ role: 'user', content: message });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: content,
+                    model: this.selectedModelName || 'Claude'
+                });
+                
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                
+                this.saveConversationHistory();
+                
+                return content;
             }
-            
-            this.saveConversationHistory();
-            
-            return content;
         } catch (error) {
             console.error('Claude API error:', error);
             throw error;
@@ -3335,18 +3910,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
     }
 
     async executeAskClaude(question) {
-        // Check if Claude API key is available (check for truthy and non-empty string)
-        if (!this.claudeApiKey || this.claudeApiKey.trim() === '') {
-            console.warn('⚠️ Claude API key not available');
-            return `Claude is not available. To enable Claude, set the CLAUDE_API_KEY environment variable with your Anthropic API key.`;
-        }
-
-        // Validate API key format
-        if (!this.claudeApiKey.startsWith('sk-ant-')) {
-            console.error('Invalid Claude API key format. Should start with "sk-ant-"');
-            return `Claude API key format is invalid. Please check your CLAUDE_API_KEY.`;
-        }
-
         try {
             // Start loading notification with Claude context
             this.showLoadingNotification(null, 'claude');
@@ -3355,11 +3918,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const messages = [];
             
             // Only include recent USER messages for context (skip assistant messages entirely)
-            // This prevents Claude from seeing confusing references to "Claude's analysis"
             if (this.conversationHistory.length > 0) {
                 const recentHistory = this.conversationHistory.slice(-5);
                 recentHistory.forEach(msg => {
-                    // Only include user messages - skip all assistant messages
                     if (msg.role === 'user') {
                         let contentStr = '';
                         if (typeof msg.content === 'string') {
@@ -3368,7 +3929,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             contentStr = String(msg.content).trim();
                         }
                         
-                        // Filter out messages that reference Claude tool usage
                         if (contentStr && contentStr.length > 0 && 
                             !contentStr.toLowerCase().includes('use claude') &&
                             !contentStr.toLowerCase().includes('claude tool')) {
@@ -3381,7 +3941,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 });
             }
             
-            // Build the current question - present it naturally as a direct question
+            // Build the current question
             let currentQuestion = String(question || '').trim();
             if (!currentQuestion) {
                 currentQuestion = 'Please provide an analysis.';
@@ -3397,7 +3957,6 @@ Content: ${String(this.currentDocument.content || '').substring(0, 2000)}...
 ${currentQuestion}`;
             }
             
-            // Add the question directly to Claude - it should respond naturally
             if (currentQuestion && currentQuestion.trim().length > 0) {
                 messages.push({
                     role: 'user',
@@ -3407,182 +3966,80 @@ ${currentQuestion}`;
                 throw new Error('Question cannot be empty');
             }
             
-            // Validate messages array - must have at least one user message
             if (messages.length === 0 || !messages.some(m => m.role === 'user')) {
                 throw new Error('Messages array must contain at least one user message');
             }
             
-            // Prepare request body - try different model name formats
             const requestBody = {
-                model: 'claude-sonnet-4-5-20250929', // Full model name with date
+                model: 'claude-sonnet-4-5-20250929',
                 max_tokens: 4096,
                 messages: messages
             };
             
-            console.log('Calling Claude API with:', {
+            console.log('Calling Claude API (tool call) with:', {
                 model: requestBody.model,
-                messageCount: messages.length,
-                apiKeyPrefix: this.claudeApiKey.substring(0, 15) + '...',
-                requestBody: JSON.stringify(requestBody, null, 2)
+                messageCount: messages.length
             });
             
-            // Try the API call - if it fails with bad request, try alternative model names
-            let claudeResponse;
-            let lastError;
-            
-            // Try with full model name first
-            try {
-                // Use Edge Function proxy if available, otherwise direct API call
-                if (this.apiProxyUrl && this.supabaseAnonKey) {
-                    // Use Supabase Edge Function proxy (secure - no API keys in app)
-                    console.log('🔒 Using Supabase Edge Function proxy for Claude');
-                    claudeResponse = await fetch(this.apiProxyUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            provider: 'claude',
-                            payload: requestBody
-                        })
-                    });
-                    
-                    // If bad request, try alternative model names
-                    if (claudeResponse.status === 400) {
-                        const altModels = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
-                        for (const altModel of altModels) {
-                            console.log(`Trying alternative model: ${altModel}`);
-                            requestBody.model = altModel;
-                            claudeResponse = await fetch(this.apiProxyUrl, {
-                                method: 'POST',
-                                headers: {
-                                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({
-                                    provider: 'claude',
-                                    payload: requestBody
-                                })
-                            });
-                            if (claudeResponse.ok) {
-                                console.log(`Success with model: ${altModel}`);
-                                break;
-                            }
+            // Use IPC to call Claude through main process (for token tracking and limit enforcement)
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                
+                console.log('🔒 Calling Claude (tool) via main process IPC');
+                const result = await ipcRenderer.invoke('call-claude-api', requestBody);
+                
+                if (!result.ok) {
+                    // Check if it's a limit exceeded error
+                    if (result.status === 429 && result.data?.isBlocked !== undefined) {
+                        const errorMsg = result.data.error || 'Usage limit exceeded';
+                        console.error('🚫 Claude (tool) blocked:', errorMsg);
+                        this.stopLoadingAnimation();
+                        // Show notification with button to add credits
+                        if (result.data.costLimitDollars) {
+                            this.showLimitExceededNotification();
                         }
+                        return `⚠️ Switched to Jarvis Low. Add credits for other models.`;
                     }
-                } else {
-                    // Fallback to direct API call (requires API key)
-                    console.log('⚠️ Using direct Claude API call (API key required)');
-                    claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-                        method: 'POST',
-                        headers: {
-                            'x-api-key': this.claudeApiKey,
-                            'anthropic-version': '2023-06-01',
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(requestBody)
-                    });
                     
-                    // If bad request, try alternative model names
-                    if (claudeResponse.status === 400) {
-                        const altModels = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
-                        for (const altModel of altModels) {
-                            console.log(`Trying alternative model: ${altModel}`);
-                            requestBody.model = altModel;
-                            claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-                                method: 'POST',
-                                headers: {
-                                    'x-api-key': this.claudeApiKey,
-                                    'anthropic-version': '2023-06-01',
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify(requestBody)
-                            });
-                            if (claudeResponse.ok) {
-                                console.log(`Success with model: ${altModel}`);
-                                break;
-                            }
-                        }
+                    this.stopLoadingAnimation();
+                    const errorData = result.data || {};
+                    
+                    if (result.status === 401) {
+                        return `Claude API authentication failed (401). Error: ${errorData.error?.message || errorData.error || 'Check your API key'}`;
+                    } else if (result.status === 400) {
+                        return `Claude API bad request (400). Error: ${errorData.error?.message || errorData.error || 'Check request format'}`;
+                    } else {
+                        return `Claude analysis failed (${result.status}): ${errorData.error?.message || errorData.error || 'Unknown error'}`;
                     }
                 }
-            } catch (fetchError) {
-                console.error('Fetch error:', fetchError);
-                throw fetchError;
-            }
-            
-            console.log('Claude API response status:', claudeResponse.status, claudeResponse.statusText);
-            console.log('Claude API response headers:', Object.fromEntries(claudeResponse.headers.entries()));
-            console.log('Request body that was sent:', JSON.stringify(requestBody, null, 2));
-            
-            if (!claudeResponse.ok) {
-                const errorText = await claudeResponse.text();
-                console.error('Claude API error response text:', errorText);
-                console.error('Full request details:', {
-                    url: 'https://api.anthropic.com/v1/messages',
-                    method: 'POST',
-                    headers: {
-                        'x-api-key': this.claudeApiKey.substring(0, 20) + '...',
-                        'anthropic-version': '2023-06-01',
-                        'Content-Type': 'application/json'
-                    },
-                    body: requestBody
-                });
                 
-                let errorData;
-                try {
-                    errorData = JSON.parse(errorText);
-                } catch (e) {
-                    errorData = { error: { message: errorText || `HTTP ${claudeResponse.status}` } };
-                }
+                const claudeData = result.data;
                 
-                console.error('Claude API Error Details:', {
-                    status: claudeResponse.status,
-                    statusText: claudeResponse.statusText,
-                    error: errorData,
-                    fullErrorText: errorText
-                });
-                
-                this.stopLoadingAnimation();
-                
-                // Provide helpful error messages
-                if (claudeResponse.status === 401) {
-                    return `Claude API authentication failed (401). Check your API key. Error: ${errorData.error?.message || errorText}`;
-                } else if (claudeResponse.status === 403) {
-                    return `Claude API access forbidden (403). Your API key may not have permission. Error: ${errorData.error?.message || errorText}`;
-                } else if (claudeResponse.status === 400) {
-                    return `Claude API bad request (400). Check model name and request format. Error: ${errorData.error?.message || errorText}`;
-                } else if (claudeResponse.status === 404) {
-                    return `Claude API endpoint not found (404). Check API URL. Error: ${errorData.error?.message || errorText}`;
+                // Extract text from Claude's response
+                let textContent;
+                if (claudeData.content && Array.isArray(claudeData.content)) {
+                    textContent = claudeData.content
+                        .filter(block => block.type === 'text')
+                        .map(block => block.text)
+                        .join('\n\n');
+                    console.log('Claude response extracted, length:', textContent.length);
+                } else if (claudeData.content && typeof claudeData.content === 'string') {
+                    textContent = claudeData.content;
                 } else {
-                    return `Claude analysis failed (${claudeResponse.status}): ${errorData.error?.message || errorData.error?.type || errorText || 'Unknown error'}`;
+                    console.error('Unexpected Claude response format:', claudeData);
+                    this.stopLoadingAnimation();
+                    return 'No response from Claude - unexpected response format';
                 }
-            }
-            
-            const claudeData = await claudeResponse.json();
-            console.log('Claude API success, response structure:', Object.keys(claudeData));
-            
-            // Extract text from Claude's response
-            // Claude returns content as an array of text blocks
-            let textContent;
-            if (claudeData.content && Array.isArray(claudeData.content)) {
-                textContent = claudeData.content
-                    .filter(block => block.type === 'text')
-                    .map(block => block.text)
-                    .join('\n\n');
-                console.log('Claude response extracted, length:', textContent.length);
-            } else if (claudeData.content && typeof claudeData.content === 'string') {
-                textContent = claudeData.content;
+                
+                // Switch to default loading context for the synthesis phase
+                this.showLoadingNotification(null, 'default');
+                return textContent;
             } else {
-                console.error('Unexpected Claude response format:', claudeData);
+                // Fallback for non-Electron environment (shouldn't happen)
+                console.warn('⚠️ Not in Electron, Claude tool call not tracked');
                 this.stopLoadingAnimation();
-                return 'No response from Claude - unexpected response format';
+                return 'Claude is not available in this environment.';
             }
-            
-            // Don't stop loading here - it will continue through the synthesis phase
-            // Switch to default loading context for the synthesis phase
-            this.showLoadingNotification(null, 'default');
-            return textContent;
         } catch (error) {
             console.error('Claude API error:', error);
             this.stopLoadingAnimation();
@@ -3594,6 +4051,18 @@ ${currentQuestion}`;
     async sendMessage() {
         const message = (this.textInput?.value || '').trim();
         if (!message && (!this.pendingAttachments || this.pendingAttachments.length === 0)) return;
+
+        // Check character limit for Low model (GPT-5 Mini)
+        if (this.isUsingLowModel() && message.length > this.lowModelCharLimit) {
+            this.showNotification(`⚠️ Message too long for Jarvis Low. Please limit to ${this.lowModelCharLimit} characters. (Current: ${message.length})`, false);
+            return;
+        }
+
+        // Check low message limit for free users using Low model
+        if (this.isUsingLowModel() && !this.hasPremiumAccess() && this.hasReachedLowMessageLimit()) {
+            this.showNotification(`⚠️ You've reached your daily limit of ${this.maxFreeLowMessages} messages with Jarvis Low. Try again tomorrow or upgrade for unlimited access!`, false);
+            return;
+        }
 
         // Check for /docs command
         if (message.toLowerCase() === '/docs' || message.toLowerCase().startsWith('/docs ')) {
@@ -4412,10 +4881,31 @@ ${currentQuestion}`;
             const isHidden = this.modelSubmenu.classList.contains('hidden');
             if (isHidden) {
                 this.modelSubmenu.classList.remove('hidden');
+                // Update locked state for models based on premium status
+                this.updateModelLockedState();
             } else {
                 this.modelSubmenu.classList.add('hidden');
             }
         }
+    }
+    
+    updateModelLockedState() {
+        if (!this.modelSubmenu) return;
+        
+        const hasPremium = this.hasPremiumAccess();
+        const modelItems = this.modelSubmenu.querySelectorAll('.model-item');
+        
+        modelItems.forEach(item => {
+            const model = item.getAttribute('data-model');
+            // Only the default Jarvis model is free - all others require premium
+            if (model !== 'default') {
+                if (hasPremium) {
+                    item.classList.remove('locked');
+                } else {
+                    item.classList.add('locked');
+                }
+            }
+        });
     }
 
     hideModelSubmenu() {
@@ -4782,8 +5272,24 @@ ${currentQuestion}`;
         console.log(`🤖 [MODEL SWITCHER] Has premium: ${this.hasPremiumAccess()}`);
         console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
         
+        // Free users can only use the default Jarvis model (with Low/High toggle)
+        // Block selection of any other model
+        if (model !== 'default' && !this.hasPremiumAccess()) {
+            this.showNotification('🔒 This model requires Jarvis Premium. Upgrade to access all AI models!', false);
+            this.showUpgradePrompt();
+            return;
+        }
+        
+        // If selecting a non-low model, clear the forced low model mode
+        if (model !== 'jarvis-low') {
+            this.isLowModelMode = false;
+        }
+        
         this.selectedModel = model;
         this.selectedModelName = modelName;
+        
+        // Update tier toggle UI
+        this.updateTierToggleUI();
         
         // Update the display in the hamburger menu
         if (this.currentModelDisplay) {
@@ -4808,13 +5314,21 @@ ${currentQuestion}`;
         // Hide voice button and reset freaky/voice mode when switching away from Grok
         if (model !== 'x-ai/grok-4.1-fast') {
             const voiceBtn = document.getElementById('grok-voice-btn');
-            const freakyToggle = document.getElementById('freaky-toggle');
+            const voiceSelectBtn = document.getElementById('voice-select-btn');
+            const freakyCheckbox = document.getElementById('freaky-toggle-checkbox');
+            const freakyEmoji = document.getElementById('freaky-emoji');
             if (voiceBtn) {
                 voiceBtn.classList.add('hidden');
                 voiceBtn.classList.remove('active');
             }
-            if (freakyToggle) {
-                freakyToggle.textContent = '😇';
+            if (voiceSelectBtn) {
+                voiceSelectBtn.classList.add('hidden');
+            }
+            if (freakyCheckbox) {
+                freakyCheckbox.checked = false;
+            }
+            if (freakyEmoji) {
+                freakyEmoji.textContent = '😇';
             }
             this.grokFreakyMode = false;
             this.grokVoiceMode = false;
@@ -5491,9 +6005,18 @@ User request: ${prompt}`;
                             console.log('✅ Main process file analysis succeeded');
                             apiData = result.data;
                         } else {
+                            // Check if it's a limit exceeded error
+                            if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
+                                console.error('🚫 File analysis blocked - limit exceeded');
+                                this.showLimitExceededNotification();
+                                throw new Error('LIMIT_EXCEEDED');
+                            }
                             throw new Error(`IPC call failed: ${JSON.stringify(result)}`);
                         }
                     } catch (ipcError) {
+                        if (ipcError.message === 'LIMIT_EXCEEDED') {
+                            return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                        }
                         console.error('❌ IPC file analysis failed, falling back to proxy:', ipcError);
                         response = null;
                     }
@@ -5935,16 +6458,39 @@ User request: ${prompt}`;
         }
     }
 
-    toggleGrokFreakyMode() {
-        const freakyToggle = document.getElementById('freaky-toggle');
-        const voiceBtn = document.getElementById('grok-voice-btn');
-        this.grokFreakyMode = !this.grokFreakyMode;
+    toggleMoreModels() {
+        const moreBtn = document.getElementById('model-more-btn');
+        const moreSection = document.getElementById('more-models-section');
         
-        if (freakyToggle) {
-            freakyToggle.textContent = this.grokFreakyMode ? '😈' : '😇';
+        if (moreBtn && moreSection) {
+            const isExpanded = moreBtn.classList.toggle('expanded');
+            moreSection.classList.toggle('hidden', !isExpanded);
+            
+            // Update button text
+            moreBtn.querySelector('span').textContent = isExpanded ? 'Less models' : 'More models';
+        }
+    }
+
+    toggleGrokFreakyMode(isFreaky = null) {
+        const freakyCheckbox = document.getElementById('freaky-toggle-checkbox');
+        const freakyEmoji = document.getElementById('freaky-emoji');
+        const voiceBtn = document.getElementById('grok-voice-btn');
+        const voiceSelectBtn = document.getElementById('voice-select-btn');
+        
+        // If isFreaky is provided, use it; otherwise toggle
+        this.grokFreakyMode = isFreaky !== null ? isFreaky : !this.grokFreakyMode;
+        
+        // Update checkbox state
+        if (freakyCheckbox) {
+            freakyCheckbox.checked = this.grokFreakyMode;
         }
         
-        // Show/hide voice button based on freaky mode
+        // Update emoji
+        if (freakyEmoji) {
+            freakyEmoji.textContent = this.grokFreakyMode ? '😈' : '😇';
+        }
+        
+        // Show/hide voice buttons based on freaky mode
         if (voiceBtn) {
             if (this.grokFreakyMode) {
                 voiceBtn.classList.remove('hidden');
@@ -5953,6 +6499,15 @@ User request: ${prompt}`;
                 // Also disable voice mode when freaky mode is turned off
                 this.grokVoiceMode = false;
                 voiceBtn.classList.remove('active');
+            }
+        }
+        
+        // Show/hide voice select button based on freaky mode
+        if (voiceSelectBtn) {
+            if (this.grokFreakyMode) {
+                voiceSelectBtn.classList.remove('hidden');
+            } else {
+                voiceSelectBtn.classList.add('hidden');
             }
         }
         
@@ -5967,6 +6522,23 @@ User request: ${prompt}`;
         
         // Hide the model submenu
         this.hideModelSubmenu();
+    }
+    
+    toggleVoiceSelection() {
+        const voiceSelectBtn = document.getElementById('voice-select-btn');
+        this.useSecondVoice = !this.useSecondVoice;
+        
+        if (voiceSelectBtn) {
+            if (this.useSecondVoice) {
+                voiceSelectBtn.classList.add('voice-male');
+                voiceSelectBtn.querySelector('.voice-icon').textContent = '♂';
+                voiceSelectBtn.title = 'Switch to female voice';
+            } else {
+                voiceSelectBtn.classList.remove('voice-male');
+                voiceSelectBtn.querySelector('.voice-icon').textContent = '♀';
+                voiceSelectBtn.title = 'Switch to male voice';
+            }
+        }
     }
     
     toggleGrokVoiceMode() {
@@ -5989,7 +6561,10 @@ User request: ${prompt}`;
             
             if (!cleanText) return;
             
-            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${this.elevenLabsVoiceId}`, {
+            // Use selected voice
+            const voiceId = this.useSecondVoice ? this.elevenLabsVoiceId2 : this.elevenLabsVoiceId;
+            
+            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
                 method: 'POST',
                 headers: {
                     'xi-api-key': this.elevenLabsApiKey,
@@ -5999,23 +6574,26 @@ User request: ${prompt}`;
                     text: cleanText,
                     model_id: 'eleven_turbo_v2_5',
                     voice_settings: {
-                        stability: 0.3,
-                        similarity_boost: 0.8,
-                        style: 0.5,
+                        stability: 0.5,
+                        similarity_boost: 0.75,
+                        style: 0.0,
                         use_speaker_boost: true
                     }
                 })
             });
             
             if (!response.ok) {
-                console.error('ElevenLabs API error:', response.status);
+                const errorText = await response.text();
+                console.error('ElevenLabs API error:', response.status, errorText);
                 return;
             }
             
             const audioBlob = await response.blob();
+            console.log('🔊 Audio blob received, size:', audioBlob.size);
             const audioUrl = URL.createObjectURL(audioBlob);
             const audio = new Audio(audioUrl);
-            audio.play();
+            audio.volume = 1.0;
+            await audio.play().catch(e => console.error('Audio play error:', e));
             
             // Clean up the URL after playing
             audio.onended = () => {
@@ -6195,19 +6773,22 @@ User Question: ${question}`;
     showDocumentProcessingIndicator() {
         const indicator = document.createElement('div');
         indicator.id = 'document-processing-indicator';
-        indicator.innerHTML = '📄 Processing document...';
+        indicator.innerHTML = '📄 processing...';
         indicator.style.cssText = `
             position: fixed;
-            top: 20px;
+            top: 12px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.85);
             color: white;
-            padding: 10px 20px;
+            padding: 6px 14px;
             border-radius: 20px;
-            font-size: 14px;
+            font-size: 11px;
+            font-weight: 600;
             z-index: 10000;
-            animation: pulse 1.5s infinite;
+            animation: docPulse 1.5s infinite;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
         `;
         document.body.appendChild(indicator);
     }
@@ -6347,6 +6928,168 @@ User Question: ${question}`;
     getRemainingMessages() {
         return Math.max(0, this.maxFreeMessages - this.messageCount);
     }
+
+    // ============ Low Model (GPT-5 Mini) Tracking ============
+    
+    loadLowMessageCount() {
+        try {
+            const count = localStorage.getItem('jarvis_low_message_count');
+            return count ? parseInt(count) : 0;
+        } catch (e) {
+            console.error('Failed to load low message count:', e);
+            return 0;
+        }
+    }
+
+    loadLowMessageResetTimestamp() {
+        try {
+            const timestamp = localStorage.getItem('jarvis_low_message_reset_timestamp');
+            return timestamp ? parseInt(timestamp) : null;
+        } catch (e) {
+            console.error('Failed to load low message reset timestamp:', e);
+            return null;
+        }
+    }
+
+    saveLowMessageResetTimestamp() {
+        try {
+            const timestamp = Date.now();
+            localStorage.setItem('jarvis_low_message_reset_timestamp', timestamp.toString());
+        } catch (e) {
+            console.error('Failed to save low message reset timestamp:', e);
+        }
+    }
+
+    saveLowMessageCount() {
+        try {
+            localStorage.setItem('jarvis_low_message_count', this.lowMessageCount.toString());
+        } catch (e) {
+            console.error('Failed to save low message count:', e);
+        }
+    }
+
+    checkAndResetLowMessageCount() {
+        try {
+            // Premium users have unlimited low messages
+            if (this.hasPremiumAccess()) {
+                return;
+            }
+
+            const resetTimestamp = this.loadLowMessageResetTimestamp();
+            const now = Date.now();
+            const twentyFourHours = 24 * 60 * 60 * 1000;
+
+            if (!resetTimestamp) {
+                this.lowMessageCount = 0;
+                this.saveLowMessageCount();
+                this.saveLowMessageResetTimestamp();
+                return;
+            }
+
+            if (now - resetTimestamp >= twentyFourHours) {
+                this.lowMessageCount = 0;
+                this.saveLowMessageCount();
+                this.saveLowMessageResetTimestamp();
+                console.log('Low model message count reset after 24 hours');
+            }
+        } catch (e) {
+            console.error('Failed to check and reset low message count:', e);
+        }
+    }
+
+    incrementLowMessageCount() {
+        this.checkAndResetLowMessageCount();
+        this.lowMessageCount++;
+        this.saveLowMessageCount();
+        
+        if (!this.loadLowMessageResetTimestamp()) {
+            this.saveLowMessageResetTimestamp();
+        }
+    }
+
+    hasReachedLowMessageLimit() {
+        // Premium users have unlimited low messages
+        if (this.hasPremiumAccess()) {
+            return false;
+        }
+        return this.lowMessageCount >= this.maxFreeLowMessages;
+    }
+
+    getRemainingLowMessages() {
+        return Math.max(0, this.maxFreeLowMessages - this.lowMessageCount);
+    }
+
+    isUsingLowModel() {
+        return this.selectedModel === 'jarvis-low' || this.isLowModelMode;
+    }
+
+    switchToLowModel(silent = false) {
+        console.log('🔄 Switching to Jarvis Low');
+        this.selectedModel = 'jarvis-low';
+        this.selectedModelName = 'Jarvis Low';
+        this.isLowModelMode = true;
+        
+        // Update UI
+        if (this.currentModelDisplay) {
+            this.currentModelDisplay.textContent = 'Jarvis Low';
+        }
+        
+        // Update tier toggle UI
+        this.updateTierToggleUI();
+        
+        if (!silent) {
+            this.showNotification('Switched to Jarvis Low', true);
+        }
+    }
+
+    updateTierToggleUI() {
+        const isLow = this.isUsingLowModel();
+        
+        // Update checkbox state (checked = High, unchecked = Low)
+        const checkbox = document.getElementById('tier-toggle-checkbox');
+        if (checkbox) {
+            checkbox.checked = !isLow;
+        }
+    }
+
+    setupTierToggle() {
+        // Get elements
+        const checkbox = document.getElementById('tier-toggle-checkbox');
+        const toggleContainer = document.getElementById('jarvis-tier-toggle');
+        
+        if (!checkbox) return;
+        
+        // Initialize toggle state
+        this.updateTierToggleUI();
+        
+        // Handle checkbox change
+        checkbox.addEventListener('change', (e) => {
+            e.stopPropagation();
+            const isHigh = e.target.checked;
+            console.log(`🔄 Tier toggle changed to: ${isHigh ? 'High' : 'Low'}`);
+            
+            if (isHigh) {
+                // Switch to High (default Jarvis)
+                this.isLowModelMode = false;
+                this.selectModel('default', 'Jarvis');
+            } else {
+                // Switch to Low (GPT-5 Mini)
+                this.switchToLowModel(true);
+            }
+            
+            this.updateTierToggleUI();
+            this.hideModelSubmenu();
+        });
+        
+        // Prevent clicks on toggle from triggering model selection
+        if (toggleContainer) {
+            toggleContainer.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        }
+    }
+
+    // ============ End Low Model Tracking ============
 
     updateMessageCounter() {
         if (!this.messageCounter || !this.messageCountText) {
@@ -8852,6 +9595,13 @@ If you cannot find clear event information, return null. Be precise with dates a
                 
                 const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
                 
+                // Check if it's a limit exceeded error
+                if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
+                    console.error('🚫 Calendar parsing blocked - limit exceeded');
+                    this.showLimitExceededNotification();
+                    return { limitExceeded: true };
+                }
+                
                 if (result && result.ok && result.data) {
                     const responseText = this.extractText(result.data) || '';
                     
@@ -9081,6 +9831,13 @@ If you cannot find clear event information, return null. Be precise with dates a
                 };
                 
                 const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
+                
+                // Check if it's a limit exceeded error
+                if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
+                    console.error('🚫 Image calendar parsing blocked - limit exceeded');
+                    this.showLimitExceededNotification();
+                    return { limitExceeded: true };
+                }
                 
                 if (result && result.ok && result.data) {
                     const responseText = this.extractText(result.data) || '';
