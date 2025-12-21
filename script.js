@@ -1201,24 +1201,26 @@ class JarvisOverlay {
             }
         });
         
-        // Windows: Global click handler to ensure window focus for all interactive elements
+        // Windows: Request focus once on first interaction to ensure window can receive input
         // This is necessary because Windows requires the window to be focused for clicks to work
         if (this.isElectron && window.require) {
             const { ipcRenderer } = window.require('electron');
-            
-            // Check if we're on Windows
             const isWindows = process.platform === 'win32';
             
             if (isWindows) {
-                // Request focus on any click within the overlay
-                document.addEventListener('click', () => {
-                    ipcRenderer.invoke('request-focus').catch(() => {});
-                }, true); // Use capture phase to ensure it fires first
+                let lastFocusRequest = 0;
+                const FOCUS_DEBOUNCE_MS = 500; // Only request focus once per 500ms
                 
-                // Also handle mousedown for immediate response
-                document.addEventListener('mousedown', () => {
-                    ipcRenderer.invoke('request-focus').catch(() => {});
-                }, true);
+                const requestFocusDebounced = () => {
+                    const now = Date.now();
+                    if (now - lastFocusRequest > FOCUS_DEBOUNCE_MS) {
+                        lastFocusRequest = now;
+                        ipcRenderer.invoke('request-focus').catch(() => {});
+                    }
+                };
+                
+                // Only request focus on mousedown (not click to avoid double-firing)
+                document.addEventListener('mousedown', requestFocusDebounced, true);
             }
         }
         

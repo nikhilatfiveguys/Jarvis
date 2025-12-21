@@ -1303,8 +1303,8 @@ class JarvisApp {
         
         // Windows-specific: Make window properly interactive
         if (process.platform === 'win32') {
-            mainWindowOptions.skipTaskbar = false; // Show in taskbar so user can click to focus
-            mainWindowOptions.thickFrame = true; // Better Windows compatibility
+            // Keep skipTaskbar true for overlay feel, but ensure window can receive focus
+            mainWindowOptions.thickFrame = false; // Keep frameless
         }
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
@@ -1592,13 +1592,15 @@ class JarvisApp {
             
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 try {
+                    // Only focus if not already focused (prevents flickering)
+                    const alreadyFocused = this.mainWindow.isFocused();
+                    
                     this.mainWindow.setFocusable(true);
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    this.mainWindow.moveTop();
                     
                     // On Windows, we MUST focus the window for keyboard input to work
                     // On macOS, we avoid focus() to prevent proctoring software detection
-                    if (process.platform === 'win32') {
+                    if (process.platform === 'win32' && !alreadyFocused) {
                         this.mainWindow.focus();
                     }
                     
