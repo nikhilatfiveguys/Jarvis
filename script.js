@@ -1179,7 +1179,7 @@ class JarvisOverlay {
             if (e.key === 'Enter') this.sendMessage();
         });
         
-        // Windows-specific: Request window focus when input field gets focus
+        // Windows-specific: Request window focus when input field gets focus or is clicked
         // This ensures the window can receive keyboard input
         this.textInput.addEventListener('focus', () => {
             if (this.isElectron) {
@@ -1187,6 +1187,40 @@ class JarvisOverlay {
                 ipcRenderer.invoke('request-focus').catch(() => {});
             }
         });
+        
+        // Also handle click to ensure focus on Windows
+        this.textInput.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.isElectron) {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('request-focus').catch(() => {});
+                // Ensure input gets focus after window is focused
+                setTimeout(() => {
+                    this.textInput.focus();
+                }, 50);
+            }
+        });
+        
+        // Windows: Global click handler to ensure window focus for all interactive elements
+        // This is necessary because Windows requires the window to be focused for clicks to work
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            
+            // Check if we're on Windows
+            const isWindows = process.platform === 'win32';
+            
+            if (isWindows) {
+                // Request focus on any click within the overlay
+                document.addEventListener('click', () => {
+                    ipcRenderer.invoke('request-focus').catch(() => {});
+                }, true); // Use capture phase to ensure it fires first
+                
+                // Also handle mousedown for immediate response
+                document.addEventListener('mousedown', () => {
+                    ipcRenderer.invoke('request-focus').catch(() => {});
+                }, true);
+            }
+        }
         
         
         if (this.answerThisBtn) {

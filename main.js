@@ -1301,6 +1301,12 @@ class JarvisApp {
             mainWindowOptions.acceptFirstMouse = true; // Accept clicks without activating
         }
         
+        // Windows-specific: Make window properly interactive
+        if (process.platform === 'win32') {
+            mainWindowOptions.skipTaskbar = false; // Show in taskbar so user can click to focus
+            mainWindowOptions.thickFrame = true; // Better Windows compatibility
+        }
+        
         this.mainWindow = new BrowserWindow(mainWindowOptions);
 
         // macOS-only: Enable content protection to hide from screen recording (like Cluely)
@@ -1572,8 +1578,9 @@ class JarvisApp {
         });
 
         // Handle focus request from renderer
-        // NOTE: We intentionally do NOT call focus() to avoid triggering browser blur events
+        // NOTE: On macOS we intentionally do NOT call focus() to avoid triggering browser blur events
         // which proctoring software (Canvas, etc.) uses to detect tab switching
+        // On Windows, we MUST focus the window or keyboard input won't work
         ipcMain.handle('request-focus', () => {
             // Don't interfere if account or password reset window is focused
             if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
@@ -1586,10 +1593,15 @@ class JarvisApp {
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 try {
                     this.mainWindow.setFocusable(true);
-                    // DO NOT call focus() - this triggers browser blur events
-                    // Instead, just ensure the window is visible and can receive input
                     this.mainWindow.setIgnoreMouseEvents(false);
                     this.mainWindow.moveTop();
+                    
+                    // On Windows, we MUST focus the window for keyboard input to work
+                    // On macOS, we avoid focus() to prevent proctoring software detection
+                    if (process.platform === 'win32') {
+                        this.mainWindow.focus();
+                    }
+                    
                     return true;
                 } catch (_) {
                     return false;
