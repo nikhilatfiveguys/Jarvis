@@ -1226,46 +1226,70 @@ class JarvisApp {
         const primaryDisplay = screen.getPrimaryDisplay();
         const { width, height } = primaryDisplay.bounds;
 
-        // Create a true overlay window
+        // Create overlay window - different configuration for Windows vs macOS
         // IMPORTANT: This window is designed to NOT trigger browser blur events
         // which proctoring software (Canvas, etc.) uses to detect "tab switching"
-        const mainWindowOptions = {
-            width: width,
-            height: height,
-            x: 0,
-            y: 0,
-            frame: false,
-            alwaysOnTop: true,
-            transparent: true,
-            backgroundColor: '#00000000',
-            resizable: false,
-            movable: false,
-            minimizable: false,
-            maximizable: false,
-            skipTaskbar: true,
-            focusable: true, // Allow focus for input interactions
-            fullscreenable: true,
-            webPreferences: {
-                nodeIntegration: true,
-                contextIsolation: false,
-                enableRemoteModule: true
-            },
-            show: false, // Don't show until ready
-            hasShadow: false,
-            thickFrame: false
-        };
         
-        // macOS-only: Configure as a utility/panel window that doesn't steal focus
-        if (process.platform === 'darwin') {
-            mainWindowOptions.contentProtection = true;
-            // These help prevent the window from activating the app
-            mainWindowOptions.type = 'panel'; // Makes it a floating panel on macOS
-            mainWindowOptions.acceptFirstMouse = true; // Accept clicks without activating
-        }
+        let mainWindowOptions;
         
-        // Windows-specific: Use toolbar type to stay off taskbar
         if (process.platform === 'win32') {
-            mainWindowOptions.type = 'toolbar'; // Toolbar windows don't appear in taskbar
+            // Windows: Use a simpler, more compatible configuration
+            // Transparent overlays don't work well on Windows, so we use a different approach
+            mainWindowOptions = {
+                width: width,
+                height: height,
+                x: 0,
+                y: 0,
+                frame: false,
+                alwaysOnTop: true,
+                transparent: true,
+                backgroundColor: '#00000000',
+                resizable: false,
+                movable: false,
+                minimizable: false,
+                maximizable: false,
+                skipTaskbar: true,
+                focusable: true,
+                fullscreenable: false,
+                webPreferences: {
+                    nodeIntegration: true,
+                    contextIsolation: false,
+                    enableRemoteModule: true
+                },
+                show: false,
+                hasShadow: false
+                // Note: NO special window type on Windows - causes issues
+            };
+        } else {
+            // macOS: Full overlay with panel type and click-through support
+            mainWindowOptions = {
+                width: width,
+                height: height,
+                x: 0,
+                y: 0,
+                frame: false,
+                alwaysOnTop: true,
+                transparent: true,
+                backgroundColor: '#00000000',
+                resizable: false,
+                movable: false,
+                minimizable: false,
+                maximizable: false,
+                skipTaskbar: true,
+                focusable: true,
+                fullscreenable: true,
+                webPreferences: {
+                    nodeIntegration: true,
+                    contextIsolation: false,
+                    enableRemoteModule: true
+                },
+                show: false,
+                hasShadow: false,
+                thickFrame: false,
+                contentProtection: true,
+                type: 'panel', // Makes it a floating panel on macOS
+                acceptFirstMouse: true // Accept clicks without activating
+            };
         }
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
@@ -1309,8 +1333,11 @@ class JarvisApp {
             }
         });
 
-        // Make the window click-through by default
-        this.mainWindow.setIgnoreMouseEvents(true);
+        // Make the window click-through by default (macOS only)
+        // On Windows, click-through causes major issues, so we keep it always interactive
+        if (process.platform === 'darwin') {
+            this.mainWindow.setIgnoreMouseEvents(true);
+        }
         
 
         // Hide Dock for overlay utility feel (macOS)
@@ -1562,17 +1589,14 @@ class JarvisApp {
         // Handle making overlay click-through
         ipcMain.handle('make-click-through', () => {
             if (this.mainWindow) {
+                // Skip on Windows - click-through doesn't work properly
+                if (process.platform === 'win32') {
+                    return;
+                }
+                
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
                 try { 
-                    // On Windows, keep window focusable but blurred so it can regain focus when clicked
-                    // This prevents the "background process" issue
-                    if (process.platform === 'win32') {
-                        // Don't set focusable to false - keep it focusable so it can regain focus
-                        this.mainWindow.blur();
-                    } else {
-                        // On macOS/Linux, we can safely make it unfocusable
-                        this.mainWindow.setFocusable(false);
-                    }
+                    this.mainWindow.setFocusable(false);
                 } catch (_) {}
             }
         });
@@ -1580,6 +1604,11 @@ class JarvisApp {
         // Handle enabling drag-through mode (click-through with event forwarding for drag operations)
         ipcMain.handle('enable-drag-through', () => {
             if (this.mainWindow) {
+                // Skip on Windows - click-through doesn't work properly
+                if (process.platform === 'win32') {
+                    return;
+                }
+                
                 // Set to ignore mouse events but forward them, allowing drag to pass through
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
             }
@@ -1665,6 +1694,12 @@ class JarvisApp {
         // Toggle click-through from renderer
         ipcMain.handle('set-ignore-mouse-events', (_event, shouldIgnore) => {
             if (!this.mainWindow) return;
+            
+            // Skip on Windows - click-through doesn't work properly
+            if (process.platform === 'win32') {
+                return;
+            }
+            
             // When ignoring, forward events so underlying apps receive them
             if (shouldIgnore) {
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -3567,15 +3602,20 @@ class JarvisApp {
         
         // Start with click-through mode - let renderer handle making it interactive on hover
         // This allows clicking through to other windows when not interacting with the overlay
-        try {
-            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-        } catch (_) {}
+        // On Windows, skip click-through entirely - it doesn't work properly
+        if (process.platform === 'darwin') {
+            try {
+                this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
+            } catch (_) {}
+        }
         
         // On Windows, ensure window stays off taskbar and is focusable
         if (process.platform === 'win32') {
             try {
                 this.mainWindow.setSkipTaskbar(true); // Reinforce - stay off taskbar
                 this.mainWindow.setFocusable(true);
+                // Keep window always interactive on Windows
+                this.mainWindow.setIgnoreMouseEvents(false);
             } catch (_) {}
         }
         
@@ -3652,16 +3692,11 @@ class JarvisApp {
                 // Bring to front
                 this.mainWindow.moveTop();
                 
-                // Windows: Reinforce staying off taskbar
-                if (process.platform === 'win32') {
-                    try {
-                        this.mainWindow.setSkipTaskbar(true);
-                    } catch (_) {}
-                }
-                
                 // macOS-only: Reinforce content protection in enforcement loop (use stealth mode preference)
-                const stealthEnabled = this.getStealthModePreference();
-                this.setWindowContentProtection(this.mainWindow, stealthEnabled);
+                if (process.platform === 'darwin') {
+                    const stealthEnabled = this.getStealthModePreference();
+                    this.setWindowContentProtection(this.mainWindow, stealthEnabled);
+                }
             } catch (e) {
                 // Ignore errors in enforcement loop
             }
