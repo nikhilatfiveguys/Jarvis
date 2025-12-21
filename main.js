@@ -141,8 +141,19 @@ class JarvisApp {
         app.on('second-instance', () => {
             if (this.mainWindow) {
                 if (this.mainWindow.isMinimized()) this.mainWindow.restore();
-                this.mainWindow.show();
-                this.mainWindow.focus();
+                // Use showInactive to avoid adding to taskbar
+                try {
+                    this.mainWindow.showInactive();
+                } catch (_) {
+                    this.mainWindow.show();
+                }
+                this.mainWindow.moveTop();
+                // Reinforce staying off taskbar on Windows
+                if (process.platform === 'win32') {
+                    try {
+                        this.mainWindow.setSkipTaskbar(true);
+                    } catch (_) {}
+                }
             }
         });
 
@@ -1250,6 +1261,11 @@ class JarvisApp {
             // These help prevent the window from activating the app
             mainWindowOptions.type = 'panel'; // Makes it a floating panel on macOS
             mainWindowOptions.acceptFirstMouse = true; // Accept clicks without activating
+        }
+        
+        // Windows-specific: Use toolbar type to stay off taskbar
+        if (process.platform === 'win32') {
+            mainWindowOptions.type = 'toolbar'; // Toolbar windows don't appear in taskbar
         }
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
@@ -3555,9 +3571,10 @@ class JarvisApp {
             this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
         } catch (_) {}
         
-        // On Windows, ensure window is focusable when showing overlay
+        // On Windows, ensure window stays off taskbar and is focusable
         if (process.platform === 'win32') {
             try {
+                this.mainWindow.setSkipTaskbar(true); // Reinforce - stay off taskbar
                 this.mainWindow.setFocusable(true);
             } catch (_) {}
         }
@@ -3634,6 +3651,13 @@ class JarvisApp {
                 
                 // Bring to front
                 this.mainWindow.moveTop();
+                
+                // Windows: Reinforce staying off taskbar
+                if (process.platform === 'win32') {
+                    try {
+                        this.mainWindow.setSkipTaskbar(true);
+                    } catch (_) {}
+                }
                 
                 // macOS-only: Reinforce content protection in enforcement loop (use stealth mode preference)
                 const stealthEnabled = this.getStealthModePreference();
