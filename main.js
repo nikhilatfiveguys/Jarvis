@@ -1342,8 +1342,14 @@ class JarvisApp {
             }
         });
 
-        // Make the window click-through by default
-        this.mainWindow.setIgnoreMouseEvents(true);
+        // Make the window click-through by default (macOS only)
+        // On Windows, transparent click-through doesn't work well, so keep it always interactive
+        if (process.platform === 'darwin') {
+            this.mainWindow.setIgnoreMouseEvents(true);
+        } else {
+            // Windows: keep window interactive but use a workaround
+            this.mainWindow.setIgnoreMouseEvents(false);
+        }
         
 
         // Hide Dock for overlay utility feel (macOS)
@@ -1595,6 +1601,15 @@ class JarvisApp {
         // Handle making overlay click-through
         ipcMain.handle('make-click-through', () => {
             if (this.mainWindow) {
+                // On Windows, skip click-through mode entirely - it doesn't work well with transparent windows
+                if (process.platform === 'win32') {
+                    // Just blur but keep interactive
+                    try {
+                        this.mainWindow.blur();
+                    } catch (_) {}
+                    return;
+                }
+                
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
                 try { 
                     // On Windows, keep window focusable but blurred so it can regain focus when clicked
@@ -1613,6 +1628,9 @@ class JarvisApp {
         // Handle enabling drag-through mode (click-through with event forwarding for drag operations)
         ipcMain.handle('enable-drag-through', () => {
             if (this.mainWindow) {
+                // Skip on Windows - transparent click-through doesn't work well
+                if (process.platform === 'win32') return;
+                
                 // Set to ignore mouse events but forward them, allowing drag to pass through
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
             }
@@ -1698,6 +1716,10 @@ class JarvisApp {
         // Toggle click-through from renderer
         ipcMain.handle('set-ignore-mouse-events', (_event, shouldIgnore) => {
             if (!this.mainWindow) return;
+            
+            // Skip on Windows - transparent click-through doesn't work well
+            if (process.platform === 'win32') return;
+            
             // When ignoring, forward events so underlying apps receive them
             if (shouldIgnore) {
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -4233,9 +4255,12 @@ class JarvisApp {
         
         // Start with click-through mode - let renderer handle making it interactive on hover
         // This allows clicking through to other windows when not interacting with the overlay
-        try {
-            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-        } catch (_) {}
+        // Skip on Windows - transparent click-through doesn't work well
+        if (process.platform === 'darwin') {
+            try {
+                this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
+            } catch (_) {}
+        }
         
         // On Windows, ensure window is focusable when showing overlay
         if (process.platform === 'win32') {
