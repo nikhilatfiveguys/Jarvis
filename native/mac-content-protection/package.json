@@ -1,0 +1,29 @@
+{
+  "name": "mac-content-protection",
+  "version": "1.0.0",
+  "description": "Native macOS module for preventing screen recording",
+  "main": "index.js",
+  "scripts": {
+    "install": "electron-rebuild -f -w mac_content_protection || node-gyp rebuild",
+    "rebuild": "electron-rebuild -f -w mac_content_protection || node-gyp rebuild"
+  },
+  "gypfile": true,
+  "keywords": [
+    "macos",
+    "screen-recording",
+    "content-protection",
+    "native"
+  ],
+  "author": "Aaron Soni",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "electron-rebuild": "^3.2.9"
+  }
+}
+

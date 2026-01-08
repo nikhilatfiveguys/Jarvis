@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis 6.0 - AI Overlay Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- KaTeX for math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <!-- True floating overlay - no container -->
+    <div id="jarvis-overlay" class="overlay">
+        
+        <!-- Interactive Onboarding Tutorial -->
+        <div id="onboarding-tutorial" class="onboarding-tutorial hidden">
+            <div class="tutorial-content">
+                <span class="tutorial-icon" id="tutorial-icon"></span>
+                <span class="tutorial-text" id="tutorial-text"></span>
+                <button id="tutorial-done-btn" class="tutorial-done-btn hidden">Done</button>
+            </div>
+        </div>
+        
+        <!-- Screen Recording Permission Banner -->
+        <div id="permission-banner" class="permission-banner hidden">
+            <div class="permission-content">
+                <div class="permission-title">Enable screen recording & system audio recording</div>
+                <div class="permission-instructions">Open System Settings → Enable Jarvis 6.0. It will ask you to Quit & Reopen. (if nothing shows up press answer screen)</div>
+                <div class="permission-notice">
+                    <strong>DOES NOT screenshot unless specifically prompted or by pressing "answer screen"</strong> (no images are stored, all information is local on your computer).
+                </div>
+            </div>
+        </div>
+        
+        <!-- Set Password Notification -->
+        <div id="set-password-notification" class="set-password-notification hidden">
+            <div class="password-notification-content">
+                <span class="password-notification-icon">🔐</span>
+                <span class="password-notification-text">Set a password to secure your account</span>
+                <button id="password-notification-open-btn" class="password-notification-btn">Open</button>
+                <button id="password-notification-dismiss-btn" class="password-notification-dismiss">×</button>
+            </div>
+        </div>
+        
+        <!-- Google Docs Writing Status Indicator -->
+        <div id="docs-writing-indicator" class="docs-writing-indicator hidden">
+            <div class="docs-status-content">
+                <div class="docs-status-icon">
+                    <div class="docs-pulse-dot"></div>
+                </div>
+                <span class="docs-status-text">Writing in docs...</span>
+            </div>
+        </div>
+        
+        <!-- Google Docs Done Indicator -->
+        <div id="docs-done-indicator" class="docs-done-indicator hidden">
+            <div class="docs-status-content">
+                <div class="docs-status-icon done">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M10 3L4.5 8.5L2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <span class="docs-status-text">Done!</span>
+                <button id="docs-open-btn" class="docs-open-btn">Open</button>
+                <button id="docs-dismiss-btn" class="docs-dismiss-btn" title="Dismiss">×</button>
+            </div>
+        </div>
+        
+        <!-- Sleek minimal HUD -->
+        <!-- Attachments bar (appears when files are attached) -->
+        <div id="attachments-bar" class="attachments-bar hidden"></div>
+
+        <!-- Main HUD -->
+        <div class="minimal-hud">
+            <!-- Drag handle (six dots) -->
+            <div id="drag-handle" class="drag-handle">
+                <div class="drag-dots">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+            </div>
+            
+            <!-- Text input area -->
+            <div class="input-section">
+                <input type="text" id="text-input" placeholder="Ask Jarvis anything...">
+            </div>
+            
+            <!-- Message counter for free users -->
+            <div id="message-counter" class="message-counter hidden">
+                <span id="message-count-text">0/10</span>
+            </div>
+            
+            <!-- Add file button -->
+            <button id="add-btn" class="add-btn" title="Add file">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <input type="file" id="file-input" class="hidden" multiple accept="image/*,.pdf,.txt,.doc,.docx,.md,.json,.csv">
+            <!-- Settings button -->
+            <button id="settings-btn" class="settings-btn" title="Settings">
+                <div class="menu-icon">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </button>
+        </div>
+        
+        <!-- Settings menu -->
+        <div id="settings-menu" class="settings-menu hidden">
+            <div class="settings-item settings-item-submenu" id="model-switcher-btn">
+                <span class="settings-text">Model: <span id="current-model-display">Jarvis</span></span>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
+                    <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div id="model-submenu" class="model-submenu hidden">
+                <!-- Main models (always visible) -->
+                <div class="model-item" data-model="default" data-tier="high">
+                    <span class="model-name">Jarvis</span>
+                    <span class="model-desc">uses ChatGPT-5.2</span>
+                    <div class="tier-toggle" id="jarvis-tier-toggle">
+                        <label class="tier-switch">
+                            <input type="checkbox" id="tier-toggle-checkbox" checked>
+                            <span class="tier-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="model-item" data-model="google/gemini-3-pro-preview" data-tier="high">
+                    <span class="model-name">Gemini 3 Pro</span>
+                    <span class="model-desc">Google's newest model</span>
+                </div>
+                <div class="model-item" data-model="perplexity/sonar-pro-search" data-tier="high">
+                    <span class="model-name">Perplexity Pro</span>
+                    <span class="model-desc">🔍 Live web search</span>
+                </div>
+                <div class="model-item" data-model="anthropic/claude-opus-4.5" data-tier="high">
+                    <span class="model-name">Claude Opus 4.5</span>
+                    <span class="model-desc">Anthropic's most capable</span>
+                </div>
+                <div class="model-item" data-model="x-ai/grok-4.1-fast" data-tier="high">
+                    <span class="model-name">Grok 4.1 Fast</span>
+                    <span class="model-desc">xAI's fast model</span>
+                    <div class="freaky-toggle" id="freaky-toggle" title="Toggle Freaky Mode">
+                        <label class="freaky-switch">
+                            <input type="checkbox" id="freaky-toggle-checkbox">
+                            <span class="freaky-slider">
+                                <span class="freaky-emoji" id="freaky-emoji">😇</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- More models button -->
+                <div class="model-more-btn" id="model-more-btn">
+                    <span>More models</span>
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                
+                <!-- Hidden models (shown when "More" is clicked) -->
+                <div id="more-models-section" class="more-models-section hidden">
+                    <div class="model-item" data-model="openai/gpt-5-nano" data-tier="high">
+                        <span class="model-name">GPT 5 Nano</span>
+                        <span class="model-desc">OpenAI fastest model</span>
+                    </div>
+                    <div class="model-item" data-model="anthropic/claude-sonnet-4.5" data-tier="high">
+                        <span class="model-name">Claude Sonnet 4.5</span>
+                        <span class="model-desc">Best for reasoning</span>
+                    </div>
+                    <div class="model-item" data-model="google/gemini-2.5-pro" data-tier="high">
+                        <span class="model-name">Gemini 2.5 Pro</span>
+                        <span class="model-desc">Google's flagship</span>
+                    </div>
+                    <div class="model-item" data-model="deepseek/deepseek-chat" data-tier="high">
+                        <span class="model-name">DeepSeek V3</span>
+                        <span class="model-desc">Best for coding</span>
+                    </div>
+                    <div class="model-item" data-model="meta-llama/llama-4-maverick" data-tier="high">
+                        <span class="model-name">Llama 4 Maverick</span>
+                        <span class="model-desc">Meta's latest</span>
+                    </div>
+                    <div class="model-item" data-model="perplexity/sonar-reasoning-pro" data-tier="high">
+                        <span class="model-name">Sonar Reasoning Pro</span>
+                        <span class="model-desc">🔍 Deep research</span>
+                    </div>
+                    <div class="model-item" data-model="allenai/olmo-3-32b-think" data-tier="high">
+                        <span class="model-name">OLMO 3 32B Think</span>
+                        <span class="model-desc">AllenAI's reasoning</span>
+                    </div>
+                    <div class="model-item" data-model="moonshotai/kimi-k2-thinking" data-tier="high">
+                        <span class="model-name">Kimi K2 Thinking</span>
+                        <span class="model-desc">Moonshot AI</span>
+                    </div>
+                    <div class="model-item" data-model="amazon/nova-2-lite-v1" data-tier="high">
+                        <span class="model-name">Amazon Nova 2 Lite</span>
+                        <span class="model-desc">Amazon's efficient</span>
+                    </div>
+                    <div class="model-item" data-model="thedrummer/cydonia-24b-v4.1" data-tier="high">
+                        <span class="model-name">Cydonia 24B v4.1</span>
+                        <span class="model-desc">Creative roleplay</span>
+                    </div>
+                    <div class="model-item" data-model="prime-intellect/intellect-3" data-tier="high">
+                        <span class="model-name">Intellect 3</span>
+                        <span class="model-desc">Prime Intellect</span>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-item settings-item-toggle" id="stealth-mode-toggle">
+                <span class="settings-text">Stealth Mode</span>
+                <label class="toggle-switch" for="stealth-mode-checkbox">
+                    <input type="checkbox" id="stealth-mode-checkbox">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-item settings-item-submenu" id="settings-submenu-btn">
+                <span class="settings-text">Settings</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
+                    <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div id="settings-submenu" class="settings-submenu hidden">
+                <div class="settings-item" id="opacity-slider-item">
+                    <span class="settings-text">Opacity</span>
+                    <div class="slider-container">
+                        <input type="range" id="opacity-slider" min="5" max="95" value="95" 
+                               ondblclick="this.value=95; window.handleOpacitySlider(95);"
+                               oninput="window.handleOpacitySlider(this.value)" 
+                               onchange="window.handleOpacitySlider(this.value)">
+                    </div>
+                </div>
+                <div class="settings-item" id="color-picker-item">
+                    <span class="settings-text">Color</span>
+                    <div class="color-options-row">
+                        <div class="color-dot" data-color="#000000" style="background: #000000; border: 1px solid rgba(255,255,255,0.3);" onclick="event.stopPropagation(); window.handleColorPicker('#000000')"></div>
+                        <div class="color-dot" data-color="#ffffff" style="background: #ffffff;" onclick="event.stopPropagation(); window.handleColorPicker('#ffffff')"></div>
+                        <div class="color-dot" data-color="#ec4899" style="background: #ec4899;" onclick="event.stopPropagation(); window.handleColorPicker('#ec4899')"></div>
+                        <div class="color-dot" data-color="#4A9EFF" style="background: #4A9EFF;" onclick="event.stopPropagation(); window.handleColorPicker('#4A9EFF')"></div>
+                    </div>
+                </div>
+                <div class="settings-item" id="hotkeys-btn">
+                    <span class="settings-text">Hotkeys</span>
+                </div>
+                <div class="settings-item" id="check-updates-btn">
+                    <span class="settings-text">Check for Updates</span>
+                    <span class="settings-version" id="app-version-display">v1.0.0</span>
+                </div>
+                <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
+                    <span class="settings-text">🔄 Update Available</span>
+                    <span class="settings-version" id="update-version-display">v1.0.0</span>
+                </div>
+            </div>
+            <div class="settings-item" id="account-info-btn">
+                <span class="settings-text">Account</span>
+            </div>
+            <div class="settings-item" id="clear-chat-btn">
+                <span class="settings-text">Clear Chat History</span>
+            </div>
+            <div class="settings-item" id="settings-close-btn">
+                <span class="settings-text">Close</span>
+            </div>
+        </div>
+        
+        
+        <!-- Arrow button to reveal chat history -->
+        <button id="reveal-history-btn" class="reveal-history-btn hidden" title="Show chat history">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 2L10 6L2 6L6 2Z" fill="currentColor"/>
+            </svg>
+        </button>
+        
+        <!-- Answer Screen button - positioned under HUD when no output, moves to action buttons container when output shown -->
+        <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Answer what's on screen">Answer Screen</button>
+        
+
+        <!-- Messages container - scrollable, contains all messages -->
+        <div id="messages-container" class="messages-container hidden">
+            <!-- Previous messages will be dynamically added here (hidden above) -->
+            <!-- Current output message will be added here (visible at bottom) -->
+        </div>
+        
+        <!-- Draggable output chip - current visible message (will be moved into messages-container) -->
+        <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag me to drop text into apps">
+            <!-- Resize handle -->
+            <div id="resize-handle" class="resize-handle" title="Drag to resize"></div>
+        </div>
+        <!-- Action buttons container -->
+        <div class="action-buttons-container hidden" id="action-buttons-container">
+            <!-- Answer Screen button (moves here when output is shown) -->
+            <button id="answer-this-btn-moved" class="answer-this-btn hidden" title="Answer what's on screen">Answer Screen</button>
+            <!-- Humanize button -->
+            <button id="humanize-btn" class="humanize-btn hidden" title="Make it sound more human">Humanize</button>
+            <!-- Grok Voice button (only shows in freaky mode) -->
+            <button id="grok-voice-btn" class="grok-voice-btn hidden" title="Toggle voice responses">
+                <svg class="voice-inactive" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="4" cy="10" r="1.2" fill="currentColor"/>
+                    <circle cx="8" cy="10" r="1.2" fill="currentColor"/>
+                    <circle cx="12" cy="10" r="1.2" fill="currentColor"/>
+                    <circle cx="16" cy="10" r="1.2" fill="currentColor"/>
+                </svg>
+                <svg class="voice-active" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="2" y="7" width="2" height="6" rx="1" fill="currentColor"/>
+                    <rect x="6" y="4" width="2" height="12" rx="1" fill="currentColor"/>
+                    <rect x="10" y="2" width="2" height="16" rx="1" fill="currentColor"/>
+                    <rect x="14" y="4" width="2" height="12" rx="1" fill="currentColor"/>
+                </svg>
+            </button>
+            <!-- Voice selector button (toggle between voices) -->
+            <button id="voice-select-btn" class="voice-select-btn hidden" title="Switch voice">
+                <span class="voice-icon">♀</span>
+            </button>
+        </div>
+        
+        <!-- Output Toolbar (icon buttons) - appears on double-click -->
+        <div id="output-toolbar" class="output-toolbar hidden">
+            <!-- Copy button -->
+            <button id="toolbar-copy-btn" class="toolbar-btn" title="Copy to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+            <!-- Add to Docs button -->
+            <button id="toolbar-docs-btn" class="toolbar-btn" title="Add to Google Docs">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                    <line x1="9" y1="15" x2="15" y2="15"></line>
+                </svg>
+            </button>
+            <!-- Resend/Try Again button -->
+            <button id="toolbar-retry-btn" class="toolbar-btn" title="Resend">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <!-- Floating close button positioned outside the output box -->
+        <button id="close-output-floating" class="close-output-floating hidden" aria-label="Hide output" title="Hide">×</button>
+    </div>
+
+    <!-- Activation indicator -->
+    <div id="activation-indicator" class="activation-indicator hidden">
+        <div class="activation-content">
+            <div class="jarvis-logo">🤖</div>
+            <div class="activation-text">Jarvis Activated</div>
+        </div>
+    </div>
+
+    <!-- Hidden file input for Add File action -->
+    <input id="file-input" type="file" multiple class="hidden" accept="*/*" />
+
+    <!-- Document Name Modal -->
+    <div id="document-name-modal" class="document-name-modal hidden">
+        <div class="document-name-modal-content">
+            <h3>Name Your Google Doc</h3>
+            <input type="text" id="document-name-input" placeholder="Enter document name..." />
+            <div class="document-name-modal-buttons">
+                <button id="document-name-cancel" class="document-name-btn-cancel">Cancel</button>
+                <button id="document-name-confirm" class="document-name-btn-confirm">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Selection Modal -->
+    <div id="document-selection-modal" class="document-name-modal hidden">
+        <div class="document-name-modal-content" style="max-width: 500px; max-height: 600px;">
+            <h3>Select a Google Doc</h3>
+            <div id="document-list-container" style="max-height: 400px; overflow-y: auto; margin: 20px 0;">
+                <div id="document-list-loading" style="text-align: center; padding: 40px; color: #888;">
+                    Loading documents...
+                </div>
+                <div id="document-list" style="display: none;"></div>
+            </div>
+            <div class="document-name-modal-buttons">
+                <button id="document-selection-new" class="document-name-btn-confirm" style="margin-right: auto;">New Doc</button>
+                <button id="document-selection-cancel" class="document-name-btn-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calendar Event Modal -->
+    <div id="calendar-event-modal" class="document-name-modal hidden">
+        <div class="document-name-modal-content" style="max-width: 500px;">
+            <h3>Create Calendar Event</h3>
+            <div style="margin: 20px 0;">
+                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Event Title:</label>
+                <input type="text" id="calendar-event-title" placeholder="Enter event title..." style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
+            </div>
+            <div style="margin: 20px 0;">
+                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Date & Time:</label>
+                <input type="datetime-local" id="calendar-event-datetime" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
+            </div>
+            <div style="margin: 20px 0;">
+                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Duration (hours):</label>
+                <input type="number" id="calendar-event-duration" value="1" min="0.5" step="0.5" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
+            </div>
+            <div style="margin: 20px 0;">
+                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Description (optional):</label>
+                <textarea id="calendar-event-description" placeholder="Enter event description..." rows="3" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px; resize: vertical;"></textarea>
+            </div>
+            <div style="margin: 20px 0;">
+                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Location (optional):</label>
+                <input type="text" id="calendar-event-location" placeholder="Enter location..." style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
+            </div>
+            <div class="document-name-modal-buttons">
+                <button id="calendar-event-cancel" class="document-name-btn-cancel">Cancel</button>
+                <button id="calendar-event-confirm" class="document-name-btn-confirm">Create Event</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Info Modal -->
+    <div id="account-modal" class="account-modal hidden">
+        <div class="account-modal-content">
+            <div class="account-modal-header">
+                <h3>Account & Premium Status</h3>
+                <button id="account-modal-close" class="account-modal-close">×</button>
+            </div>
+            <div class="account-modal-body">
+                <div class="account-info">
+                    <div class="account-section">
+                        <div class="account-label">Account:</div>
+                        <div id="user-email" class="account-value">Free Tier</div>
+                    </div>
+                    <div class="account-section">
+                        <div class="account-label">Premium Status:</div>
+                        <div id="premium-status" class="account-value">Free</div>
+                    </div>
+                    <div class="account-section">
+                        <div class="account-label">Features:</div>
+                        <div id="feature-list" class="feature-list">
+                            <div class="feature-item">✅ Voice Recording</div>
+                            <div class="feature-item">✅ Screenshot Analysis</div>
+                            <div class="feature-item">✅ Web Search</div>
+                            <div class="feature-item">❌ Document Processing</div>
+                        </div>
+                    </div>
+                    <div class="account-section google-services-section">
+                        <div class="account-label">Google Services:</div>
+                        <div class="google-services-list">
+                            <div class="google-service-item">
+                                <div class="google-service-info">
+                                    <span class="google-service-name">📄 Google Docs</span>
+                                    <span id="docs-status" class="google-service-status">Not connected</span>
+                                </div>
+                                <button id="docs-connect-btn" class="google-connect-btn">Connect</button>
+                                <button id="docs-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
+                            </div>
+                            <div class="google-service-item">
+                                <div class="google-service-info">
+                                    <span class="google-service-name">📊 Google Sheets</span>
+                                    <span id="sheets-status" class="google-service-status">Not connected</span>
+                                </div>
+                                <button id="sheets-connect-btn" class="google-connect-btn">Connect</button>
+                                <button id="sheets-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
+                            </div>
+                            <div class="google-service-item">
+                                <div class="google-service-info">
+                                    <span class="google-service-name">📁 Google Drive</span>
+                                    <span id="drive-status" class="google-service-status">Not connected</span>
+                                </div>
+                                <button id="drive-connect-btn" class="google-connect-btn">Connect</button>
+                                <button id="drive-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
+                            </div>
+                            <div class="google-service-item">
+                                <div class="google-service-info">
+                                    <span class="google-service-name">📧 Gmail</span>
+                                    <span id="gmail-status" class="google-service-status">Not connected</span>
+                                </div>
+                                <button id="gmail-connect-btn" class="google-connect-btn">Connect</button>
+                                <button id="gmail-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
+                            </div>
+                            <div class="google-service-item">
+                                <div class="google-service-info">
+                                    <span class="google-service-name">📅 Google Calendar</span>
+                                    <span id="calendar-status" class="google-service-status">Not connected</span>
+                                </div>
+                                <button id="calendar-connect-btn" class="google-connect-btn">Connect</button>
+                                <button id="calendar-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="account-modal-footer">
+                <button id="account-modal-ok" class="account-modal-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script src="script.js"></script>
+</body>
+</html>

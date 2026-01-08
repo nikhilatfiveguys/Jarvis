@@ -1,0 +1,21 @@
+{
+  "name": "windows-hide-alt-tab",
+  "version": "1.0.0",
+  "description": "Module to hide Electron windows from Alt+Tab on Windows",
+  "main": "index.js",
+  "scripts": {
+    "install": "echo 'No build needed - using ffi-napi'"
+  },
+  "keywords": [
+    "electron",
+    "windows",
+    "alt-tab"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ffi-napi": "^4.0.3",
+    "ref-napi": "^3.0.3"
+  }
+}
+
