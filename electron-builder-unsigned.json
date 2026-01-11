@@ -243,14 +243,20 @@
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64", "ia32"]
+        "arch": ["x64"]
       }
     ],
-    "icon": "icon.ico"
+    "icon": "icon.ico",
+    "sign": false,
+    "signingHashAlgorithms": null,
+    "signDlls": false
   },
   "nsis": {
     "oneClick": false,
-    "allowToChangeInstallationDirectory": true
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Jarvis 6.0"
   },
   "linux": null
 }

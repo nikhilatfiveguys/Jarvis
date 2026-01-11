@@ -19,6 +19,7 @@
     "test-user": "node test-user-experience.js",
     "test-pkce": "node test-pkce.js",
     "test-stealth": "node test-stealth-mode.js",
+    "convert-icon": "node convert-logo-to-ico.js",
     "dev": "NODE_ENV=development electron .",
     "prod": "NODE_ENV=production electron ."
   },
@@ -51,7 +52,9 @@
     "electron-localshortcut": "^3.2.1",
     "electron-rebuild": "^3.2.9",
     "node-addon-api": "^7.0.0",
-    "node-gyp": "^10.0.0"
+    "node-gyp": "^10.0.0",
+    "sharp": "^0.34.5",
+    "to-ico": "^1.1.5"
   },
   "dependencies": {
     "@polar-sh/sdk": "^0.39.1",
