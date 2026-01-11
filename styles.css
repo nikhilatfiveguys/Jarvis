@@ -11,6 +11,10 @@ body {
     background: transparent;
     color: #fff;
     overflow: hidden;
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
 }
 
 /* Utility classes */
@@ -337,12 +341,30 @@ body {
     position: fixed;
     top: 50%;
     left: 50%;
+    transform: translate(-50%, -50%);
     background: transparent;
     z-index: 9999;
-    pointer-events: auto;
+    pointer-events: none; /* Make overlay container non-clickable by default */
     --overlay-bg-color: #ffffff;
     --text-color: #000000;
     opacity: 1;
+    width: fit-content; /* Only as wide as content */
+    height: fit-content; /* Only as tall as content */
+    margin: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+}
+
+/* Make all interactive elements inside overlay clickable */
+.overlay button,
+.overlay input,
+.overlay select,
+.overlay textarea,
+.overlay a,
+.overlay [role="button"],
+.overlay [tabindex] {
+    pointer-events: auto;
 }
 
 /* Attachments bar */
@@ -358,6 +380,7 @@ body {
     border-radius: 8px;
     padding: 2px 4px;
     backdrop-filter: blur(10px);
+    pointer-events: auto; /* Allow interaction with attachments */
 }
 
 .attachment-chip {
@@ -403,7 +426,7 @@ body {
     background: rgba(0, 0, 0, 0.7);
     border-radius: 18px;
     padding: 2px 6px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
     backdrop-filter: blur(15px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     gap: 4px;
@@ -413,6 +436,7 @@ body {
     margin-bottom: 0; /* No margin below HUD */
     z-index: 1000; /* Lower than messages container */
     position: relative; /* Ensure stacking context */
+    pointer-events: auto; /* Make HUD clickable */
 }
 
 /* Reveal history button - small arrow in right corner under output */
@@ -476,6 +500,41 @@ body {
     flex: 1;
     min-width: 0;
     box-shadow: none !important;
+}
+
+/* Virtual text input for stealth mode */
+.virtual-text-input {
+    background: transparent;
+    border: none;
+    color: #fff;
+    padding: 3px 0;
+    font-size: 0.75rem;
+    outline: none;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.virtual-input-placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.virtual-input-caret {
+    display: inline-block;
+    width: 1px;
+    height: 0.75rem;
+    background: #fff;
+    margin-left: 1px;
+    animation: caret-blink 1s infinite;
+    vertical-align: baseline;
+}
+
+@keyframes caret-blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
 }
 
 #text-input::placeholder {
@@ -570,6 +629,7 @@ body {
     transition: height 0.2s ease-out;
     /* Ensure content isn't cut off */
     align-items: stretch;
+    pointer-events: auto; /* Make messages container clickable */
 }
 
 .messages-container::-webkit-scrollbar {
@@ -580,7 +640,7 @@ body {
     display: none;
 }
 
-/* Draggable output chip - individual message container */
+/* Output message container - individual message container */
 .drag-output {
     position: relative;
     background: rgba(0,0,0,0.7);
@@ -612,6 +672,7 @@ body {
     /* Prevent content from overflowing */
     overflow-wrap: break-word;
     word-break: break-word;
+    pointer-events: auto; /* Make output clickable */
 }
 
 /* Ensure all children of drag-output respect boundaries */
@@ -846,11 +907,12 @@ body {
     left: 50%;
     transform: translateX(-50%);
     display: flex;
+    pointer-events: auto; /* Allow interaction with buttons */
     flex-direction: row;
     gap: 8px;
     align-items: center;
     z-index: 2000;
-    pointer-events: auto;
+    pointer-events: auto; /* Make action buttons clickable */
 }
 
 /* Humanize button */
@@ -1003,7 +1065,8 @@ body {
     z-index: 1000;
     white-space: nowrap;
     backdrop-filter: blur(15px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
+    pointer-events: auto; /* Make button clickable */
 }
 
 /* Default state: centered under HUD when no output */
@@ -1030,7 +1093,7 @@ body {
     cursor: pointer;
     transition: all 0.2s ease;
     backdrop-filter: blur(15px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
     white-space: nowrap;
 }
 
@@ -1170,6 +1233,13 @@ body {
     flex-direction: column;
     gap: 8px;
     max-width: 240px;
+    pointer-events: auto !important;
+    -webkit-app-region: no-drag;
+}
+
+.update-notification * {
+    pointer-events: auto !important;
+    -webkit-app-region: no-drag;
 }
 
 .update-notification.success {
@@ -1330,31 +1400,31 @@ body {
 
 /* Loading notification animation */
 .drag-output.loading-notification {
-    animation: loadingPulse 2s infinite ease-in-out !important;
-    border-color: rgba(102, 126, 234, 0.4) !important;
-    box-shadow: 0 0 15px rgba(102, 126, 234, 0.3) !important;
+    animation: none !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    box-shadow: none !important;
     z-index: 10003 !important; /* Ensure it appears above HUD */
     position: relative !important; /* Ensure it creates its own stacking context */
 }
 
 /* Ensure loading notification glow works even when inside messages-container */
 .messages-container > .drag-output.loading-notification {
-    animation: loadingPulse 2s infinite ease-in-out !important;
-    border-color: rgba(102, 126, 234, 0.4) !important;
-    box-shadow: 0 0 15px rgba(102, 126, 234, 0.3) !important;
+    animation: none !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    box-shadow: none !important;
     z-index: 10003 !important; /* Ensure it appears above HUD */
     position: relative !important; /* Ensure it creates its own stacking context */
 }
 
 @keyframes loadingPulse {
     0%, 100% {
-        border-color: rgba(102, 126, 234, 0.4);
-        box-shadow: 0 0 15px rgba(102, 126, 234, 0.3);
+        border-color: rgba(255, 255, 255, 0.1);
+        box-shadow: none;
         opacity: 1;
     }
     50% {
-        border-color: rgba(102, 126, 234, 0.7);
-        box-shadow: 0 0 25px rgba(102, 126, 234, 0.5);
+        border-color: rgba(255, 255, 255, 0.1);
+        box-shadow: none;
         opacity: 0.95;
     }
 }
@@ -1557,7 +1627,7 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.08);
     z-index: 10001;
     animation: slideDown 0.2s ease;
-    pointer-events: auto !important;
+    pointer-events: auto !important; /* Make settings menu clickable */
     overflow: visible !important;
 }
 
@@ -2845,6 +2915,7 @@ body {
     padding: 18px 26px;
     backdrop-filter: blur(20px);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(100, 150, 255, 0.15);
+    pointer-events: auto; /* Ensure tutorial content is clickable */
 }
 
 .tutorial-icon {
@@ -2913,6 +2984,7 @@ body {
     cursor: pointer;
     transition: all 0.2s ease;
     margin-left: 10px;
+    pointer-events: auto !important; /* Ensure button is always clickable */
 }
 
 .tutorial-done-btn:hover {

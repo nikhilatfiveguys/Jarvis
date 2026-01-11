@@ -257,6 +257,9 @@
                     <span class="settings-text">🔄 Update Available</span>
                     <span class="settings-version" id="update-version-display">v1.0.0</span>
                 </div>
+                <div class="settings-item" id="quit-app-btn">
+                    <span class="settings-text">Quit</span>
+                </div>
             </div>
             <div class="settings-item" id="account-info-btn">
                 <span class="settings-text">Account</span>
@@ -287,8 +290,8 @@
             <!-- Current output message will be added here (visible at bottom) -->
         </div>
         
-        <!-- Draggable output chip - current visible message (will be moved into messages-container) -->
-        <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag me to drop text into apps">
+        <!-- Output message container (will be moved into messages-container) -->
+        <div id="drag-output" class="drag-output hidden" draggable="true" title="Drag to copy to clipboard">
             <!-- Resize handle -->
             <div id="resize-handle" class="resize-handle" title="Drag to resize"></div>
         </div>
@@ -328,13 +331,23 @@
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
             </button>
-            <!-- Add to Docs button -->
-            <button id="toolbar-docs-btn" class="toolbar-btn" title="Add to Google Docs">
+            <!-- Add to Docs button (immediate paste) -->
+            <button id="toolbar-docs-btn" class="toolbar-btn" title="Add to Google Docs (immediate)">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                     <polyline points="14 2 14 8 20 8"></polyline>
                     <line x1="12" y1="18" x2="12" y2="12"></line>
                     <line x1="9" y1="15" x2="15" y2="15"></line>
+                </svg>
+            </button>
+            <!-- Write to Docs button (with typing animation) -->
+            <button id="toolbar-write-docs-btn" class="toolbar-btn" title="Write to Google Docs (with typing)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <path d="M16 13H8"></path>
+                    <path d="M16 17H8"></path>
+                    <path d="M10 9H8"></path>
                 </svg>
             </button>
             <!-- Resend/Try Again button -->

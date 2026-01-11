@@ -22,6 +22,12 @@ class JarvisOverlay {
         this.stealthModeEnabled = false; // Track stealth mode state
         this.menuBoundsUpdateInterval = null; // Interval to update bounds while menu is open
         
+        // Virtual text input for stealth mode
+        this.virtualTextBuffer = ''; // Text buffer for virtual input
+        this.virtualInputElement = null; // Virtual input div element
+        this.caretBlinkInterval = null; // Caret blink animation
+        this.isVirtualInputActive = false; // Track if virtual input is active
+        
         // Interactive tutorial state
         this.tutorialStep = 0;
         this.tutorialToggleCount = 0;
@@ -722,7 +728,7 @@ class JarvisOverlay {
             
             if (isScreenshotCommand) {
                 // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
+                this.clearTextInput();
                 // Take screenshot and analyze
                 this.takeScreenshotAndAnalyze();
                 return;
@@ -760,7 +766,7 @@ class JarvisOverlay {
             
             if (isDocsCommand) {
                 // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
+                this.clearTextInput();
                 // Check if it's paste mode (user said "paste" in the command)
                 const isPasteMode = lowerText.includes('paste') || lowerText.startsWith('/docs paste');
                 // Trigger write to docs
@@ -795,7 +801,7 @@ class JarvisOverlay {
             
             if (isEmailCommand) {
                 // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
+                this.clearTextInput();
                 
                 // Determine which type of emails to fetch
                 if (lowerText.includes('important')) {
@@ -830,7 +836,7 @@ class JarvisOverlay {
             
             if (isCalendarViewCommand) {
                 // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
+                this.clearTextInput();
                 this.getUpcomingEvents();
                 return;
             }
@@ -859,14 +865,14 @@ class JarvisOverlay {
             
             if (isCalendarCommand) {
                 // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
+                this.clearTextInput();
                 // Show the calendar modal for manual event creation
                 this.createCalendarEvent();
                 return;
             }
             
             // Set the input value and send the transcribed text to the API
-            this.textInput.value = trimmedText;
+            this.setTextInputValue(trimmedText);
             this.sendMessage();
         }
     }
@@ -1231,6 +1237,7 @@ class JarvisOverlay {
         this.outputToolbar = document.getElementById('output-toolbar');
         this.toolbarCopyBtn = document.getElementById('toolbar-copy-btn');
         this.toolbarDocsBtn = document.getElementById('toolbar-docs-btn');
+        this.toolbarWriteDocsBtn = document.getElementById('toolbar-write-docs-btn');
         this.toolbarRetryBtn = document.getElementById('toolbar-retry-btn');
         
         // Track the last user query for retry functionality
@@ -1271,15 +1278,30 @@ class JarvisOverlay {
     setupEventListeners() {
         if (this.startBtn) this.startBtn.addEventListener('click', () => this.startJarvis());
         this.textInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.sendMessage();
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:1280',message:'keypress event fired',data:{key:e.key,code:e.code,keyCode:e.keyCode,stealthModeEnabled:this.stealthModeEnabled},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
+            if (e.key === 'Enter') {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:1281',message:'Enter key detected, preventing default and calling sendMessage',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+                // Prevent default form submission behavior
+                e.preventDefault();
+                e.stopPropagation();
+                this.sendMessage();
+            }
         });
         
         // Windows-specific: Request window focus when input field gets focus
         // This ensures the window can receive keyboard input
+        // In stealth mode, we don't request focus - keyboard hook handles input
         this.textInput.addEventListener('focus', () => {
-            if (this.isElectron) {
+            if (this.isElectron && !this.stealthModeEnabled) {
                 const { ipcRenderer } = require('electron');
                 ipcRenderer.invoke('request-focus').catch(() => {});
+            } else if (this.stealthModeEnabled) {
+                // In stealth mode, prevent the input from getting focus
+                this.textInput.blur();
             }
         });
         
@@ -1303,10 +1325,30 @@ class JarvisOverlay {
         
         if (this.docsOpenBtn) {
             this.docsOpenBtn.addEventListener('click', () => this.openGoogleDoc());
+            // Make window interactive when hovering/clicking the button
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                this.docsOpenBtn.addEventListener('mouseenter', () => {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                });
+                this.docsOpenBtn.addEventListener('mousedown', () => {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                });
+            }
         }
         
         if (this.docsDismissBtn) {
             this.docsDismissBtn.addEventListener('click', () => this.hideDocsDoneIndicator());
+            // Make window interactive when hovering/clicking the button
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                this.docsDismissBtn.addEventListener('mouseenter', () => {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                });
+                this.docsDismissBtn.addEventListener('mousedown', () => {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                });
+            }
         }
         
         // Reveal history button event listener
@@ -1993,6 +2035,15 @@ class JarvisOverlay {
             this.stealthModeCheckbox.checked = stealthModeEnabled;
             console.log('🔧 Initial stealth mode state:', stealthModeEnabled);
             
+            // Set initial placeholder based on stealth mode state
+            if (this.textInput) {
+                if (stealthModeEnabled) {
+                    this.textInput.placeholder = 'chat disabled use answer screen button instead';
+                } else {
+                    this.textInput.placeholder = 'Ask Jarvis anything...';
+                }
+            }
+            
             // Apply on load (with a small delay to ensure Electron is ready)
             // Only enable stealth mode on load if user has premium
             setTimeout(() => {
@@ -2000,9 +2051,13 @@ class JarvisOverlay {
                 if (stealthModeEnabled && !this.hasPremiumAccess()) {
                     this.stealthModeCheckbox.checked = false;
                     this.stealthModeEnabled = false;
+                    // Update placeholder back to default
+                    if (this.textInput) {
+                        this.textInput.placeholder = 'Ask Jarvis anything...';
+                    }
                     console.log('🔧 Stealth mode disabled on load - requires premium');
                 } else {
-                this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
+                    this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
                 }
             }, 500);
             
@@ -2233,10 +2288,16 @@ class JarvisOverlay {
                 });
                 this.colorSubmenu.addEventListener('mousedown', () => {
                     if (this.isElectron) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2265',message:'Color submenu mousedown',data:{stealthModeEnabled:this.stealthModeEnabled},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
                         clearTimeout(clickThroughTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
-                        ipcRenderer.invoke('request-focus').catch(() => {});
+                        // In stealth mode, don't request focus
+                        if (!this.stealthModeEnabled) {
+                            ipcRenderer.invoke('request-focus').catch(() => {});
+                        }
                         isCurrentlyInteractive = true;
                     }
                 });
@@ -2245,13 +2306,26 @@ class JarvisOverlay {
             // Handle clicks on overlay - always make interactive
             this.overlay.addEventListener('mousedown', (e) => {
                 if (this.isElectron) {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2277',message:'Overlay mousedown event',data:{stealthModeEnabled:this.stealthModeEnabled},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
                     clearTimeout(clickThroughTimeout);
                     const { ipcRenderer } = require('electron');
                     // Make interactive when clicking anywhere on overlay
                     ipcRenderer.invoke('make-interactive').catch(() => {});
                     isCurrentlyInteractive = true;
                     // Request focus to ensure window can receive input
-                    ipcRenderer.invoke('request-focus').catch(() => {});
+                    // In stealth mode, don't request focus
+                    if (!this.stealthModeEnabled) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2285',message:'Calling request-focus (not stealth mode)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
+                        ipcRenderer.invoke('request-focus').catch(() => {});
+                    } else {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:2285',message:'Skipping request-focus (stealth mode)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
+                    }
                 }
             });
             
@@ -2294,19 +2368,9 @@ class JarvisOverlay {
     
     attachDragListeners() {
         if (this.dragOutput) {
-            // Attach drag listeners (new elements won't have listeners, so safe to add)
+            // Attach drag listeners - dragging copies to clipboard
             this.dragOutput.addEventListener('dragstart', (e) => this.handleDragStart(e));
             this.dragOutput.addEventListener('dragend', (e) => this.handleDragEnd(e));
-            // Track drag - CRITICAL: Keep window interactive during entire drag operation
-            // Don't switch to click-through while dragging, as it breaks drag-drop on Windows
-            this.dragOutput.addEventListener('drag', (e) => {
-                if (this.isDraggingOutput && this.isElectron) {
-                    const { ipcRenderer } = require('electron');
-                    // Always keep window interactive during drag - don't switch to click-through
-                    // This is essential for drag-drop to work, especially on Windows
-                    ipcRenderer.invoke('make-interactive');
-                }
-            });
         }
         
         // Resize handle functionality - prevent it from interfering with drag
@@ -2412,6 +2476,35 @@ class JarvisOverlay {
             console.log('✅ App is up to date');
             this.showUpdateNotification("You're up to date! ✅", 'success', true);
         });
+        
+        // Listen for stealth mode key events (Windows only)
+        ipcRenderer.on('stealth-key-event', (event, keyEvent) => {
+            console.log('🔑 Stealth key event received:', keyEvent);
+            if (this.stealthModeEnabled) {
+                // Setup virtual input if not already active
+                if (!this.isVirtualInputActive) {
+                    console.log('⚠️ Virtual input not active, setting up now...');
+                    this.setupVirtualInput();
+                    // If setup failed, try again
+                    if (!this.isVirtualInputActive) {
+                        console.error('❌ Failed to setup virtual input');
+                        return;
+                    }
+                }
+                if (this.isVirtualInputActive) {
+                    this.handleStealthKeyEvent(keyEvent);
+                } else {
+                    console.warn('⚠️ Virtual input still not active after setup attempt');
+                }
+            } else {
+                console.log('⚠️ Stealth key event received but stealth mode is disabled');
+            }
+        });
+        
+        // Listen for OpenAI streaming chunks
+        ipcRenderer.on('openai-stream-chunk', (event, chunk) => {
+            this.handleStreamingChunk(chunk);
+        });
     }
 
     showUpdateNotification(message, type = 'info', allowDismissForever = false, updateInfo = null) {
@@ -2457,6 +2550,48 @@ class JarvisOverlay {
 
         notification.innerHTML = html;
         document.body.appendChild(notification);
+        
+        // Make window interactive so buttons can be clicked
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+            if (isWindows) {
+                ipcRenderer.send('modal-state-changed', true);
+                ipcRenderer.invoke('force-interactive').catch(() => {});
+            } else {
+                ipcRenderer.invoke('force-interactive').catch(() => {});
+            }
+        }
+        
+        // Prevent clicks from going through the notification
+        notification.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+        notification.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+        });
+        
+        // Add event listeners to all buttons to ensure window stays interactive
+        const buttons = notification.querySelectorAll('.update-notification-btn');
+        buttons.forEach(button => {
+            // Stop propagation to prevent clicks from going through
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+            button.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+            });
+            
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                button.addEventListener('mouseenter', () => {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                });
+                button.addEventListener('mousedown', () => {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                });
+            }
+        });
 
         // Auto-hide success notifications after 5 seconds (unless they have important actions)
         if (type === 'success' || type === 'info') {
@@ -2468,6 +2603,15 @@ class JarvisOverlay {
         const notification = document.getElementById('update-notification');
         if (notification) {
             notification.remove();
+            
+            // Notify main process that modal is closing (restore click-through if needed)
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+                if (isWindows) {
+                    ipcRenderer.send('modal-state-changed', false);
+                }
+            }
         }
     }
 
@@ -2815,30 +2959,150 @@ class JarvisOverlay {
         const sendOverlayBounds = () => {
             if (!this.overlay) return;
             
-            const rect = this.overlay.getBoundingClientRect();
-            let bounds = {
-                x: rect.left,
-                y: rect.top,
-                width: rect.width,
-                height: rect.height
-            };
+            // Calculate bounds from visible elements only, not the overlay container
+            // This ensures we don't include invisible space from hidden elements
+            const visibleElements = [];
             
-            // If menu is open, expand bounds to include menu
-            if (this.settingsMenu && !this.settingsMenu.classList.contains('hidden')) {
-                const menuRect = this.settingsMenu.getBoundingClientRect();
-                // Calculate combined bounds
-                const minX = Math.min(bounds.x, menuRect.left);
-                const minY = Math.min(bounds.y, menuRect.top);
-                const maxX = Math.max(bounds.x + bounds.width, menuRect.left + menuRect.width);
-                const maxY = Math.max(bounds.y + bounds.height, menuRect.top + menuRect.height);
-                
-                bounds = {
-                    x: minX,
-                    y: minY,
-                    width: maxX - minX,
-                    height: maxY - minY
-                };
+            // Add minimal-hud if it exists and is visible
+            const minimalHud = this.overlay.querySelector('.minimal-hud');
+            if (minimalHud && !minimalHud.classList.contains('hidden')) {
+                visibleElements.push(minimalHud);
             }
+            
+            // Add messages-container if it exists and is visible
+            const messagesContainer = this.overlay.querySelector('.messages-container');
+            if (messagesContainer && !messagesContainer.classList.contains('hidden')) {
+                visibleElements.push(messagesContainer);
+            }
+            
+            // Add drag-output if it exists and is visible
+            const dragOutput = this.overlay.querySelector('#drag-output');
+            if (dragOutput && !dragOutput.classList.contains('hidden')) {
+                visibleElements.push(dragOutput);
+            }
+            
+            // Add action-buttons-container if it exists and is visible
+            const actionButtons = this.overlay.querySelector('.action-buttons-container');
+            if (actionButtons && !actionButtons.classList.contains('hidden')) {
+                visibleElements.push(actionButtons);
+            }
+            
+            // Add attachments-bar if it exists and is visible
+            const attachmentsBar = this.overlay.querySelector('.attachments-bar');
+            if (attachmentsBar && !attachmentsBar.classList.contains('hidden') && attachmentsBar.offsetWidth > 0 && attachmentsBar.offsetHeight > 0) {
+                visibleElements.push(attachmentsBar);
+            }
+            
+            // Add reveal-history-btn if it exists and is visible
+            const revealHistoryBtn = this.overlay.querySelector('#reveal-history-btn');
+            if (revealHistoryBtn && !revealHistoryBtn.classList.contains('hidden') && revealHistoryBtn.offsetWidth > 0 && revealHistoryBtn.offsetHeight > 0) {
+                visibleElements.push(revealHistoryBtn);
+            }
+            
+            // Add close-output-floating if it exists and is visible (opacity > 0)
+            const closeOutputFloating = this.overlay.querySelector('#close-output-floating');
+            if (closeOutputFloating && !closeOutputFloating.classList.contains('hidden')) {
+                const style = window.getComputedStyle(closeOutputFloating);
+                const opacity = parseFloat(style.opacity);
+                if (opacity > 0 && closeOutputFloating.offsetWidth > 0 && closeOutputFloating.offsetHeight > 0) {
+                    visibleElements.push(closeOutputFloating);
+                }
+            }
+            
+            // If menu is open, include it
+            if (this.settingsMenu && !this.settingsMenu.classList.contains('hidden')) {
+                visibleElements.push(this.settingsMenu);
+            }
+            
+            // If no visible elements, send zero bounds to make entire window click-through
+            if (visibleElements.length === 0) {
+                // Send zero bounds to make entire window click-through when no visible elements
+                ipcRenderer.invoke('get-window-bounds').then(windowBounds => {
+                    if (windowBounds) {
+                        ipcRenderer.send('update-overlay-bounds', {
+                            x: Math.round(windowBounds.x),
+                            y: Math.round(windowBounds.y),
+                            width: 0,
+                            height: 0
+                        });
+                    } else {
+                        // Fallback: send zero bounds
+                        ipcRenderer.send('update-overlay-bounds', {
+                            x: 0,
+                            y: 0,
+                            width: 0,
+                            height: 0
+                        });
+                    }
+                }).catch(() => {
+                    // Fallback if IPC fails - send zero bounds
+                    ipcRenderer.send('update-overlay-bounds', {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0
+                    });
+                });
+                return;
+            }
+            
+            // Calculate combined bounds from all visible elements
+            // Only include elements that have non-zero dimensions
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            
+            visibleElements.forEach(el => {
+                // Skip elements that are truly hidden or have zero dimensions
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden' || 
+                    el.offsetWidth === 0 || el.offsetHeight === 0) {
+                    return;
+                }
+                
+                const rect = el.getBoundingClientRect();
+                // Only include if rect has valid dimensions
+                if (rect.width > 0 && rect.height > 0) {
+                    minX = Math.min(minX, rect.left);
+                    minY = Math.min(minY, rect.top);
+                    maxX = Math.max(maxX, rect.left + rect.width);
+                    maxY = Math.max(maxY, rect.top + rect.height);
+                }
+            });
+            
+            // If no valid bounds were found, return zero bounds
+            if (minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
+                ipcRenderer.invoke('get-window-bounds').then(windowBounds => {
+                    if (windowBounds) {
+                        ipcRenderer.send('update-overlay-bounds', {
+                            x: Math.round(windowBounds.x),
+                            y: Math.round(windowBounds.y),
+                            width: 0,
+                            height: 0
+                        });
+                    } else {
+                        ipcRenderer.send('update-overlay-bounds', {
+                            x: 0,
+                            y: 0,
+                            width: 0,
+                            height: 0
+                        });
+                    }
+                }).catch(() => {
+                    ipcRenderer.send('update-overlay-bounds', {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0
+                    });
+                });
+                return;
+            }
+            
+            let bounds = {
+                x: minX,
+                y: minY,
+                width: maxX - minX,
+                height: maxY - minY
+            };
             
             // Window is fullscreen at (0,0), so overlay's screen position = its position in window
             // But we need the actual screen coordinates, so get window bounds from main process
@@ -2919,7 +3183,7 @@ class JarvisOverlay {
         switch(step) {
             case 1:
                 tutorialIcon.innerHTML = '⌨️';
-                tutorialText.innerHTML = 'Press <kbd>⌥ Option</kbd> + <kbd>Space</kbd> twice to open/close overlay';
+                tutorialText.innerHTML = 'Press <kbd>Alt</kbd> + <kbd>Space</kbd> twice to open/close overlay';
                 break;
             case 2:
                 tutorialIcon.innerHTML = `<div class="drag-dots-icon">
@@ -3383,12 +3647,73 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
             this.showLoadingNotification();
             
-            // Use IPC to main process (most reliable in Electron)
+            // Initialize streaming buffer
+            this.streamingBuffer = '';
+            // Store the message for conversation history
+            this.lastUserMessage = message;
+            
+            // Ensure dragOutput exists before starting streaming
+            if (!this.dragOutput) {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:3525',message:'Creating dragOutput for streaming',data:{hasMessagesContainer:!!this.messagesContainer},timestamp:Date.now(),sessionId:'debug-session',runId:'streaming-debug',hypothesisId:'D'})}).catch(()=>{});
+                // #endregion
+                this.showLoadingNotification('Generating response...');
+                // Double-check it was created
+                if (!this.dragOutput && this.messagesContainer) {
+                    const currentOutput = document.createElement('div');
+                    currentOutput.className = 'drag-output';
+                    currentOutput.id = 'drag-output';
+                    currentOutput.draggable = true;
+                    currentOutput.title = 'Drag me to drop text into apps';
+                    currentOutput.innerHTML = '<span style="opacity: 0.5;">Generating response...</span>';
+                    currentOutput.classList.remove('hidden');
+                    this.messagesContainer.appendChild(currentOutput);
+                    this.messagesContainer.classList.remove('hidden');
+                    this.dragOutput = currentOutput;
+                }
+            }
+            
+            // Use IPC to main process with streaming (most reliable in Electron)
             let response;
             if (this.isElectron && window.require) {
                 try {
                     const { ipcRenderer } = window.require('electron');
-                    console.log('🔒 Using IPC to main process for OpenAI API');
+                    console.log('🔒 Using IPC to main process for OpenAI API with streaming');
+                    
+                    // Use streaming API
+                    const result = await ipcRenderer.invoke('call-openai-api-stream', requestPayload);
+                    
+                    if (result && result.ok) {
+                        console.log('✅ Main process OpenAI streaming call succeeded');
+                        // Wait a bit for final UI update, then return the full response for compatibility
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        // Return the full response for compatibility with existing code
+                        return result.fullResponse || this.streamingBuffer || '';
+                    } else {
+                        console.error('❌ Main process OpenAI streaming call failed:', result);
+                        // Check if it's a limit exceeded error
+                        if (result?.status === 429 && (result?.data?.costLimitDollars !== undefined || result?.data?.isBlocked !== undefined)) {
+                            console.error('🚫 OpenAI blocked - limit exceeded');
+                            this.showLimitExceededNotification();
+                            throw new Error('LIMIT_EXCEEDED');
+                        }
+                        throw new Error(result?.data?.error || 'Streaming call failed');
+                    }
+                } catch (ipcError) {
+                    if (ipcError.message === 'LIMIT_EXCEEDED') {
+                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                    }
+                    console.error('❌ IPC OpenAI streaming call failed, falling back to non-streaming:', ipcError);
+                    // Fall through to non-streaming backup below
+                    response = null;
+                }
+            }
+            
+            // Fallback to non-streaming if IPC streaming didn't work
+            if (!response && this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    console.log('🔒 Using IPC to main process for OpenAI API (non-streaming fallback)');
                     const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
                     
                     if (result && result.ok && result.data) {
@@ -4731,30 +5056,88 @@ ${currentQuestion}`;
     }
 
 
+    // Helper to get text input value (works with virtual or real input)
+    getTextInputValue() {
+        if (this.isVirtualInputActive) {
+            return this.virtualTextBuffer || '';
+        }
+        return this.textInput?.value || '';
+    }
+    
+    // Helper to set text input value (works with virtual or real input)
+    setTextInputValue(value) {
+        if (this.isVirtualInputActive) {
+            this.virtualTextBuffer = value || '';
+            this.updateVirtualInputDisplay();
+        } else if (this.textInput) {
+            this.textInput.value = value || '';
+        }
+    }
+    
+    // Helper to clear text input (works with virtual or real input)
+    clearTextInput() {
+        this.setTextInputValue('');
+    }
+
     async sendMessage() {
-        const message = (this.textInput?.value || '').trim();
-        if (!message && (!this.pendingAttachments || this.pendingAttachments.length === 0)) return;
+        // Prevent multiple simultaneous calls
+        if (this._sendingMessage) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4890',message:'sendMessage: already sending, ignoring duplicate call',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'F'})}).catch(()=>{});
+            // #endregion
+            return;
+        }
+        this._sendingMessage = true;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4890',message:'sendMessage called',data:{stealthModeEnabled:this.stealthModeEnabled},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        const message = this.getTextInputValue().trim();
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4894',message:'sendMessage: got message value',data:{message,messageLength:message.length,hasAttachments:!!this.pendingAttachments,attachmentsCount:this.pendingAttachments?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        if (!message && (!this.pendingAttachments || this.pendingAttachments.length === 0)) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4899',message:'sendMessage: empty message, returning early',data:{message,hasAttachments:!!this.pendingAttachments},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            return;
+        }
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4902',message:'sendMessage: proceeding with message',data:{message,messageLength:message.length},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
 
         // Check character limit for Low model (GPT-5 Mini)
         if (this.isUsingLowModel() && message.length > this.lowModelCharLimit) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4921',message:'sendMessage: message too long, returning',data:{message,messageLength:message.length,limit:this.lowModelCharLimit},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+            // #endregion
             this.showNotification(`⚠️ Message too long for Jarvis Low. Please limit to ${this.lowModelCharLimit} characters. (Current: ${message.length})`, false);
+            this._sendingMessage = false;
             return;
         }
 
         // Check low message limit for free users using Low model
         if (this.isUsingLowModel() && !this.hasPremiumAccess() && this.hasReachedLowMessageLimit()) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4927',message:'sendMessage: message limit reached, returning',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+            // #endregion
             this.showNotification(`⚠️ You've reached your daily limit of ${this.maxFreeLowMessages} messages with Jarvis Low. Try again tomorrow or upgrade for unlimited access!`, false);
+            this._sendingMessage = false;
             return;
         }
 
         // Check for /docs command
         if (message.toLowerCase() === '/docs' || message.toLowerCase().startsWith('/docs ')) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4933',message:'sendMessage: /docs command detected, returning',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+            // #endregion
             // Clear input
-            if (this.textInput) this.textInput.value = '';
+            this.clearTextInput();
             // Check if it's paste mode
             const isPasteMode = message.toLowerCase().startsWith('/docs paste');
             // Trigger write to docs with paste mode flag
             await this.writeToDocs(isPasteMode);
+            this._sendingMessage = false;
             return;
         }
 
@@ -4772,17 +5155,25 @@ ${currentQuestion}`;
         const isCalendarViewPhrase = calendarViewPhrases.some(phrase => lowerMessage.includes(phrase));
         
         if (isCalendarViewPhrase) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4956',message:'sendMessage: calendar view phrase detected, returning',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+            // #endregion
             // Clear input
-            if (this.textInput) this.textInput.value = '';
+            this.clearTextInput();
             await this.getUpcomingEvents();
+            this._sendingMessage = false;
             return;
         }
         
         // Handle /calendar command - show modal for manual event creation
         if (isCalendarCommand) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4964',message:'sendMessage: /calendar command detected, returning',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+            // #endregion
             // Clear input
-            if (this.textInput) this.textInput.value = '';
+            this.clearTextInput();
                 await this.createCalendarEvent();
+            this._sendingMessage = false;
             return;
         }
 
@@ -4794,8 +5185,11 @@ ${currentQuestion}`;
         const isUnreadEmails = (lowerMessage.includes('unread') || lowerMessage.includes('new')) && isGmailQuery;
         
         if (isGmailQuery) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:4978',message:'sendMessage: Gmail query detected, returning',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+            // #endregion
             // Clear input
-            if (this.textInput) this.textInput.value = '';
+            this.clearTextInput();
             
             if (isTodaysEmails) {
                 await this.getTodaysEmails();
@@ -4807,16 +5201,41 @@ ${currentQuestion}`;
                 // General email query - show today's emails
                 await this.getTodaysEmails();
             }
+            this._sendingMessage = false;
             return;
         }
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5020',message:'sendMessage: passed all command checks, continuing to API call',data:{message},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'G'})}).catch(()=>{});
+        // #endregion
 
         // Store the last user query for retry functionality
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5024',message:'sendMessage: before storing lastUserQuery',data:{message,hasMessage:!!message},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'H'})}).catch(()=>{});
+        // #endregion
         if (message) {
             this.lastUserQuery = message;
         }
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5029',message:'sendMessage: before clearTextInput',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'H'})}).catch(()=>{});
+        // #endregion
 
         // Immediately clear UI input so text disappears as soon as user sends
-        if (this.textInput) this.textInput.value = '';
+        try {
+            this.clearTextInput();
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5033',message:'sendMessage: clearTextInput completed',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'H'})}).catch(()=>{});
+            // #endregion
+        } catch (error) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5036',message:'sendMessage: clearTextInput failed',data:{error:error.message},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'H'})}).catch(()=>{});
+            // #endregion
+            throw error;
+        }
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5041',message:'sendMessage: cleared input, starting API call',data:{message,hasAttachments:!!this.pendingAttachments},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
 
         try {
             if (this.pendingAttachments && this.pendingAttachments.length > 0) {
@@ -4831,10 +5250,21 @@ ${currentQuestion}`;
                 this.pendingAttachments = [];
                 this.renderAttachmentsBar();
             } else {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5011',message:'sendMessage: calling processMessage',data:{message,messageLength:message.length},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'D'})}).catch(()=>{});
+                // #endregion
                 await this.processMessage(message);
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5011',message:'sendMessage: processMessage completed',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'D'})}).catch(()=>{});
+                // #endregion
             }
         } catch (error) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5013',message:'sendMessage failed with error',data:{error:error.message,errorStack:error.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
             console.error('sendMessage failed:', error);
+        } finally {
+            this._sendingMessage = false;
         }
     }
 
@@ -5028,6 +5458,147 @@ ${currentQuestion}`;
         this.reapplyButtonColors();
         
         document.querySelectorAll('.notification').forEach(n => n.remove());
+    }
+
+    // Handle streaming chunks from OpenAI API
+    handleStreamingChunk(chunk) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5320',message:'Streaming chunk received',data:{hasContent:!!chunk.content,done:chunk.done,contentLength:chunk.content?.length||0,hasDragOutput:!!this.dragOutput},timestamp:Date.now(),sessionId:'debug-session',runId:'streaming-debug',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        console.log('📡 Streaming chunk received:', { hasContent: !!chunk.content, done: chunk.done, contentLength: chunk.content?.length || 0 });
+        
+        // Ensure dragOutput exists - create it if needed
+        if (!this.dragOutput) {
+            console.log('⚠️ dragOutput not found, creating initial display...');
+            // Create a minimal notification to initialize dragOutput
+            this.showLoadingNotification('Generating response...');
+            // If still not created, create it manually
+            if (!this.dragOutput && this.messagesContainer) {
+                const currentOutput = document.createElement('div');
+                currentOutput.className = 'drag-output';
+                currentOutput.id = 'drag-output';
+                currentOutput.draggable = true;
+                currentOutput.title = 'Drag to copy to clipboard';
+                currentOutput.innerHTML = '';
+                currentOutput.classList.remove('hidden');
+                this.messagesContainer.appendChild(currentOutput);
+                this.dragOutput = currentOutput;
+                this.messagesContainer.classList.remove('hidden');
+            }
+        }
+        
+        if (!this.dragOutput) {
+            console.error('❌ Failed to create dragOutput element');
+            return;
+        }
+        
+        if (chunk.done) {
+            // Stream complete
+            console.log('✅ Streaming complete, full response length:', chunk.fullResponse?.length || 0);
+            this.stopLoadingAnimation();
+            if (chunk.fullResponse) {
+                // Final update with complete response
+                this.updateStreamingDisplay(chunk.fullResponse, true);
+                // Save to conversation history
+                if (this.lastUserMessage) {
+                    this.conversationHistory.push({ role: 'user', content: this.lastUserMessage });
+                    this.conversationHistory.push({ 
+                        role: 'assistant', 
+                        content: chunk.fullResponse,
+                        model: this.selectedModelName || 'Jarvis'
+                    });
+                    
+                    if (this.conversationHistory.length > 30) {
+                        this.conversationHistory = this.conversationHistory.slice(-30);
+                    }
+                    
+                    this.saveConversationHistory();
+                    this.lastUserMessage = null; // Clear after saving
+                }
+            } else if (this.streamingBuffer) {
+                // Use buffer if fullResponse not provided
+                this.updateStreamingDisplay(this.streamingBuffer, true);
+                if (this.lastUserMessage) {
+                    this.conversationHistory.push({ role: 'user', content: this.lastUserMessage });
+                    this.conversationHistory.push({ 
+                        role: 'assistant', 
+                        content: this.streamingBuffer,
+                        model: this.selectedModelName || 'Jarvis'
+                    });
+                    
+                    if (this.conversationHistory.length > 30) {
+                        this.conversationHistory = this.conversationHistory.slice(-30);
+                    }
+                    
+                    this.saveConversationHistory();
+                    this.lastUserMessage = null;
+                }
+            }
+            return;
+        }
+        
+        // Append chunk to current content
+        const currentContent = this.streamingBuffer || '';
+        this.streamingBuffer = currentContent + (chunk.content || '');
+        console.log('📝 Updated buffer, length:', this.streamingBuffer.length);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'script.js:5355',message:'Updating streaming display',data:{bufferLength:this.streamingBuffer.length,hasDragOutput:!!this.dragOutput},timestamp:Date.now(),sessionId:'debug-session',runId:'streaming-debug',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        this.updateStreamingDisplay(this.streamingBuffer, false);
+    }
+    
+    // Update the display with streaming text
+    updateStreamingDisplay(text, isComplete = false) {
+        if (!this.dragOutput) {
+            console.error('❌ updateStreamingDisplay: dragOutput not found');
+            return;
+        }
+        
+        // If text is empty and not complete, show a placeholder
+        if (!text && !isComplete) {
+            this.dragOutput.innerHTML = '<span style="opacity: 0.5;">Generating...</span>';
+            return;
+        }
+        
+        // Process content for links and math formatting
+        const processedContent = this.processContent(text || '', true);
+        
+        // Update the content
+        this.dragOutput.innerHTML = processedContent;
+        
+        // Apply theme if set
+        if (this.currentTheme) {
+            this.dragOutput.style.background = `rgba(${this.hexToRgb(this.currentTheme.bg)}, 0.95)`;
+            this.dragOutput.style.color = this.currentTheme.text;
+            this.dragOutput.style.border = 'none';
+        }
+        
+        // Apply opacity if set
+        if (this.currentOpacity !== undefined) {
+            const opacityValue = (this.currentOpacity / 100).toString();
+            this.dragOutput.style.setProperty('opacity', opacityValue, 'important');
+            this.dragOutput.setAttribute('data-opacity', opacityValue);
+        }
+        
+        // Render math with KaTeX
+        setTimeout(() => {
+            if (this.dragOutput) {
+                this.renderMath(this.dragOutput);
+            }
+        }, 50);
+        
+        // Scroll to bottom to show latest content
+        if (this.messagesContainer) {
+            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+        }
+        
+        // Store clean text for dragging
+        this.dragOutput.dataset.fullText = this.stripMarkdown(text || '').replace(/<[^>]*>/g, '');
+        
+        if (isComplete) {
+            // Clear streaming buffer when complete
+            this.streamingBuffer = '';
+        }
     }
 
     showLoadingNotification(message = null, context = 'default') {
@@ -6166,6 +6737,31 @@ ${currentQuestion}`;
         // Update stealth mode state
         this.stealthModeEnabled = enabled;
         
+        // Update placeholder text based on stealth mode
+        if (this.textInput) {
+            if (enabled) {
+                this.textInput.placeholder = 'chat disabled use answer screen button instead';
+            } else {
+                this.textInput.placeholder = 'Ask Jarvis anything...';
+            }
+        }
+        
+        // Setup or teardown virtual input
+        if (enabled) {
+            // Ensure virtual input is set up immediately when stealth mode is enabled
+            if (!this.isVirtualInputActive) {
+                this.setupVirtualInput();
+            }
+            // Verify virtual input is active
+            if (!this.isVirtualInputActive) {
+                console.error('❌ Failed to setup virtual input for stealth mode');
+            } else {
+                console.log('✅ Virtual input ready for stealth mode typing');
+            }
+        } else {
+            this.teardownVirtualInput();
+        }
+        
         // Apply CSS to disable click sounds when stealth mode is enabled
         this.applyStealthModeStyles(enabled);
         
@@ -6175,7 +6771,7 @@ ${currentQuestion}`;
             ipcRenderer.invoke('toggle-stealth-mode', enabled).then((success) => {
                 console.log(`✅ Stealth mode IPC result: ${success}, enabled: ${enabled}`);
                 if (success && showNotification) {
-                    const message = enabled ? 'Stealth Mode: ON 🥷 (Hidden from screen share, sounds disabled)' : 'Stealth Mode: OFF 👁️ (Visible in screen share)';
+                    const message = enabled ? 'chat disabled - Stealth Mode: ON 🥷 (Hidden from screen share, sounds disabled)' : 'Stealth Mode: OFF 👁️ (Visible in screen share)';
                     this.showNotification(message, true);
                 } else if (!success) {
                     console.error('❌ IPC returned false');
@@ -6195,6 +6791,252 @@ ${currentQuestion}`;
                 this.showNotification('Error toggling stealth mode: ' + error.message, false);
             }
         }
+    }
+    
+    setupVirtualInput() {
+        if (!this.textInput) {
+            console.error('❌ Cannot setup virtual input: textInput element not found');
+            return;
+        }
+        
+        if (this.isVirtualInputActive) {
+            console.log('ℹ️ Virtual input already active');
+            return;
+        }
+        
+        console.log('🔧 Setting up virtual input for stealth mode...');
+        
+        // Hide real input
+        this.textInput.style.display = 'none';
+        
+        // Create virtual input div
+        this.virtualInputElement = document.createElement('div');
+        this.virtualInputElement.id = 'virtual-text-input';
+        this.virtualInputElement.className = 'virtual-text-input';
+        this.virtualInputElement.setAttribute('contenteditable', 'false');
+        this.virtualInputElement.setAttribute('tabindex', '-1'); // Prevent focus
+        
+        // Copy styles from real input
+        const computedStyle = window.getComputedStyle(this.textInput);
+        this.virtualInputElement.style.cssText = `
+            background: transparent;
+            border: none;
+            color: ${computedStyle.color};
+            padding: ${computedStyle.padding};
+            font-size: ${computedStyle.fontSize};
+            font-family: ${computedStyle.fontFamily};
+            outline: none;
+            flex: 1;
+            min-width: 0;
+            position: relative;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            pointer-events: none;
+        `;
+        
+        // Insert virtual input after real input
+        this.textInput.parentNode.insertBefore(this.virtualInputElement, this.textInput.nextSibling);
+        
+        // Initialize text buffer from real input
+        this.virtualTextBuffer = this.textInput.value || '';
+        this.updateVirtualInputDisplay();
+        
+        this.isVirtualInputActive = true;
+        this.startCaretBlink();
+        
+        console.log('✅ Virtual input setup complete, buffer:', this.virtualTextBuffer);
+    }
+    
+    teardownVirtualInput() {
+        if (!this.isVirtualInputActive) return;
+        
+        // Stop caret blink
+        this.stopCaretBlink();
+        
+        // Copy text back to real input
+        if (this.textInput) {
+            this.textInput.value = this.virtualTextBuffer;
+            this.textInput.style.display = '';
+        }
+        
+        // Remove virtual input
+        if (this.virtualInputElement) {
+            this.virtualInputElement.remove();
+            this.virtualInputElement = null;
+        }
+        
+        this.isVirtualInputActive = false;
+        console.log('✅ Virtual input teardown complete');
+    }
+    
+    updateVirtualInputDisplay() {
+        if (!this.virtualInputElement) return;
+        
+        const text = this.virtualTextBuffer || '';
+        // Use stealth mode placeholder if enabled, otherwise use the text input's placeholder
+        const placeholder = this.stealthModeEnabled 
+            ? 'chat disabled use answer screen button instead'
+            : (this.textInput?.placeholder || 'Ask Jarvis anything...');
+        
+        if (text.length === 0) {
+            this.virtualInputElement.innerHTML = `<span class="virtual-input-placeholder">${placeholder}</span>`;
+        } else {
+            // Escape HTML and add caret
+            const escapedText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            this.virtualInputElement.innerHTML = `${escapedText}<span class="virtual-input-caret">|</span>`;
+        }
+    }
+    
+    startCaretBlink() {
+        this.stopCaretBlink();
+        this.caretBlinkInterval = setInterval(() => {
+            if (!this.virtualInputElement) return;
+            const caret = this.virtualInputElement.querySelector('.virtual-input-caret');
+            if (caret) {
+                caret.style.opacity = caret.style.opacity === '0' ? '1' : '0';
+            }
+        }, 530); // Blink every 530ms
+    }
+    
+    stopCaretBlink() {
+        if (this.caretBlinkInterval) {
+            clearInterval(this.caretBlinkInterval);
+            this.caretBlinkInterval = null;
+        }
+    }
+    
+    handleStealthKeyEvent(keyEvent) {
+        if (!keyEvent.isKeyDown) return; // Only process key down events
+        
+        // Ensure virtual input is set up (safety check)
+        if (!this.isVirtualInputActive) {
+            console.log('⚠️ Virtual input not active in handleStealthKeyEvent, setting up now...');
+            this.setupVirtualInput();
+            if (!this.isVirtualInputActive) {
+                console.error('❌ Failed to setup virtual input in handleStealthKeyEvent');
+                return;
+            }
+        }
+        
+        const vkCode = keyEvent.keyCode;
+        const isShift = keyEvent.isShiftPressed;
+        const isCtrl = keyEvent.isCtrlPressed;
+        const isAlt = keyEvent.isAltPressed;
+        
+        console.log('🔑 Handling stealth key:', { vkCode, isShift, isCtrl, isAlt, buffer: this.virtualTextBuffer });
+        
+        // Don't process if Alt is pressed (system shortcuts like Alt+Tab)
+        if (isAlt && vkCode !== 18) { // Allow Alt key itself
+            console.log('⚠️ Alt key pressed, ignoring (system shortcut)');
+            return;
+        }
+        
+        // Handle special keys
+        if (vkCode === 8) { // Backspace
+            this.virtualTextBuffer = this.virtualTextBuffer.slice(0, -1);
+            this.updateVirtualInputDisplay();
+            console.log('✅ Backspace - buffer:', this.virtualTextBuffer);
+            return;
+        }
+        
+        if (vkCode === 13) { // Enter
+            console.log('✅ Enter pressed - sending message');
+            this.sendMessage();
+            return;
+        }
+        
+        if (vkCode === 27) { // Escape
+            this.virtualTextBuffer = '';
+            this.updateVirtualInputDisplay();
+            console.log('✅ Escape - cleared buffer');
+            return;
+        }
+        
+        // Handle Ctrl+A (select all)
+        if (vkCode === 65 && isCtrl) {
+            // Not applicable for virtual input
+            return;
+        }
+        
+        // Handle Ctrl+C (copy)
+        if (vkCode === 67 && isCtrl) {
+            if (this.virtualTextBuffer) {
+                navigator.clipboard.writeText(this.virtualTextBuffer).catch(() => {});
+                console.log('✅ Ctrl+C - copied to clipboard');
+            }
+            return;
+        }
+        
+        // Handle Ctrl+V (paste)
+        if (vkCode === 86 && isCtrl) {
+            navigator.clipboard.readText().then(text => {
+                this.virtualTextBuffer += text;
+                this.updateVirtualInputDisplay();
+                console.log('✅ Ctrl+V - pasted, buffer:', this.virtualTextBuffer);
+            }).catch(() => {});
+            return;
+        }
+        
+        // Handle Ctrl+X (cut)
+        if (vkCode === 88 && isCtrl) {
+            if (this.virtualTextBuffer) {
+                navigator.clipboard.writeText(this.virtualTextBuffer).catch(() => {});
+                this.virtualTextBuffer = '';
+                this.updateVirtualInputDisplay();
+                console.log('✅ Ctrl+X - cut to clipboard');
+            }
+            return;
+        }
+        
+        // Convert virtual key code to character
+        const char = this.virtualKeyCodeToChar(vkCode, isShift, isCtrl, isAlt);
+        if (char) {
+            this.virtualTextBuffer += char;
+            this.updateVirtualInputDisplay();
+            console.log('✅ Added character:', char, 'Buffer:', this.virtualTextBuffer);
+        } else {
+            console.log('⚠️ No character mapped for vkCode:', vkCode, 'isShift:', isShift, 'isCtrl:', isCtrl, 'isAlt:', isAlt);
+        }
+    }
+    
+    virtualKeyCodeToChar(vkCode, isShift, isCtrl, isAlt) {
+        // Don't process if Ctrl or Alt is pressed (except for shortcuts handled above)
+        if (isCtrl || isAlt) return null;
+        
+        // Virtual key code to character mapping
+        const keyMap = {
+            // Letters
+            65: isShift ? 'A' : 'a', 66: isShift ? 'B' : 'b', 67: isShift ? 'C' : 'c',
+            68: isShift ? 'D' : 'd', 69: isShift ? 'E' : 'e', 70: isShift ? 'F' : 'f',
+            71: isShift ? 'G' : 'g', 72: isShift ? 'H' : 'h', 73: isShift ? 'I' : 'i',
+            74: isShift ? 'J' : 'j', 75: isShift ? 'K' : 'k', 76: isShift ? 'L' : 'l',
+            77: isShift ? 'M' : 'm', 78: isShift ? 'N' : 'n', 79: isShift ? 'O' : 'o',
+            80: isShift ? 'P' : 'p', 81: isShift ? 'Q' : 'q', 82: isShift ? 'R' : 'r',
+            83: isShift ? 'S' : 's', 84: isShift ? 'T' : 't', 85: isShift ? 'U' : 'u',
+            86: isShift ? 'V' : 'v', 87: isShift ? 'W' : 'w', 88: isShift ? 'X' : 'x',
+            89: isShift ? 'Y' : 'y', 90: isShift ? 'Z' : 'z',
+            // Numbers
+            48: isShift ? ')' : '0', 49: isShift ? '!' : '1', 50: isShift ? '@' : '2',
+            51: isShift ? '#' : '3', 52: isShift ? '$' : '4', 53: isShift ? '%' : '5',
+            54: isShift ? '^' : '6', 55: isShift ? '&' : '7', 56: isShift ? '*' : '8',
+            57: isShift ? '(' : '9',
+            // Special characters
+            32: ' ', // Space
+            186: isShift ? ':' : ';', // Semicolon
+            187: isShift ? '+' : '=', // Equals
+            188: isShift ? '<' : ',', // Comma
+            189: isShift ? '_' : '-', // Minus
+            190: isShift ? '>' : '.', // Period
+            191: isShift ? '?' : '/', // Slash
+            192: isShift ? '~' : '`', // Backtick
+            219: isShift ? '{' : '[', // Left bracket
+            220: isShift ? '|' : '\\', // Backslash
+            221: isShift ? '}' : ']', // Right bracket
+            222: isShift ? '"' : "'", // Quote
+        };
+        
+        return keyMap[vkCode] || null;
     }
     
     applyStealthModeStyles(enabled) {
@@ -6831,7 +7673,7 @@ User request: ${prompt}`;
             if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
             this.saveConversationHistory();
             if (!this.hasPremiumAccess()) this.incrementMessageCount();
-            if (this.textInput) this.textInput.value = '';
+            this.clearTextInput();
             this.showNotification(analysis, true);
         } catch (error) {
             console.error('Error analyzing files:', error);
@@ -9444,9 +10286,14 @@ User Question: ${question}`;
             this.toolbarCopyBtn.addEventListener('click', () => this.copyOutputToClipboard());
         }
         
-        // Add to Docs button
+        // Add to Docs button (immediate paste)
         if (this.toolbarDocsBtn) {
             this.toolbarDocsBtn.addEventListener('click', () => this.addOutputToDocs());
+        }
+        
+        // Write to Docs button (with typing animation)
+        if (this.toolbarWriteDocsBtn) {
+            this.toolbarWriteDocsBtn.addEventListener('click', () => this.writeOutputToDocs());
         }
         
         // Resend/Try again button
@@ -9553,7 +10400,7 @@ User Question: ${question}`;
         
         // Re-send the last query
         if (this.textInput) {
-            this.textInput.value = this.lastUserQuery;
+            this.setTextInputValue(this.lastUserQuery);
         }
         await this.sendMessage();
     }
@@ -9567,11 +10414,24 @@ User Question: ${question}`;
         // Hide toolbar
         this.hideOutputToolbar();
         
-        // Get the content from the output
-        const htmlContent = this.dragOutput.innerHTML;
-        const textContent = this.dragOutput.dataset.fullText || this.dragOutput.innerText || '';
+        // Use writeToDocs with paste mode = true for immediate add
+        if (typeof this.writeToDocs === 'function') {
+            await this.writeToDocs(true); // true = paste mode, immediate add
+        } else {
+            this.showNotification('Google Docs integration not available', false);
+        }
+    }
+    
+    async writeOutputToDocs() {
+        if (!this.dragOutput) {
+            this.showNotification('No output to write to docs', false);
+            return;
+        }
         
-        // Use existing writeToDocs method (same as /docs command)
+        // Hide toolbar
+        this.hideOutputToolbar();
+        
+        // Use writeToDocs with paste mode = false for typing animation
         if (typeof this.writeToDocs === 'function') {
             await this.writeToDocs(false); // false = not paste mode, use realistic typing
         } else {
@@ -9984,6 +10844,18 @@ User Question: ${question}`;
             // Store document URL for the open button
             this.docsDoneIndicator.dataset.documentUrl = documentUrl || '';
             this.docsDoneIndicator.classList.remove('hidden');
+            
+            // Make window interactive so buttons can be clicked
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+                if (isWindows) {
+                    ipcRenderer.send('modal-state-changed', true);
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                } else {
+                    ipcRenderer.invoke('force-interactive').catch(() => {});
+                }
+            }
         }
         if (this.docsWritingIndicator) {
             this.docsWritingIndicator.classList.add('hidden');
@@ -9993,6 +10865,15 @@ User Question: ${question}`;
     hideDocsDoneIndicator() {
         if (this.docsDoneIndicator) {
             this.docsDoneIndicator.classList.add('hidden');
+            
+            // Notify main process that modal is closing (restore click-through if needed)
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
+                if (isWindows) {
+                    ipcRenderer.send('modal-state-changed', false);
+                }
+            }
         }
     }
 
@@ -11184,7 +12065,7 @@ If you cannot find clear event information, return null. Be precise with dates a
         this.hideOutputToolbar();
     }
 
-    handleDragStart(e) {
+    async handleDragStart(e) {
         // Mark that we're dragging the output
         this.isDraggingOutput = true;
         
@@ -11194,195 +12075,36 @@ If you cannot find clear event information, return null. Be precise with dates a
             ipcRenderer.invoke('make-interactive');
         }
         
-        // Get HTML content to preserve table structure
-        let htmlToDrag = this.dragOutput.innerHTML || '';
+        // Copy to clipboard when drag starts (same as copy button)
+        const text = this.dragOutput.dataset.fullText || this.dragOutput.innerText || '';
         
-        // Extract tables from HTML and ensure they're properly formatted for Google Docs
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = htmlToDrag;
-        const tables = tempDiv.querySelectorAll('table');
+        let success = false;
         
-        // Ensure tables have proper structure for Google Docs recognition
-        tables.forEach(table => {
-            // Add table attributes that Google Docs recognizes when pasting HTML
-            if (!table.hasAttribute('border')) {
-                table.setAttribute('border', '1');
-            }
-            if (!table.hasAttribute('cellpadding')) {
-                table.setAttribute('cellpadding', '5');
-            }
-            if (!table.hasAttribute('cellspacing')) {
-                table.setAttribute('cellspacing', '0');
-            }
-            if (!table.hasAttribute('style')) {
-                table.setAttribute('style', 'border-collapse: collapse; width: 100%;');
-            }
-            
-            // Ensure all rows have proper structure
-            const rows = table.querySelectorAll('tr');
-            rows.forEach(row => {
-                const cells = row.querySelectorAll('td, th');
-                cells.forEach(cell => {
-                    if (!cell.hasAttribute('style')) {
-                        cell.setAttribute('style', 'border: 1px solid #ccc; padding: 8px;');
-                    }
-                });
-            });
-        });
-        
-        // Ensure paragraphs are properly formatted with blank lines between them
-        // Convert divs and other block elements to proper paragraphs
-        const blockElements = tempDiv.querySelectorAll('div, p, h1, h2, h3, h4, h5, h6');
-        blockElements.forEach(element => {
-            // If it's not already a paragraph and contains text, wrap or convert
-            if (element.tagName !== 'P' && element.tagName !== 'TABLE' && !element.closest('table')) {
-                const text = element.textContent.trim();
-                if (text && !element.querySelector('table')) {
-                    // Convert to paragraph with no margin
-                    const p = document.createElement('p');
-                    p.innerHTML = element.innerHTML;
-                    p.style.lineHeight = '1.6';
-                    p.style.margin = '0';
-                    p.style.marginBottom = '0';
-                    element.replaceWith(p);
-                }
-            } else if (element.tagName === 'P') {
-                // Remove all margins - we'll use <br> for spacing
-                element.style.margin = '0';
-                element.style.marginBottom = '0';
-                element.style.marginTop = '0';
-                element.style.padding = '0';
-                element.style.lineHeight = '1.6';
-            }
-        });
-        
-        // Get updated HTML after element modifications
-        htmlToDrag = tempDiv.innerHTML;
-        
-        // Get the raw text content to detect paragraph breaks
-        const rawText = tempDiv.textContent || tempDiv.innerText || '';
-        
-        // Check if content has paragraphs that aren't wrapped
-        // Split by double newlines OR single newlines (if they separate distinct paragraphs)
-        let paragraphs = rawText.split(/\n\s*\n/).filter(p => p.trim());
-        
-        // If we only got one paragraph, try splitting by single newlines
-        if (paragraphs.length === 1) {
-            const lines = rawText.split('\n').filter(l => l.trim());
-            // If we have multiple lines that look like separate paragraphs
-            if (lines.length > 1) {
-                paragraphs = lines;
-            }
-        }
-        
-        // If we have multiple paragraphs, rebuild the HTML structure properly
-        if (paragraphs.length > 1 && (!htmlToDrag.includes('<p') || htmlToDrag.match(/<p[^>]*>/g)?.length < paragraphs.length)) {
-            // Rebuild HTML with proper paragraph structure - separate <p> tags without <br>
-            htmlToDrag = paragraphs.map(p => {
-                const trimmed = p.trim();
-                // Preserve any existing HTML in the paragraph
-                if (trimmed.includes('<')) {
-                    return trimmed;
-                }
-                return `<p style="line-height: 1.6; margin: 0; padding: 0;">${trimmed}</p>`;
-            }).join('\n'); // Use newline between paragraphs, not <br>
-            
-            tempDiv.innerHTML = htmlToDrag;
-            htmlToDrag = tempDiv.innerHTML;
-        }
-        
-        // Ensure all existing paragraphs are properly formatted
-        const allParagraphs = tempDiv.querySelectorAll('p');
-        allParagraphs.forEach(p => {
-            p.style.lineHeight = '1.6';
-            p.style.margin = '0';
-            p.style.padding = '0';
-        });
-        
-        // Remove any <br> tags between paragraphs - Google Docs recognizes block-level <p> separation
-        htmlToDrag = tempDiv.innerHTML;
-        htmlToDrag = htmlToDrag.replace(/<\/p>\s*<br\s*\/?>\s*<p/g, '</p>\n<p');
-        htmlToDrag = htmlToDrag.replace(/<\/p>\s*<p/g, '</p>\n<p'); // Ensure newline between paragraphs
-        
-        // Wrap in a container div
-        htmlToDrag = `<div style="line-height: 1.6;">${htmlToDrag}</div>`;
-        
-        // Get clean text for plain text format - CRITICAL for Google Docs
-        // This is what Google Docs uses when dragging
-        let textToDrag = this.dragOutput.dataset.fullText || '';
-        
-        // If we don't have stored full text, extract it from the DOM
-        if (!textToDrag) {
-            // Get text content preserving paragraph structure
-            const textContent = tempDiv.textContent || tempDiv.innerText || '';
-            // Split by double newlines or detect paragraph breaks
-            const textParagraphs = textContent.split(/\n\s*\n/).filter(p => p.trim());
-            
-            if (textParagraphs.length > 1) {
-                // Join with double newlines to preserve paragraph breaks
-                textToDrag = textParagraphs.join('\n\n');
-            } else {
-                // Try single newlines
-                const lines = textContent.split('\n').filter(l => l.trim());
-                if (lines.length > 1) {
-                    textToDrag = lines.join('\n\n'); // Use double newlines for paragraph breaks
-                } else {
-                    textToDrag = textContent;
-                }
-            }
-        }
-        
-        // Ensure text has proper paragraph breaks (double newlines)
-        textToDrag = textToDrag.replace(/\n{3,}/g, '\n\n'); // Normalize excessive breaks
-        textToDrag = textToDrag.trim();
-        
-        // CRITICAL FIX: Electron windows with special properties can't drag-drop to external apps
-        // Copy to clipboard automatically on Windows as a workaround
-        const isWindows = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.toLowerCase().includes('windows');
-        if (isWindows && this.isElectron) {
-            const { ipcRenderer } = require('electron');
-            // Copy HTML to clipboard when drag starts (Windows workaround) - preserves table structure
-            ipcRenderer.invoke('copy-to-clipboard', htmlToDrag).then(() => {
-                // Show brief notification that text was copied
-                this.showNotification('✅ Content copied to clipboard - paste it where needed');
-                // Auto-hide after 2 seconds
-                setTimeout(() => {
-                    if (this.dragOutput && !this.dragOutput.classList.contains('hidden')) {
-                        const content = this.dragOutput.textContent || '';
-                        if (content.includes('copied to clipboard')) {
-                            this.dragOutput.classList.add('hidden');
-                        }
-                    }
-                }, 2000);
-            }).catch(err => {
+        // Use Electron IPC to copy (most reliable in Electron apps)
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            success = await ipcRenderer.invoke('copy-to-clipboard', text);
+        } else {
+            // Fallback to web clipboard API
+            try {
+                await navigator.clipboard.writeText(text);
+                success = true;
+            } catch (err) {
                 console.error('Failed to copy to clipboard:', err);
-            });
+            }
         }
         
-        // Set data in multiple formats for better compatibility
-        // Use HTML format for tables, plain text as fallback
-        e.dataTransfer.setData('text/plain', textToDrag);
-        e.dataTransfer.setData('text/html', htmlToDrag); // Preserve HTML table structure
-        e.dataTransfer.setData('text/unicode', textToDrag);
-        e.dataTransfer.effectAllowed = 'copy';
-        
-        // Windows-specific: Create a drag image for better visual feedback
-        if (isWindows) {
-            // Create a temporary drag image element
-            const dragImage = document.createElement('div');
-            dragImage.style.position = 'absolute';
-            dragImage.style.top = '-1000px';
-            dragImage.style.padding = '10px';
-            dragImage.style.background = 'rgba(0, 0, 0, 0.8)';
-            dragImage.style.color = 'white';
-            dragImage.style.borderRadius = '8px';
-            dragImage.style.fontSize = '14px';
-            dragImage.style.maxWidth = '300px';
-            dragImage.textContent = textToDrag.substring(0, 50) + (textToDrag.length > 50 ? '...' : '');
-            document.body.appendChild(dragImage);
-            e.dataTransfer.setDragImage(dragImage, 10, 10);
-            setTimeout(() => document.body.removeChild(dragImage), 0);
+        if (success) {
+            // Show notification that text was copied
+            this.showNotification('✅ Copied to clipboard');
         }
+        
+        // Prevent actual drag operation - we just want to copy
+        e.preventDefault();
+        
+        // Set minimal drag data (required for drag event to work)
+        e.dataTransfer.setData('text/plain', '');
+        e.dataTransfer.effectAllowed = 'none';
         
         // Add visual feedback
         this.dragOutput.style.opacity = '0.7';

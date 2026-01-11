@@ -1,0 +1,26 @@
+{
+  "name": "windows-keyboard-hook",
+  "version": "1.0.0",
+  "description": "Windows low-level keyboard hook for stealth typing",
+  "main": "index.js",
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "rebuild": "node-gyp rebuild"
+  },
+  "keywords": [
+    "windows",
+    "keyboard",
+    "hook",
+    "stealth"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  }
+}
+
+

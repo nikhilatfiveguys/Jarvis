@@ -3,6 +3,26 @@ const path = require('path');
 const { exec } = require('child_process');
 const os = require('os');
 
+// Windows-specific: Import module to prevent focus stealing
+let windowsHideAltTab = null;
+if (process.platform === 'win32') {
+    try {
+        windowsHideAltTab = require('./native/windows-hide-alt-tab');
+    } catch (e) {
+        console.warn('⚠️ Failed to load windows-hide-alt-tab module:', e.message);
+    }
+}
+
+// Windows-specific: Import keyboard hook for stealth typing
+let windowsKeyboardHook = null;
+if (process.platform === 'win32') {
+    try {
+        windowsKeyboardHook = require('./native/windows-keyboard-hook');
+    } catch (e) {
+        console.warn('⚠️ Failed to load windows-keyboard-hook module:', e.message);
+    }
+}
+
 // Handle Squirrel events for auto-updates (Windows)
 // This MUST be at the very top before anything else
 const handleSquirrelEvent = () => {
@@ -180,8 +200,16 @@ class JarvisApp {
         app.on('second-instance', () => {
             if (this.mainWindow) {
                 if (this.mainWindow.isMinimized()) this.mainWindow.restore();
+                if (process.platform === 'win32' && windowsHideAltTab) {
+                    try {
+                        windowsHideAltTab.showWithoutActivate(this.mainWindow);
+                    } catch (e) {
+                        this.mainWindow.showInactive();
+                    }
+                } else {
                 this.mainWindow.show();
                 this.mainWindow.focus();
+                }
             }
         });
 
@@ -345,8 +373,16 @@ class JarvisApp {
                 if (this.mainWindow.isMinimized()) {
                     this.mainWindow.restore();
                 }
+                if (process.platform === 'win32' && windowsHideAltTab) {
+                    try {
+                        windowsHideAltTab.showWithoutActivate(this.mainWindow);
+                    } catch (e) {
+                        this.mainWindow.showInactive();
+                    }
+                } else {
                 this.mainWindow.show();
                 this.mainWindow.focus();
+                }
             } else if (BrowserWindow.getAllWindows().length === 0) {
                 this.createWindow();
             }
@@ -478,6 +514,15 @@ class JarvisApp {
     setupAppCleanup() {
         // Cleanup shortcuts on quit
         app.on('will-quit', () => {
+            // Cleanup keyboard hook on Windows
+            if (process.platform === 'win32' && windowsKeyboardHook) {
+                try {
+                    windowsKeyboardHook.uninstallKeyboardHook();
+                    console.log('✅ Keyboard hook uninstalled');
+                } catch (e) {
+                    console.warn('⚠️ Failed to uninstall keyboard hook:', e.message);
+                }
+            }
             const { globalShortcut } = require('electron');
             globalShortcut.unregisterAll();
         });
@@ -1275,8 +1320,8 @@ class JarvisApp {
             movable: true, // Allow moving - needed for interaction on Windows
             minimizable: false,
             maximizable: false,
-            skipTaskbar: false, // Show in taskbar
-            focusable: true, // Allow focus for input interactions
+            skipTaskbar: true, // Hide from taskbar - background app
+            focusable: false, // Non-focusable by default - will be enabled when user needs to type
             fullscreenable: true,
             webPreferences: {
                 nodeIntegration: true,
@@ -1295,22 +1340,27 @@ class JarvisApp {
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
 
-        // Windows: Show in taskbar (user requested)
+        // Windows: Hide from taskbar - background app
         if (process.platform === 'win32') {
-            this.mainWindow.setSkipTaskbar(false);
+            this.mainWindow.setSkipTaskbar(true);
         }
 
         // Windows: Enable content protection using Electron's built-in API
         // Check if stealth mode is enabled (default: true)
+        // NOTE: Content protection on Windows can cause videos in other tabs to turn white
+        // due to DWM composition interference. We'll only enable it if explicitly needed.
         const stealthModeEnabled = this.getStealthModePreference();
-        if (stealthModeEnabled) {
-            try {
-                this.mainWindow.setContentProtection(true);
-                console.log('✅ Windows content protection enabled');
-            } catch (e) {
-                console.log('⚠️ Windows content protection not available:', e.message);
-            }
-        }
+        // DISABLED: setContentProtection causes videos in other tabs to turn white
+        // The window is already hidden from taskbar and uses WS_EX_NOACTIVATE, which provides
+        // sufficient stealth without interfering with video rendering
+        // if (stealthModeEnabled) {
+        //     try {
+        //         this.mainWindow.setContentProtection(true);
+        //         console.log('✅ Windows content protection enabled');
+        //     } catch (e) {
+        //         console.log('⚠️ Windows content protection not available:', e.message);
+        //     }
+        // }
         
         // CRITICAL: Also ensure screenshot detection is set up when window is created
         // This ensures shortcuts are registered even if stealth mode was enabled before window creation
@@ -1363,14 +1413,100 @@ class JarvisApp {
 
         // Window is ready; show overlay immediately
         this.mainWindow.once('ready-to-show', () => {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1391',message:'ready-to-show event fired',data:{platform:process.platform,hasWindowsHideAltTab:!!windowsHideAltTab},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
+            
             // Windows: Start with click-through, region tracking will handle interactivity
             if (process.platform === 'win32') {
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-                this.mainWindow.setFocusable(true);
-                this.mainWindow.setSkipTaskbar(false); // Show in taskbar
+                this.mainWindow.setFocusable(false); // Non-focusable by default - background app
+                this.mainWindow.setSkipTaskbar(true); // Hide from taskbar - background app
+                
+                // Ensure window is visible (opacity 1.0)
+                try {
+                    this.mainWindow.setOpacity(1.0);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1400',message:'setOpacity(1.0) called',data:{opacity:1.0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                } catch (e) {
+                    console.warn('⚠️ Failed to set opacity:', e.message);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1402',message:'setOpacity failed',data:{error:e.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                }
+                
+                // Configure window to be non-focus-stealing (but visible)
+                if (windowsHideAltTab) {
+                    try {
+                        windowsHideAltTab.hideFromAltTab(this.mainWindow, { makeInvisible: false });
+                        console.log('✅ Window configured as non-focus-stealing');
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1408',message:'hideFromAltTab called',data:{makeInvisible:false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+                        // #endregion
+                        // Ensure opacity is still 1.0 after configuration
+                        this.mainWindow.setOpacity(1.0);
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1411',message:'setOpacity(1.0) after hideFromAltTab',data:{opacity:1.0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+                        // #endregion
+                    } catch (e) {
+                        console.warn('⚠️ Failed to configure window:', e.message);
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1413',message:'hideFromAltTab failed',data:{error:e.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+                        // #endregion
+                    }
+                }
             }
             
+            // Show window without activating it (prevents focus stealing)
+            if (process.platform === 'win32' && windowsHideAltTab) {
+                try {
+                    // #region agent log
+                    const boundsBefore = this.mainWindow.getBounds();
+                    const visibleBefore = this.mainWindow.isVisible();
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1420',message:'Before showWithoutActivate',data:{bounds:boundsBefore,visible:visibleBefore,isMinimized:this.mainWindow.isMinimized()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                    windowsHideAltTab.showWithoutActivate(this.mainWindow);
+                    // #region agent log
+                    const boundsAfter = this.mainWindow.getBounds();
+                    const visibleAfter = this.mainWindow.isVisible();
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1422',message:'After showWithoutActivate',data:{bounds:boundsAfter,visible:visibleAfter,isMinimized:this.mainWindow.isMinimized()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                    // Ensure window is visible after showing
+                    this.mainWindow.setOpacity(1.0);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1424',message:'setOpacity(1.0) after showWithoutActivate',data:{opacity:1.0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                    
+                    // Windows: Reapply window styles after showing to ensure it stays hidden from taskbar
+                    // Windows may add window to taskbar when it's shown, so we need to reapply WS_EX_TOOLWINDOW
+                    setTimeout(() => {
+                        if (this.mainWindow && !this.mainWindow.isDestroyed() && windowsHideAltTab) {
+                            try {
+                                windowsHideAltTab.hideFromAltTab(this.mainWindow, { makeInvisible: false });
+                                this.mainWindow.setSkipTaskbar(true);
+                                // #region agent log
+                                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1435',message:'Reapplied window styles after showing to hide from taskbar',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+                                // #endregion
+                            } catch (e) {
+                                this.mainWindow.setSkipTaskbar(true);
+                            }
+                        }
+                    }, 100);
+                } catch (e) {
+                    console.warn('⚠️ Failed to show without activate, using fallback:', e.message);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1426',message:'showWithoutActivate failed, using fallback',data:{error:e.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                    this.mainWindow.showInactive();
+                    this.mainWindow.setOpacity(1.0);
+                }
+            } else {
             this.mainWindow.show();
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1430',message:'show() called (non-Windows)',data:{platform:process.platform},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+            }
             
             // Don't focus immediately on Windows - let region tracking handle it
             if (process.platform !== 'win32') {
@@ -1423,23 +1559,281 @@ class JarvisApp {
             this.mainWindow = null;
         });
 
-        // Windows: Just focus the window when it receives focus - no special handling needed
+        // Windows: Prevent focus stealing - use window styles + reactive prevention
+        // Window styles (WS_EX_NOACTIVATE) should prevent focus, but we also handle it reactively
+        if (process.platform === 'win32') {
+            // Keep window non-focusable by default - background app behavior
+            this.mainWindow.setFocusable(false);
+            
+            // Track when user is actually typing (not just hovering)
+            // Use instance property so IPC handlers can access it
+            this.userIsTyping = false;
+            let typingTimeout = null;
+            
+            // Throttle preventActivation calls to prevent lag
+            let lastPreventActivationTime = 0;
+            const PREVENT_ACTIVATION_THROTTLE_MS = 500; // Max once per 500ms
+            let lastFocusRestoreTime = 0; // Track when we last restored focus in setFocusable wrapper
+            
+            // Wrapper to ensure window stays hidden from taskbar when made focusable
+            // Windows may add window to taskbar when setFocusable(true) is called
+            // THROTTLED to prevent lag - only reapply styles max once per second
+            let lastStyleReapplyTime = 0;
+            const STYLE_REAPPLY_THROTTLE_MS = 2000; // Increased to 2 seconds to reduce lag
+            let isUserInteracting = false; // Track if user is actively interacting
+            const originalSetFocusable = this.mainWindow.setFocusable.bind(this.mainWindow);
+            this.mainWindow.setFocusable = (focusable) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1585',message:'setFocusable called',data:{focusable,stealthMode:this.getStealthModePreference(),userIsTyping:this.userIsTyping,isFocused:this.mainWindow.isFocused(),isFocusableBefore:this.mainWindow.isFocusable?.()},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'E'})}).catch(()=>{});
+                // #endregion
+                // In stealth mode, prevent making window focusable
+                if (focusable && this.getStealthModePreference() && process.platform === 'win32') {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1590',message:'Blocking setFocusable(true) in stealth mode',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'E'})}).catch(()=>{});
+                    // #endregion
+                    return; // Don't make focusable in stealth mode
+                }
+                originalSetFocusable(focusable);
+                if (focusable && this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    // Mark that user is interacting (region tracking or typing)
+                    isUserInteracting = true;
+                    // Clear flag after interaction stops
+                    setTimeout(() => {
+                        isUserInteracting = false;
+                    }, 1000);
+                    
+                    // ALWAYS call setSkipTaskbar (fast, no lag) to ensure it stays hidden
+                    this.mainWindow.setSkipTaskbar(true);
+                    
+                    // Don't call preventActivation here - it's too expensive (PowerShell)
+                    // Window styles (WS_EX_NOACTIVATE) should prevent focus acquisition
+                    // The focus event handler will restore focus if it does get stolen
+                    
+                    // Skip PowerShell entirely - it's slow and failing
+                    // setSkipTaskbar(true) is fast and reliable enough
+                    // Only use PowerShell on initial window creation, not on every setFocusable call
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1577',message:'setFocusable(true) completed',data:{isFocusableAfter:this.mainWindow.isFocusable?.(),isFocused:this.mainWindow.isFocused()},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-debug',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                } else if (!focusable) {
+                    // When making non-focusable, also ensure it stays hidden
+                    this.mainWindow.setSkipTaskbar(true);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1583',message:'setFocusable(false) completed',data:{isFocusableAfter:this.mainWindow.isFocusable?.(),isFocused:this.mainWindow.isFocused()},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-debug',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                }
+            };
+            
+            // No periodic reapplication - rely on setSkipTaskbar(true) which is fast and reliable
+            // The wrapper around setFocusable already ensures it stays hidden
+            // Periodic PowerShell calls were causing lag spikes
+            
+            // Detect when user is actually typing (not just hovering)
+            // Set userIsTyping BEFORE making focusable to prevent focus handler from interfering
+            this.mainWindow.webContents.on('before-input-event', (event, input) => {
+                // In stealth mode, don't handle input events - keyboard hook handles it
+                const stealthEnabled = this.getStealthModePreference();
+                if (stealthEnabled && process.platform === 'win32') {
+                    // Prevent default to stop the event from reaching the input
+                    event.preventDefault();
+                    console.log('🔒 Stealth mode: Blocked before-input-event (keyboard hook handles input)');
+                    return;
+                }
+                
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1633',message:'before-input-event fired',data:{type:input.type,key:input.key,code:input.code,isEnter:input.key==='Enter',isFocusable:this.mainWindow.isFocusable?.(),isFocused:this.mainWindow.isFocused(),userIsTyping:this.userIsTyping,stealthMode:stealthEnabled},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'C'})}).catch(()=>{});
+                // #endregion
+                
+                // CRITICAL: Don't prevent default - allow all input including Enter and backspace
+                // The event should be allowed to propagate normally
+                // #region agent log
+                if (input.key === 'Enter') {
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1647',message:'Enter key in before-input-event, NOT preventing default',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'enter-key-debug',hypothesisId:'C'})}).catch(()=>{});
+                    // For Enter key, don't interfere with focus - let the form submit naturally
+                    return;
+                }
+                // #endregion
+                
+                // Set flag FIRST so focus handler knows user is typing
+                this.userIsTyping = true;
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1614',message:'User typing detected, setting userIsTyping=true',data:{key:input.key,type:input.type},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+                
+                    // Make focusable and ensure window can receive keyboard input
+                    // The wrapper will ensure it stays hidden from taskbar
+                    // Only make focusable if not already focusable to avoid unnecessary calls
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:2043',message:'request-focus: making window focusable',data:{isFocusableBefore:this.mainWindow.isFocusable?.()},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'D'})}).catch(()=>{});
+                    // #endregion
+                    if (!this.mainWindow.isFocusable?.()) {
+                        this.mainWindow.setFocusable(true);
+                    }
+                    
+                    // CRITICAL: Focus the window and ensure text input can receive keyboard input
+                    // WS_EX_NOACTIVATE might prevent activation, but we can still receive input
+                    try {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:2051',message:'request-focus: calling focus()',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'D'})}).catch(()=>{});
+                        // #endregion
+                        // Focus the window first
+                        this.mainWindow.focus();
+                        // Also focus the webContents to ensure it can receive keyboard events
+                        this.mainWindow.webContents.focus();
+                    
+                    // Try to focus the text input element directly
+                    this.mainWindow.webContents.executeJavaScript(`
+                        (function() {
+                            const textInput = document.getElementById('text-input');
+                            if (textInput) {
+                                textInput.focus();
+                                return true;
+                            }
+                            return false;
+                        })();
+                    `).catch(() => {});
+                    
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1575',message:'Focused window, webContents, and text input for typing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                } catch (e) {
+                    // Silently ignore
+                }
+                
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1570',message:'Made window focusable for typing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+                
+                // Reset after user stops typing (longer timeout to allow for typing)
+                if (typingTimeout) clearTimeout(typingTimeout);
+                typingTimeout = setTimeout(() => {
+                    this.userIsTyping = false;
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1578',message:'User stopped typing, resetting userIsTyping=false',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                    if (this.mainWindow && !this.mainWindow.isDestroyed() && !this.mainWindow.isFocused()) {
+                        this.mainWindow.setFocusable(false);
+                    }
+                }, 3000); // Increased from 2000 to 3000 to give more time for typing
+            });
+            
+            // If window gets focus unexpectedly, restore to previous window
+            // BUT: Don't interfere if user is actively typing
+            // In stealth mode, always restore focus immediately
+            this.mainWindow.on('focus', () => {
+                // In stealth mode, immediately restore focus - window should never have focus
+                const stealthEnabled = this.getStealthModePreference();
+                if (stealthEnabled && process.platform === 'win32') {
+                    console.log('🔒 Stealth mode: Window got focus, restoring to previous window');
+                    // Immediately restore focus
+                    if (windowsHideAltTab) {
+                        try {
+                            windowsHideAltTab.restoreFocusIfStolen(this.mainWindow);
+                        } catch (e) {
+                            console.warn('⚠️ Failed to restore focus:', e.message);
+                        }
+                    }
+                    // Make window non-focusable
+                    try {
+                        this.mainWindow.setFocusable(false);
+                    } catch (e) {}
+                    return;
+                }
+                
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1673',message:'Focus event fired',data:{userIsTyping:this.userIsTyping,isFocusable:this.mainWindow.isFocusable?.(),isFocused:this.mainWindow.isFocused()},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'B'})}).catch(()=>{});
+                // #endregion
+                
+                // CRITICAL: If user is typing, allow focus immediately - don't interfere
+                if (this.userIsTyping) {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1680',message:'Focus event - user is typing, allowing focus',data:{userIsTyping:this.userIsTyping},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                    return; // Allow focus for typing - don't interfere
+                }
+                
+                // Use a longer delay to allow before-input-event to set userIsTyping first
+                // This prevents race conditions where focus fires before typing is detected
+                // Increased delay to 200ms to give more time for typing to start
+                setTimeout(() => {
+                    // Check again after delay - user might have started typing
+                    if (this.userIsTyping) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1690',message:'Focus event: user started typing after delay, allowing focus',data:{userIsTyping:this.userIsTyping},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'B'})}).catch(()=>{});
+                        // #endregion
+                        // User started typing - allow focus
+                        return;
+                    }
+                    
+                    // User is not typing - restore focus to previous window
+                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1695',message:'Focus event: user not typing after delay, restoring focus',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'B'})}).catch(()=>{});
+                        // #endregion
+                        // Window got focus unexpectedly - restore to previous window
+                        // This prevents Canvas from detecting the focus change
+                        // Make window non-focusable
+                        this.mainWindow.setFocusable(false);
+                        
+                        // Throttle native API calls to prevent lag (max once per 500ms)
+                        const now = Date.now();
+                        if (now - lastPreventActivationTime >= 500) {
+                            lastPreventActivationTime = now;
+                            
+                            // Use native API to restore focus to actual foreground window (browser, etc.)
+                            if (windowsHideAltTab) {
+                                try {
+                                    windowsHideAltTab.preventActivation(this.mainWindow);
+                                    // #region agent log
+                                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1718',message:'Focus event - restored focus using native API',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'B'})}).catch(()=>{});
+                                    // #endregion
+                                } catch (e) {
+                                    // Silently ignore
+                                }
+                            }
+                        }
+                    }
+                }, 200); // Increased delay to 200ms to give more time for typing to start
+            });
+        } else {
         this.mainWindow.on('focus', () => {
             // Window is interactive by default, just ensure it's focused
         });
+        }
 
         // Handle window blur - no special handling needed
         this.mainWindow.on('blur', () => {
             // Window stays interactive by default
         });
 
-        // Windows: Handle input events - just focus the window
+            // Windows: Handle input events - allow focus only when user is actually typing
+        if (process.platform === 'win32') {
+            this.mainWindow.webContents.on('before-input-event', (event, input) => {
+                // In stealth mode, prevent input events - keyboard hook handles it
+                const stealthEnabled = this.getStealthModePreference();
+                if (stealthEnabled) {
+                    event.preventDefault();
+                    console.log('🔒 Stealth mode: Blocked before-input-event (keyboard hook handles input)');
+                    return;
+                }
+                // Only allow focus if user is actually typing (not just showing window)
+                // The window will naturally receive focus when user clicks on input
+                // Don't force focus here as it can trigger browser blur events
+            });
+        } else {
         this.mainWindow.webContents.on('before-input-event', (event, input) => {
+            // In stealth mode, prevent input events (though stealth mode is Windows-only)
+            const stealthEnabled = this.getStealthModePreference();
+            if (stealthEnabled) {
+                event.preventDefault();
+                return;
+            }
             // When user tries to type, just focus the window
             if (this.mainWindow && !this.mainWindow.isDestroyed() && !this.mainWindow.isFocused()) {
                 this.mainWindow.focus();
             }
         });
+        }
 
         // Windows: Ensure text input can receive focus and keyboard input
         this.mainWindow.webContents.on('dom-ready', () => {
@@ -1499,19 +1893,9 @@ class JarvisApp {
         });
         
         // Windows: Handle any mouse click to ensure window gets focus
-        this.mainWindow.webContents.on('did-finish-load', () => {
-            // Inject script to focus window on any click
-            this.mainWindow.webContents.executeJavaScript(`
-                (function() {
-                    document.addEventListener('mousedown', function() {
-                        if (window.require) {
-                            const { ipcRenderer } = window.require('electron');
-                            ipcRenderer.invoke('request-focus').catch(() => {});
-                        }
-                    }, true);
-                })();
-            `).catch(() => {});
-        });
+        // REMOVED: Global mousedown handler that requests focus
+        // This was causing focus stealing even in stealth mode
+        // Individual handlers (overlay mousedown, etc.) handle focus requests when needed
 
         // Prevent navigation away from the app
         this.mainWindow.webContents.on('will-navigate', (event) => {
@@ -1568,6 +1952,57 @@ class JarvisApp {
             this.needsInteractiveTutorial = false;
             return true;
         });
+        
+        // Handle resetting user data for onboarding testing
+        ipcMain.handle('reset-user-for-onboarding', async () => {
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const userDataPath = app.getPath('userData');
+                
+                console.log('🔄 Resetting user data for onboarding testing...');
+                
+                const filesToRemove = [
+                    'onboarding_complete.json',
+                    'jarvis_user.json',
+                    'subscription_status.json',
+                    'voice-shortcut.json',
+                    'toggle-shortcut.json',
+                    'answer-screen-shortcut.json'
+                ];
+                
+                let removedCount = 0;
+                filesToRemove.forEach(fileName => {
+                    const filePath = path.join(userDataPath, fileName);
+                    if (fs.existsSync(filePath)) {
+                        try {
+                            fs.unlinkSync(filePath);
+                            console.log(`✅ Removed ${fileName}`);
+                            removedCount++;
+                        } catch (error) {
+                            console.error(`⚠️ Error removing ${fileName}:`, error.message);
+                        }
+                    }
+                });
+                
+                // Reset current user email
+                this.currentUserEmail = null;
+                
+                console.log(`✅ Reset complete! Removed ${removedCount} file(s). Restart the app to see onboarding.`);
+                
+                return {
+                    success: true,
+                    message: `Reset complete! Removed ${removedCount} file(s). Restart the app to see onboarding.`,
+                    filesRemoved: removedCount
+                };
+            } catch (error) {
+                console.error('❌ Error resetting user data:', error);
+                return {
+                    success: false,
+                    error: error.message || 'Failed to reset user data'
+                };
+            }
+        });
 
         // Handle overlay toggle
         ipcMain.handle('toggle-overlay', () => {
@@ -1581,9 +2016,12 @@ class JarvisApp {
             if (process.platform === 'win32') {
                 // On Windows, region tracking handles this automatically
                 // Only make interactive if mouse is actually over overlay
+                // CRITICAL: Don't make focusable - mouse events work without focus
+                // Only make focusable when user is actually typing (handled by before-input-event)
                 if (this.isMouseOverOverlay && this.mainWindow && !this.mainWindow.isDestroyed()) {
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    this.mainWindow.setFocusable(true);
+                    // Don't make focusable - prevents focus stealing
+                    // this.mainWindow.setFocusable(true);
                     return { success: true };
                 }
                 // If not over overlay, don't make interactive (stay click-through)
@@ -1604,11 +2042,13 @@ class JarvisApp {
         ipcMain.handle('force-interactive', () => {
             if (process.platform === 'win32' && this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.setIgnoreMouseEvents(false);
-                this.mainWindow.setFocusable(true);
+                // Don't make focusable - prevents focus stealing
+                // Mouse clicks work without focus
+                // this.mainWindow.setFocusable(true);
                 // Also update the region tracking state so it stays interactive
                 this.isMouseOverOverlay = true;
-                // Focus the window to ensure clicks register
-                this.mainWindow.focus();
+                // Don't focus - prevents focus stealing
+                // this.mainWindow.focus();
                 return { success: true };
             } else if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.setIgnoreMouseEvents(false);
@@ -1620,8 +2060,17 @@ class JarvisApp {
         });
 
         // Handle focus request from renderer
-        // Windows: Only focus if mouse is over overlay (region tracking handles interactivity)
+        // CRITICAL: request-focus is called when user clicks text input
+        // In stealth mode, we don't want to focus - keyboard hook handles input
         ipcMain.handle('request-focus', () => {
+            // In stealth mode, don't focus - keyboard hook handles typing
+            if (this.getStealthModePreference() && process.platform === 'win32') {
+                console.log('🔒 Stealth mode active - ignoring focus request (keyboard hook handles input)');
+                return { success: false, reason: 'stealth_mode_active' };
+            }
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1953',message:'request-focus IPC called',data:{isMouseOverOverlay:this.isMouseOverOverlay,platform:process.platform,isFocusable:this.mainWindow?.isFocusable?.(),isFocused:this.mainWindow?.isFocused()},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
             // Don't interfere if account or password reset window is focused
             if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
                 return true;
@@ -1632,19 +2081,38 @@ class JarvisApp {
             
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 try {
-                    // On Windows, only focus if mouse is over overlay
-                    if (process.platform === 'win32') {
-                        if (this.isMouseOverOverlay) {
-                            this.mainWindow.focus();
-                            return true;
-                        }
-                        return false; // Don't focus if not over overlay
-                    } else {
-                        // On macOS, always focus
-                        this.mainWindow.focus();
-                        return true;
+                    // CRITICAL: Always make window focusable when request-focus is called
+                    // This is called when user clicks text input, so they want to type
+                    // Make window focusable first if it's not
+                    if (!this.mainWindow.isFocusable?.()) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1968',message:'request-focus: window not focusable, calling setFocusable(true)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
+                        this.mainWindow.setFocusable(true);
                     }
-                } catch (_) {
+                    
+                    // Also ensure mouse events are enabled
+                    this.mainWindow.setIgnoreMouseEvents(false);
+                    
+                    // CRITICAL: Set userIsTyping flag BEFORE focusing to prevent focus handler from interfering
+                    // This ensures the focus handler knows the user wants to type
+                    this.userIsTyping = true;
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1972',message:'request-focus: setting userIsTyping=true before focusing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                    
+                    // Focus the window so it can receive keyboard input
+                    this.mainWindow.focus();
+                    this.mainWindow.webContents.focus();
+                    
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1978',message:'request-focus: called focus(), checking result',data:{isFocused:this.mainWindow.isFocused(),isFocusable:this.mainWindow.isFocusable?.()},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                        return true;
+                } catch (e) {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:1985',message:'request-focus: exception caught',data:{error:e.message},timestamp:Date.now(),sessionId:'debug-session',runId:'typing-fix2',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
                     return false;
                 }
             }
@@ -1685,7 +2153,11 @@ class JarvisApp {
                 // Ensure content protection is enabled so overlay is hidden from screenshots
                 // This makes the overlay invisible to screenshots without actually hiding it visually
                 if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                    // Temporarily ensure content protection is enabled for screenshot
+                    // NOTE: Content protection on Windows causes videos in other tabs to turn white
+                    // due to DWM composition interference. We disable it on Windows.
+                    // On macOS, content protection doesn't have this issue.
+                    if (process.platform === 'darwin') {
+                        // Temporarily ensure content protection is enabled for screenshot (macOS only)
                     // The overlay will stay visible but won't appear in the screenshot
                     console.log('📸 Ensuring content protection is enabled for screenshot');
                     try {
@@ -1693,6 +2165,7 @@ class JarvisApp {
                     } catch (e) {
                         // Content protection may not be available on all platforms
                         console.log('Content protection not available:', e.message);
+                        }
                     }
                 }
                 
@@ -2115,12 +2588,22 @@ class JarvisApp {
         
         ipcMain.on('start-shortcut-listening', (event, action) => {
             currentListeningAction = action || 'toggle';
-            if (shortcutListener) {
-                // Reset if already listening
-                pressedModifiers.clear();
-                pressedKey = null;
-                return;
+            
+            // Focus the hotkeys window to ensure it can receive keyboard events
+            if (this.hotkeysWindow && !this.hotkeysWindow.isDestroyed()) {
+                this.hotkeysWindow.focus();
+                this.hotkeysWindow.show();
             }
+            
+            // If already listening, clean up the old listener first
+            if (shortcutListener && this.hotkeysWindow && !this.hotkeysWindow.isDestroyed()) {
+                this.hotkeysWindow.webContents.removeListener('before-input-event', shortcutListener);
+                shortcutListener = null;
+            }
+            
+            // Reset state
+            pressedModifiers.clear();
+            pressedKey = null;
             
             shortcutListener = (event, input) => {
                 event.preventDefault(); // Prevent default behavior
@@ -2268,6 +2751,62 @@ class JarvisApp {
                         protectedCount++;
                     }
                 });
+                
+                // Windows: Setup/teardown keyboard hook for stealth typing
+                if (process.platform === 'win32' && windowsKeyboardHook) {
+                    if (enabled) {
+                        // Ensure window stays non-focusable when stealth mode is enabled
+                        windows.forEach(window => {
+                            if (window && !window.isDestroyed()) {
+                                try {
+                                    window.setFocusable(false);
+                                    window.setIgnoreMouseEvents(true, { forward: true });
+                                    console.log('✅ Window set to non-focusable for stealth mode');
+                                } catch (e) {
+                                    console.warn('⚠️ Failed to set window non-focusable:', e.message);
+                                }
+                            }
+                        });
+                        
+                        // Install keyboard hook
+                        if (windowsKeyboardHook.installKeyboardHook()) {
+                            console.log('✅ Keyboard hook installed for stealth typing');
+                            
+                            // Set callback to forward key events to renderer
+                            const callbackSet = windowsKeyboardHook.setKeyEventCallback((keyEvent) => {
+                                console.log('🔑 Keyboard hook callback received key event:', keyEvent);
+                                // Forward to all windows
+                                windows.forEach(window => {
+                                    if (window && !window.isDestroyed() && window.webContents) {
+                                        window.webContents.send('stealth-key-event', keyEvent);
+                                    }
+                                });
+                            });
+                            
+                            if (!callbackSet) {
+                                console.warn('⚠️ Failed to set keyboard hook callback');
+                            } else {
+                                console.log('✅ Keyboard hook callback set successfully');
+                            }
+                            
+                            // Enable key consumption (prevent keys from reaching background apps)
+                            windowsKeyboardHook.setConsumeKeys(true);
+                            console.log('✅ Keyboard hook consuming keys - typing will work without focus');
+                        } else {
+                            console.warn('⚠️ Failed to install keyboard hook - stealth typing will not work');
+                            console.warn('   Make sure to build the native module: cd native/windows-keyboard-hook && npm run rebuild');
+                        }
+                    } else {
+                        // Disable key consumption but keep hook installed
+                        if (windowsKeyboardHook.setConsumeKeys) {
+                            windowsKeyboardHook.setConsumeKeys(false);
+                            console.log('✅ Keyboard hook disabled (keys will pass through)');
+                        }
+                    }
+                } else if (process.platform === 'win32' && !windowsKeyboardHook) {
+                    console.warn('⚠️ Keyboard hook module not available - stealth typing will not work');
+                    console.warn('   Make sure to build the native module: cd native/windows-keyboard-hook && npm run rebuild');
+                }
                 
                 // Store preference in file (for persistence across restarts)
                 const fs = require('fs');
@@ -2956,6 +3495,599 @@ class JarvisApp {
                 return { ok: false, status: 500, statusText: 'Internal Error', data: { error: error.message } };
             }
         });
+
+        // Handle OpenAI API streaming call via main process
+        ipcMain.handle('call-openai-api-stream', async (_event, requestPayload, isLowModel = false) => {
+            try {
+                // Get user email for tracking
+                const email = this.currentUserEmail;
+                
+                // Check user cost limits before making the call
+                if (!isLowModel && email && this.supabaseIntegration) {
+                    const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
+                    if (!limitCheck.allowed) {
+                        console.log(`🚫 User ${email} blocked: ${limitCheck.reason}`);
+                        return {
+                            ok: false,
+                            status: 429,
+                            statusText: 'Limit Exceeded',
+                            data: {
+                                error: limitCheck.reason,
+                                costUsedDollars: limitCheck.costUsedDollars,
+                                costLimitDollars: limitCheck.costLimitDollars,
+                                isBlocked: limitCheck.isBlocked
+                            }
+                        };
+                    }
+                }
+                
+                // Add stream: true to request payload
+                const streamingPayload = {
+                    ...requestPayload,
+                    stream: true
+                };
+                
+                const supabaseConfig = this.secureConfig.getSupabaseConfig();
+                const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+                const SUPABASE_ANON_KEY = supabaseConfig?.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
+                const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                
+                console.log('🔒 Main process: Calling OpenAI API with streaming via Edge Function');
+                // #region agent log
+                const logPath = path.join(__dirname, '.cursor', 'debug.log');
+                const fs = require('fs');
+                const logEntry = JSON.stringify({
+                    location: 'main.js:3535',
+                    message: 'Starting streaming API call',
+                    data: { hasWindow: !!this.mainWindow, isDestroyed: this.mainWindow?.isDestroyed() },
+                    timestamp: Date.now(),
+                    sessionId: 'debug-session',
+                    runId: 'streaming-debug',
+                    hypothesisId: 'A'
+                }) + '\n';
+                try { fs.appendFileSync(logPath, logEntry); } catch (e) {}
+                // #endregion
+                
+                return new Promise((resolve, reject) => {
+                    const parsedUrl = new URL(PROXY_URL);
+                    const postData = JSON.stringify({
+                        provider: 'openai',
+                        endpoint: 'responses',
+                        payload: streamingPayload
+                    });
+                    
+                    const options = {
+                        hostname: parsedUrl.hostname,
+                        port: parsedUrl.port || 443,
+                        path: parsedUrl.pathname,
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Content-Length': Buffer.byteLength(postData),
+                            'Accept': 'text/event-stream'
+                        },
+                        rejectUnauthorized: false
+                    };
+                    
+                    let buffer = '';
+                    let fullResponse = '';
+                    let usageData = null;
+                    let currentEventType = null;
+                    let isStreaming = false;
+                    let firstChunkReceived = false;
+                    
+                    const req = https.request(options, (res) => {
+                        console.log('📥 Main process OpenAI Streaming: Response status:', res.statusCode);
+                        console.log('📥 Content-Type:', res.headers['content-type']);
+                        // #region agent log
+                        const logPath = path.join(__dirname, '.cursor', 'debug.log');
+                        const fs = require('fs');
+                        const logEntry = JSON.stringify({
+                            location: 'main.js:3578',
+                            message: 'Streaming response received',
+                            data: { status: res.statusCode, contentType: res.headers['content-type'], hasWindow: !!this.mainWindow },
+                            timestamp: Date.now(),
+                            sessionId: 'debug-session',
+                            runId: 'streaming-debug',
+                            hypothesisId: 'A'
+                        }) + '\n';
+                        try { fs.appendFileSync(logPath, logEntry); } catch (e) {}
+                        // #endregion
+                        
+                        // Check if response is actually streaming (SSE) or regular JSON
+                        // Note: Some proxies return SSE with application/json content-type, so we need to check the actual content
+                        const contentType = res.headers['content-type'] || '';
+                        isStreaming = contentType.includes('text/event-stream') || contentType.includes('text/plain');
+                        
+                        if (res.statusCode < 200 || res.statusCode >= 300) {
+                            let errorData = '';
+                            res.on('data', (chunk) => { errorData += chunk; });
+                            res.on('end', () => {
+                                try {
+                                    const parsed = JSON.parse(errorData);
+                                    resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: parsed });
+                                } catch {
+                                    resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: errorData.substring(0, 500) } });
+                                }
+                            });
+                            return;
+                        }
+                        
+                        // Handle data chunks - detect SSE format from content
+                        res.on('data', (chunk) => {
+                            const chunkStr = chunk.toString();
+                            
+                            // Detect SSE format from first chunk if not already detected
+                            if (!firstChunkReceived) {
+                                firstChunkReceived = true;
+                                if (chunkStr.trim().startsWith('event:') || chunkStr.includes('\nevent:') || chunkStr.includes('\r\nevent:')) {
+                                    isStreaming = true;
+                                    console.log('📡 Detected SSE format from content, switching to streaming mode');
+                                    // #region agent log
+                                    const logPath = path.join(__dirname, '.cursor', 'debug.log');
+                                    const fs = require('fs');
+                                    const logEntry = JSON.stringify({
+                                        location: 'main.js:3627',
+                                        message: 'SSE format detected from first chunk',
+                                        data: { chunkPreview: chunkStr.substring(0, 100) },
+                                        timestamp: Date.now(),
+                                        sessionId: 'debug-session',
+                                        runId: 'streaming-debug',
+                                        hypothesisId: 'H'
+                                    }) + '\n';
+                                    try { fs.appendFileSync(logPath, logEntry); } catch (e) {}
+                                    // #endregion
+                                }
+                            }
+                            
+                            // If not streaming, accumulate for JSON parsing
+                            if (!isStreaming) {
+                                buffer += chunkStr;
+                                return;
+                            }
+                            
+                            // Continue with streaming handler for all subsequent chunks
+                            buffer += chunkStr;
+                            const lines = buffer.split(/\r?\n/);
+                            buffer = lines.pop() || '';
+                            
+                            for (const line of lines) {
+                                if (!line.trim()) {
+                                    currentEventType = null;
+                                    continue;
+                                }
+                                
+                                if (line.startsWith('event: ')) {
+                                    currentEventType = line.slice(7).trim();
+                                } else if (line.startsWith('data: ')) {
+                                    const data = line.slice(6).trim();
+                                    if (data === '[DONE]') {
+                                        // Handle done
+                                        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                            this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                content: '',
+                                                done: true,
+                                                fullResponse: fullResponse
+                                            });
+                                        }
+                                        resolve({ ok: true, status: res.statusCode, fullResponse: fullResponse });
+                                        return;
+                                    }
+                                    
+                                    try {
+                                        const parsed = JSON.parse(data);
+                                        const isDeltaEvent = currentEventType === 'response.output_text.δ' || 
+                                                           currentEventType === 'response.output_text.delta' ||
+                                                           parsed.type === 'response.outputtext.δ' ||
+                                                           parsed.type === 'response.outputtext.delta';
+                                        
+                                        if (isDeltaEvent) {
+                                            const deltaText = parsed.δ || parsed.delta || parsed['δ'] || '';
+                                            if (deltaText) {
+                                                fullResponse += deltaText;
+                                                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                                    this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                        content: deltaText,
+                                                        done: false
+                                                    });
+                                                }
+                                            }
+                                        } else if (currentEventType === 'response.completed' || parsed.type === 'response.completed') {
+                                            if (parsed.response?.usage) {
+                                                usageData = parsed.response.usage;
+                                            }
+                                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                                this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                    content: '',
+                                                    done: true,
+                                                    fullResponse: fullResponse
+                                                });
+                                            }
+                                            if (email && this.supabaseIntegration && usageData && !isLowModel) {
+                                                const tokensInput = usageData.input_tokens || usageData.inputtokens || 0;
+                                                const tokensOutput = usageData.output_tokens || usageData.outputtokens || 0;
+                                                const model = requestPayload.model || 'gpt-4';
+                                                
+                                                this.supabaseIntegration.recordTokenUsage(
+                                                    email, 
+                                                    tokensInput, 
+                                                    tokensOutput, 
+                                                    model, 
+                                                    'openai', 
+                                                    'chat'
+                                                ).then(() => console.log('✅ OpenAI streaming token usage recorded'))
+                                                .catch(err => console.error('❌ Failed to record OpenAI streaming token usage:', err));
+                                            }
+                                            resolve({ ok: true, status: res.statusCode, fullResponse: fullResponse });
+                                            return;
+                                        }
+                                    } catch (e) {
+                                        // Ignore parse errors
+                                    }
+                                }
+                            }
+                        });
+                        
+                        // Handle end event (unified handler for both streaming and non-streaming)
+                        res.on('end', () => {
+                            if (isStreaming) {
+                                // Process remaining buffer for streaming
+                                if (buffer.trim()) {
+                                    const lines = buffer.split(/\r?\n/);
+                                    for (const line of lines) {
+                                        if (!line.trim()) continue;
+                                        if (line.startsWith('event: ')) {
+                                            currentEventType = line.slice(7).trim();
+                                        } else if (line.startsWith('data: ')) {
+                                            const data = line.slice(6).trim();
+                                            if (data && data !== '[DONE]') {
+                                                try {
+                                                    const parsed = JSON.parse(data);
+                                                    const isDeltaEvent = currentEventType === 'response.output_text.δ' || 
+                                                                       currentEventType === 'response.output_text.delta' ||
+                                                                       parsed.type === 'response.outputtext.δ' ||
+                                                                       parsed.type === 'response.outputtext.delta';
+                                                    
+                                                    if (isDeltaEvent) {
+                                                        const deltaText = parsed.δ || parsed.delta || parsed['δ'] || '';
+                                                        if (deltaText) {
+                                                            fullResponse += deltaText;
+                                                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                                                this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                                    content: deltaText,
+                                                                    done: false
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                } catch (e) {
+                                                    // Ignore
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Send final done message
+                                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                    this.mainWindow.webContents.send('openai-stream-chunk', {
+                                        content: '',
+                                        done: true,
+                                        fullResponse: fullResponse
+                                    });
+                                }
+                                
+                                if (email && this.supabaseIntegration && usageData && !isLowModel) {
+                                    const tokensInput = usageData.input_tokens || usageData.inputtokens || 0;
+                                    const tokensOutput = usageData.output_tokens || usageData.outputtokens || 0;
+                                    const model = requestPayload.model || 'gpt-4';
+                                    
+                                    this.supabaseIntegration.recordTokenUsage(
+                                        email, 
+                                        tokensInput, 
+                                        tokensOutput, 
+                                        model, 
+                                        'openai', 
+                                        'chat'
+                                    ).then(() => console.log('✅ OpenAI streaming token usage recorded'))
+                                    .catch(err => console.error('❌ Failed to record OpenAI streaming token usage:', err));
+                                }
+                                
+                                resolve({ ok: true, status: res.statusCode, fullResponse: fullResponse });
+                                return;
+                            }
+                            
+                            // Handle non-streaming response
+                            if (!isStreaming && buffer) {
+                                // Handle as regular JSON
+                                let responseData;
+                                try {
+                                    responseData = JSON.parse(buffer);
+                                } catch (parseError) {
+                                    console.error('❌ Failed to parse non-streaming response:', parseError);
+                                    resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: `Failed to parse response: ${parseError.message}` } });
+                                    return;
+                                }
+                                
+                                // Check if the response is actually SSE wrapped in JSON (raw field contains SSE)
+                                if (responseData.raw && typeof responseData.raw === 'string' && 
+                                    (responseData.raw.trim().startsWith('event:') || responseData.raw.includes('\nevent:'))) {
+                                        console.log('📡 Response appears to be SSE format in raw field, parsing as stream');
+                                        // It's actually SSE, parse it
+                                        const sseLines = responseData.raw.split(/\r?\n/);
+                                        let sseEventType = null;
+                                        
+                                        // Parse SSE from raw field
+                                        for (const line of sseLines) {
+                                            if (!line.trim()) {
+                                                sseEventType = null;
+                                                continue;
+                                            }
+                                            
+                                            if (line.startsWith('event: ')) {
+                                                sseEventType = line.slice(7).trim();
+                                            } else if (line.startsWith('data: ')) {
+                                                const sseData = line.slice(6).trim();
+                                                if (sseData === '[DONE]') {
+                                                    // Stream complete
+                                                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                                        this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                            content: '',
+                                                            done: true,
+                                                            fullResponse: fullResponse
+                                                        });
+                                                    }
+                                                    if (email && this.supabaseIntegration && usageData && !isLowModel) {
+                                                        const tokensInput = usageData.input_tokens || usageData.inputtokens || 0;
+                                                        const tokensOutput = usageData.output_tokens || usageData.outputtokens || 0;
+                                                        const model = requestPayload.model || 'gpt-4';
+                                                        
+                                                        this.supabaseIntegration.recordTokenUsage(
+                                                            email, 
+                                                            tokensInput, 
+                                                            tokensOutput, 
+                                                            model, 
+                                                            'openai', 
+                                                            'chat'
+                                                        ).then(() => console.log('✅ OpenAI streaming token usage recorded'))
+                                                        .catch(err => console.error('❌ Failed to record OpenAI streaming token usage:', err));
+                                                    }
+                                                    resolve({ ok: true, status: res.statusCode, fullResponse: fullResponse });
+                                                    return;
+                                                }
+                                                
+                                                try {
+                                                    const parsed = JSON.parse(sseData);
+                                                    const isDeltaEvent = sseEventType === 'response.output_text.δ' || 
+                                                                       sseEventType === 'response.output_text.delta' ||
+                                                                       parsed.type === 'response.outputtext.δ' ||
+                                                                       parsed.type === 'response.outputtext.delta';
+                                                    
+                                                    if (isDeltaEvent) {
+                                                        const deltaText = parsed.δ || parsed.delta || parsed['δ'] || '';
+                                                        if (deltaText) {
+                                                            fullResponse += deltaText;
+                                                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                                                this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                                    content: deltaText,
+                                                                    done: false
+                                                                });
+                                                            }
+                                                        }
+                                                    } else if (sseEventType === 'response.completed' || parsed.type === 'response.completed') {
+                                                        if (parsed.response?.usage) {
+                                                            usageData = parsed.response.usage;
+                                                        }
+                                                        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                                            this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                                content: '',
+                                                                done: true,
+                                                                fullResponse: fullResponse
+                                                            });
+                                                        }
+                                                        if (email && this.supabaseIntegration && usageData && !isLowModel) {
+                                                            const tokensInput = usageData.input_tokens || usageData.inputtokens || 0;
+                                                            const tokensOutput = usageData.output_tokens || usageData.outputtokens || 0;
+                                                            const model = requestPayload.model || 'gpt-4';
+                                                            
+                                                            this.supabaseIntegration.recordTokenUsage(
+                                                                email, 
+                                                                tokensInput, 
+                                                                tokensOutput, 
+                                                                model, 
+                                                                'openai', 
+                                                                'chat'
+                                                            ).then(() => console.log('✅ OpenAI streaming token usage recorded'))
+                                                            .catch(err => console.error('❌ Failed to record OpenAI streaming token usage:', err));
+                                                        }
+                                                        resolve({ ok: true, status: res.statusCode, fullResponse: fullResponse });
+                                                        return;
+                                                    }
+                                                } catch (e) {
+                                                    // Ignore parse errors
+                                                }
+                                            }
+                                        }
+                                        return;
+                                    }
+                                    
+                                    // Regular JSON response handling
+                                    // responseData is already parsed above
+                                    try {
+                                        // #region agent log
+                                        const logPath = path.join(__dirname, '.cursor', 'debug.log');
+                                        const fs = require('fs');
+                                        const logEntry1 = JSON.stringify({
+                                            location: 'main.js:3621',
+                                            message: 'Parsed response data structure',
+                                            data: { responseKeys: Object.keys(responseData || {}), hasRaw: !!responseData.raw, rawType: typeof responseData.raw },
+                                            timestamp: Date.now(),
+                                            sessionId: 'debug-session',
+                                            runId: 'streaming-debug',
+                                            hypothesisId: 'F'
+                                        }) + '\n';
+                                        try { fs.appendFileSync(logPath, logEntry1); } catch (e) {}
+                                        // #endregion
+                                        
+                                        // Extract text from response - handle proxy wrapper with 'raw' field
+                                        let responseText = '';
+                                        let actualResponse = responseData;
+                                        
+                                        // If response is wrapped in 'raw' field, parse it
+                                        if (responseData.raw) {
+                                            try {
+                                                if (typeof responseData.raw === 'string') {
+                                                    actualResponse = JSON.parse(responseData.raw);
+                                                } else {
+                                                    actualResponse = responseData.raw;
+                                                }
+                                            } catch (e) {
+                                                // If raw is not JSON, use it as text
+                                                responseText = String(responseData.raw);
+                                            }
+                                        }
+                                        
+                                        // Extract text from actual response - use same logic as extractText in script.js
+                                        if (!responseText && actualResponse) {
+                                            // Handle Responses API output array
+                                            if (actualResponse.output && Array.isArray(actualResponse.output)) {
+                                                for (const out of actualResponse.output) {
+                                                    // Message type with content
+                                                    if (out?.type === 'message' && out?.content) {
+                                                        if (typeof out.content === 'string') {
+                                                            responseText = out.content;
+                                                            break;
+                                                        } else if (Array.isArray(out.content)) {
+                                                            for (const item of out.content) {
+                                                                if ((item.type === "output_text" || item.type === "text") && item.text) {
+                                                                    responseText = String(item.text);
+                                                                    break;
+                                                                }
+                                                            }
+                                                            if (responseText) break;
+                                                        }
+                                                    }
+                                                    // Direct output_text type
+                                                    if (out?.type === 'output_text' && out?.text) {
+                                                        responseText = String(out.text);
+                                                        break;
+                                                    }
+                                                    // Role-based content
+                                                    if (out?.role === 'assistant' && out?.content) {
+                                                        if (typeof out.content === 'string') {
+                                                            responseText = out.content;
+                                                            break;
+                                                        } else if (Array.isArray(out.content)) {
+                                                            for (const item of out.content) {
+                                                                if ((item.type === "output_text" || item.type === "text") && item.text) {
+                                                                    responseText = String(item.text);
+                                                                    break;
+                                                                }
+                                                            }
+                                                            if (responseText) break;
+                                                        }
+                                                    }
+                                                    // Content array
+                                                    if (out?.content && Array.isArray(out.content)) {
+                                                        const textItem = out.content.find(c => c.type === "output_text" || c.type === "text");
+                                                        if (textItem?.text) {
+                                                            responseText = String(textItem.text);
+                                                            break;
+                                                        }
+                                                    }
+                                                    // Direct text
+                                                    if (out?.text && typeof out.text === 'string') {
+                                                        responseText = out.text;
+                                                        break;
+                                                    }
+                                                    if (typeof out === 'string') {
+                                                        responseText = out;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Handle Chat Completions format
+                                            if (!responseText && actualResponse.choices && Array.isArray(actualResponse.choices) && actualResponse.choices.length > 0) {
+                                                const choice = actualResponse.choices[0];
+                                                if (choice.message?.content) {
+                                                    responseText = String(choice.message.content);
+                                                } else if (choice.text) {
+                                                    responseText = String(choice.text);
+                                                }
+                                            }
+                                            
+                                            // Try alternative extraction methods
+                                            if (!responseText) {
+                                                if (actualResponse.text && typeof actualResponse.text === 'string') {
+                                                    responseText = actualResponse.text;
+                                                } else if (actualResponse.content && typeof actualResponse.content === 'string') {
+                                                    responseText = actualResponse.content;
+                                                } else if (actualResponse.message?.content && typeof actualResponse.message.content === 'string') {
+                                                    responseText = actualResponse.message.content;
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Send as single chunk if we got text
+                                        // #region agent log
+                                        const logEntry2 = JSON.stringify({
+                                            location: 'main.js:3675',
+                                            message: 'Non-streaming response parsed',
+                                            data: { hasText: !!responseText, textLength: responseText.length, hasWindow: !!this.mainWindow },
+                                            timestamp: Date.now(),
+                                            sessionId: 'debug-session',
+                                            runId: 'streaming-debug',
+                                            hypothesisId: 'E'
+                                        }) + '\n';
+                                        try { fs.appendFileSync(logPath, logEntry2); } catch (e) {}
+                                        // #endregion
+                                        
+                                        if (responseText && this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                            this.mainWindow.webContents.send('openai-stream-chunk', {
+                                                content: responseText,
+                                                done: true,
+                                                fullResponse: responseText
+                                            });
+                                        } else {
+                                            // #region agent log
+                                            const logEntry3 = JSON.stringify({
+                                                location: 'main.js:3685',
+                                                message: 'Failed to extract text from response',
+                                                data: { responseStructure: JSON.stringify(actualResponse).substring(0, 500) },
+                                                timestamp: Date.now(),
+                                                sessionId: 'debug-session',
+                                                runId: 'streaming-debug',
+                                                hypothesisId: 'F'
+                                            }) + '\n';
+                                            try { fs.appendFileSync(logPath, logEntry3); } catch (e) {}
+                                            // #endregion
+                                        }
+                                        
+                                        resolve({ ok: true, status: res.statusCode, fullResponse: responseText || '' });
+                                    } catch (parseError) {
+                                        console.error('❌ Failed to parse non-streaming response:', parseError);
+                                        resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: `Failed to parse response: ${parseError.message}` } });
+                                    }
+                                }
+                            });
+                        });
+                        
+                        req.on('error', (error) => {
+                            console.error('❌ Main process OpenAI Streaming: Request error:', error);
+                            resolve({ ok: false, status: 500, statusText: 'Network Error', data: { error: error.message } });
+                        });
+                        
+                        req.write(postData);
+                        req.end();
+                    });
+                } catch (error) {
+                    console.error('❌ Main process OpenAI Streaming: API call failed:', error);
+                    return { ok: false, status: 500, statusText: 'Internal Error', data: { error: error.message } };
+                }
+            });
 
         // Handle OpenRouter API call via main process (for token tracking and limit enforcement)
         ipcMain.handle('call-openrouter-api', async (_event, requestPayload, isLowModel = false) => {
@@ -4271,9 +5403,17 @@ class JarvisApp {
             return;
         }
         
-        // Ensure window is visible first
+        // Ensure window is visible first (without activating)
         if (!this.mainWindow.isVisible()) {
+            if (process.platform === 'win32' && windowsHideAltTab) {
+                try {
+                    windowsHideAltTab.showWithoutActivate(this.mainWindow);
+                } catch (e) {
+                    this.mainWindow.showInactive();
+                }
+            } else {
             this.mainWindow.show();
+            }
         }
         
         try {
@@ -4315,14 +5455,13 @@ class JarvisApp {
             this.mainWindow.moveTop();
             
             // Reinforce content protection (use stealth mode preference)
+            // NOTE: Content protection on Windows causes videos in other tabs to turn white
+            // due to DWM composition interference. We only enable it on macOS.
             const stealthEnabled = this.getStealthModePreference();
             if (process.platform === 'darwin') {
                 this.setWindowContentProtection(this.mainWindow, stealthEnabled);
-            } else if (process.platform === 'win32' && stealthEnabled) {
-                try {
-                    this.mainWindow.setContentProtection(true);
-                } catch (e) {}
             }
+            // Windows: Content protection disabled to prevent video rendering issues
             
             // One reinforcement after a short delay
             setTimeout(() => {
@@ -4330,13 +5469,12 @@ class JarvisApp {
                 try { this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) { this.mainWindow.setVisibleOnAllWorkspaces(true); }
                 try { this.mainWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'pop-up-menu'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'floating'); } catch (_) {} } }
                 // Reinforce content protection (use stealth mode preference)
+                // NOTE: Content protection on Windows causes videos in other tabs to turn white
+                // due to DWM composition interference. We only enable it on macOS.
                 if (process.platform === 'darwin') {
                     this.setWindowContentProtection(this.mainWindow, stealthEnabled);
-                } else if (process.platform === 'win32' && stealthEnabled) {
-                    try {
-                        this.mainWindow.setContentProtection(true);
-                    } catch (e) {}
                 }
+                // Windows: Content protection disabled to prevent video rendering issues
                 // Don't call moveTop() in loops - it causes flickering/spamming
                 // this.mainWindow.moveTop();
             }, 150);
@@ -4344,7 +5482,15 @@ class JarvisApp {
             // If everything fails, at least try to keep the window visible
             console.error('Error forcing fullscreen visibility:', error);
             try {
+                if (process.platform === 'win32' && windowsHideAltTab) {
+                    try {
+                        windowsHideAltTab.showWithoutActivate(this.mainWindow);
+                    } catch (e) {
+                        this.mainWindow.showInactive();
+                    }
+                } else {
                 this.mainWindow.show();
+                }
                 this.mainWindow.setAlwaysOnTop(true);
             } catch (e) {
                 console.error('Critical error keeping window visible:', e);
@@ -4407,29 +5553,67 @@ class JarvisApp {
         if (!this._cachedStealthMode) {
             this._cachedStealthMode = this.getStealthModePreference();
         }
-        if (process.platform === 'win32' && this._cachedStealthMode) {
-            try {
-                this.mainWindow.setContentProtection(true);
-            } catch (e) {}
-        }
+        // NOTE: Content protection on Windows causes videos in other tabs to turn white
+        // due to DWM composition interference. We disable it on Windows.
+        // On macOS, content protection doesn't have this issue, so we keep it there.
+        // Windows: Content protection disabled to prevent video rendering issues
         
-        // Show window
+        // Show window without activating it (prevents focus stealing)
+        // #region agent log
+        const isVisibleBefore = this.mainWindow.isVisible();
+        const boundsBeforeShow = this.mainWindow.getBounds();
+        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:4530',message:'showOverlay - before show',data:{isVisible:isVisibleBefore,bounds:boundsBeforeShow,isMinimized:this.mainWindow.isMinimized()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
         if (!this.mainWindow.isVisible()) {
+            if (process.platform === 'win32' && windowsHideAltTab) {
+                try {
+                    windowsHideAltTab.showWithoutActivate(this.mainWindow);
+                    // Ensure window is visible
+                    this.mainWindow.setOpacity(1.0);
+                    // #region agent log
+                    const boundsAfter = this.mainWindow.getBounds();
+                    const visibleAfter = this.mainWindow.isVisible();
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:4535',message:'showOverlay - after showWithoutActivate',data:{bounds:boundsAfter,visible:visibleAfter,opacity:1.0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                } catch (e) {
+                    console.warn('⚠️ Failed to show without activate, using fallback:', e.message);
+                    this.mainWindow.showInactive();
+                    this.mainWindow.setOpacity(1.0);
+                }
+            } else {
             this.mainWindow.show();
+            }
+        } else {
+            // Ensure opacity is 1.0 even if already visible
+            if (process.platform === 'win32') {
+                try {
+                    this.mainWindow.setOpacity(1.0);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:4548',message:'showOverlay - window already visible, setOpacity(1.0)',data:{opacity:1.0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+                    // #endregion
+                } catch (e) {}
+            }
         }
         if (this.mainWindow.isMinimized()) {
             this.mainWindow.restore();
         }
         
         // Windows: Start in click-through mode, make interactive when mouse is over overlay
-        // Show in taskbar (user requested)
+        // Background app - hidden from taskbar
         if (process.platform === 'win32') {
-            this.mainWindow.setSkipTaskbar(false); // Show in taskbar
+            this.mainWindow.setSkipTaskbar(true); // Hide from taskbar - background app
             // Start with click-through mode - region tracking will make it interactive on hover
             this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-            this.mainWindow.setFocusable(true);
+            
+            // In stealth mode, always keep window non-focusable
+            const stealthEnabled = this.getStealthModePreference();
+            if (stealthEnabled) {
+                this.mainWindow.setFocusable(false); // Non-focusable in stealth mode
+                console.log('🔒 Stealth mode: Window kept non-focusable');
+            } else {
+                this.mainWindow.setFocusable(false); // Non-focusable by default - background app
+            }
         }
-        this.mainWindow.setFocusable(true);
         
         // Mark as visible
         this.isOverlayVisible = true;
@@ -4910,9 +6094,11 @@ class JarvisApp {
                 this.updateWindowsMouseRegion();
             }
             // If menu is open, ensure window stays interactive with new bounds
+            // Don't make focusable - mouse events work without focus
             if (this.isMenuOpen && this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.setIgnoreMouseEvents(false);
-                this.mainWindow.setFocusable(true);
+                // Don't make focusable - prevents focus stealing
+                // this.mainWindow.setFocusable(true);
                 this.isMouseOverOverlay = true;
             }
         });
@@ -4939,9 +6125,12 @@ class JarvisApp {
                     }
                     
                     // Ensure window stays interactive
+                    // Don't make focusable - mouse events work without focus
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    this.mainWindow.setFocusable(true);
-                    this.mainWindow.focus();
+                    // Don't make focusable - prevents focus stealing
+                    // this.mainWindow.setFocusable(true);
+                    // Don't focus - prevents focus stealing
+                    // this.mainWindow.focus();
                     this.isMouseOverOverlay = true;
                     
                     // Set up periodic check to keep window interactive while modal is open
@@ -4951,7 +6140,8 @@ class JarvisApp {
                     const keepInteractive = () => {
                         if (this.isModalOpen && this.mainWindow && !this.mainWindow.isDestroyed()) {
                             this.mainWindow.setIgnoreMouseEvents(false);
-                            this.mainWindow.setFocusable(true);
+                            // Don't make focusable - mouse events work without focus
+                            // this.mainWindow.setFocusable(true);
                             this.isMouseOverOverlay = true;
                         } else {
                             if (this.modalInteractiveInterval) {
@@ -5021,9 +6211,12 @@ class JarvisApp {
                     }
                     
                     // Ensure window stays interactive immediately
+                    // Don't make focusable - mouse events work without focus
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    this.mainWindow.setFocusable(true);
-                    this.mainWindow.focus();
+                    // Don't make focusable - prevents focus stealing
+                    // this.mainWindow.setFocusable(true);
+                    // Don't focus - prevents focus stealing
+                    // this.mainWindow.focus();
                     this.isMouseOverOverlay = true;
                     // #region agent log
                     try {
@@ -5055,7 +6248,8 @@ class JarvisApp {
                         if (this.isMenuOpen && this.mainWindow && !this.mainWindow.isDestroyed()) {
                             // Force window to stay interactive - override ANY click-through attempts
                             this.mainWindow.setIgnoreMouseEvents(false);
-                            this.mainWindow.setFocusable(true);
+                            // Don't make focusable - mouse events work without focus
+                            // this.mainWindow.setFocusable(true);
                             this.isMouseOverOverlay = true;
                         } else {
                             // Menu closed, clear interval
@@ -5134,9 +6328,13 @@ class JarvisApp {
         console.log('✅ Starting Windows region tracking with bounds:', this.overlayBounds);
         
         // Start polling to detect when mouse is over overlay
+        // Use 50ms interval to prevent freezing - don't run too frequently
         let lastState = null;
         let leaveTimeout = null;
+        let lastStateChangeTime = 0;
+        const STATE_CHANGE_THROTTLE_MS = 100; // Throttle state changes to prevent lag
         
+        // Use 50ms interval to prevent freezing - don't run too frequently
         this.windowsMouseCheckInterval = setInterval(() => {
             // CRITICAL: Check menu/modal state FIRST (synchronously) - no async, no delays
             // If menu or modal is open, completely stop region tracking logic
@@ -5145,8 +6343,13 @@ class JarvisApp {
                 lastState = true;
                 this.isMouseOverOverlay = true;
                 if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    // Throttle these calls to prevent lag
+                    const now = Date.now();
+                    if (now - lastStateChangeTime >= STATE_CHANGE_THROTTLE_MS) {
                     this.mainWindow.setIgnoreMouseEvents(false);
                     this.mainWindow.setFocusable(true);
+                        lastStateChangeTime = now;
+                    }
                 }
                 // Cancel any pending leave timeout - critical to prevent click-through
                 if (leaveTimeout) {
@@ -5174,16 +6377,19 @@ class JarvisApp {
                 const point = screen.getCursorScreenPoint();
                 const bounds = this.overlayBounds;
                 
-                // Add padding for easier interaction
-                // Increase padding significantly when menu is open to create larger safe zone
-                const padding = this.isMenuOpen ? 150 : 50; // Much larger padding when menu is open
+                // Add minimal padding only when menu is open for easier interaction
+                // No padding when menu is closed to prevent invisible clickable space
+                const padding = this.isMenuOpen ? 20 : 0; // Minimal padding only when menu is open
                 const isOver = point.x >= bounds.x - padding && 
                                point.x <= bounds.x + bounds.width + padding &&
                                point.y >= bounds.y - padding && 
                                point.y <= bounds.y + bounds.height + padding;
                 
-                // Only change state if it actually changed
-                if (isOver && lastState !== true) {
+                // Only change state if it actually changed AND enough time has passed (throttle)
+                const now = Date.now();
+                const timeSinceLastChange = now - lastStateChangeTime;
+                
+                if (isOver && lastState !== true && timeSinceLastChange >= STATE_CHANGE_THROTTLE_MS) {
                     // Cancel any pending leave timeout
                     if (leaveTimeout) {
                         clearTimeout(leaveTimeout);
@@ -5192,10 +6398,29 @@ class JarvisApp {
                     // Mouse entered overlay - make interactive
                     lastState = true;
                     this.isMouseOverOverlay = true;
+                    lastStateChangeTime = now;
+                    // #region agent log
+                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5615',message:'Mouse entered overlay - making interactive',data:{timeSinceLastChange},timestamp:Date.now(),sessionId:'debug-session',runId:'freeze-debug',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
                     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5832',message:'Region tracking: mouse entered overlay',data:{stealthMode:this.getStealthModePreference()},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'C'})}).catch(()=>{});
+                        // #endregion
                         this.mainWindow.setIgnoreMouseEvents(false);
-                        this.mainWindow.setFocusable(true);
-                        this.mainWindow.focus();
+                        // In stealth mode, don't make focusable
+                        const stealthEnabled = this.getStealthModePreference();
+                        if (!stealthEnabled) {
+                            // #region agent log
+                            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5832',message:'Setting focusable=true (mouse entered, not stealth)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'C'})}).catch(()=>{});
+                            // #endregion
+                            this.mainWindow.setFocusable(true);
+                        } else {
+                            // #region agent log
+                            fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5832',message:'Skipping setFocusable (stealth mode, mouse entered)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'C'})}).catch(()=>{});
+                            // #endregion
+                        }
+                        // REMOVED focus() call - it causes focus stealing and lag
+                        // The window will receive input when user clicks without needing focus()
                         console.log('🖱️ Mouse over overlay - made interactive');
                     }
                 } else if (!isOver && lastState !== false && !leaveTimeout && !this.isMenuOpen) {
@@ -5219,8 +6444,22 @@ class JarvisApp {
                             lastState = true;
                             this.isMouseOverOverlay = true;
                             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                                // #region agent log
+                                fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5831',message:'Region tracking: menu open',data:{stealthMode:this.getStealthModePreference()},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'C'})}).catch(()=>{});
+                                // #endregion
                                 this.mainWindow.setIgnoreMouseEvents(false);
-                                this.mainWindow.setFocusable(true);
+                                // In stealth mode, don't make focusable
+                                const stealthEnabled = this.getStealthModePreference();
+                                if (!stealthEnabled) {
+                                    // #region agent log
+                                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5831',message:'Setting focusable=true (menu open, not stealth)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'C'})}).catch(()=>{});
+                                    // #endregion
+                                    this.mainWindow.setFocusable(true);
+                                } else {
+                                    // #region agent log
+                                    fetch('http://127.0.0.1:7242/ingest/91d30b1f-b1ff-43ce-a439-7eb1eb183847',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:5831',message:'Skipping setFocusable (stealth mode, menu open)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'focus-debug',hypothesisId:'C'})}).catch(()=>{});
+                                    // #endregion
+                                }
                             }
                             leaveTimeout = null;
                             return;

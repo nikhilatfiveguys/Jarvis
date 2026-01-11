@@ -791,6 +791,9 @@ class GoogleDocsIntegration {
         // Buffer to batch characters (declared at function scope so it's accessible in final flush)
         let charBuffer = '';
         let bufferIndex = 0;
+        
+        // Current WPM (declared at paragraph scope so it's accessible throughout paragraph processing)
+        let currentWPM = getCurrentWPM();
 
         for (let paraIdx = 0; paraIdx < paragraphs.length; paraIdx++) {
             const paragraph = paragraphs[paraIdx];
@@ -809,8 +812,8 @@ class GoogleDocsIntegration {
                 charBuffer = '';
                 bufferIndex = 0;
                 
-                // Get current typing speed (varies between 20-35 WPM)
-                let currentWPM = getCurrentWPM();
+                // Get current typing speed (varies between 20-35 WPM) - update at start of each sentence
+                currentWPM = getCurrentWPM();
                 
                 for (let wordIdx = 0; wordIdx < words.length; wordIdx++) {
                     const word = words[wordIdx];
