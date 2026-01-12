@@ -39,8 +39,7 @@ const PRODUCTION_CONFIG = {
         clientSecretParts: ['GOCSPX', 'pUqmKP230Q5', 'SR6tNq', 'lUPhX03wJ']
     },
     resend: {
-        apiKey: process.env.RESEND_API_KEY || 're_gs5Zk2yB_Jb12n4mpGFeRuYSSGY4A2rrW',
-        fromEmail: process.env.RESEND_FROM_EMAIL || 'noreply@yesjarvis.com'
+        apiKey: process.env.RESEND_API_KEY || 're_gs5Zk2yB_Jb12n4mpGFeRuYSSGY4A2rrW'
     }
 };
 
