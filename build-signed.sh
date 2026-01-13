@@ -69,7 +69,11 @@ echo "  Signing components..."
 # Sign all nested libraries and helpers
 if [ -d "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries" ]; then
     echo "    Signing Electron Framework libraries..."
-    codesign --force --sign "$IDENTITY" --timestamp "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/"*.dylib 2>/dev/null || true
+    for lib in "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/"*.dylib; do
+        if [ -f "$lib" ]; then
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp "$lib" 2>/dev/null || true
+        fi
+    done
 fi
 
 if [ -f "$SIGN_APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler" ]; then
@@ -111,8 +115,8 @@ echo "  Cleaning all extended attributes from app bundle..."
 find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
 xattr -cr "$SIGN_APP" 2>/dev/null || true
 
-# Use ditto to create a completely clean copy (removes all resource forks)
-echo "  Creating clean copy of app bundle (removing resource forks)..."
+# Use ditto to create a completely clean copy
+echo "  Creating clean copy of app bundle..."
 CLEAN_APP="$HOME/Desktop/Jarvis-CLEAN.app"
 rm -rf "$CLEAN_APP"
 ditto --norsrc --noextattr --noacl "$SIGN_APP" "$CLEAN_APP"
@@ -124,6 +128,9 @@ echo "  Signing main executable..."
 MAIN_EXEC="$SIGN_APP/Contents/MacOS/Jarvis 6.0"
 if [ -f "$MAIN_EXEC" ]; then
     echo "    Found main executable: Jarvis 6.0"
+    # Verify no extended attributes
+    xattr "$MAIN_EXEC" 2>/dev/null || true
+    # Sign with all required flags
     codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$MAIN_EXEC"
     echo "    Verifying main executable signature..."
     codesign --verify --verbose "$MAIN_EXEC" && echo "    ✅ Main executable signed" || echo "    ❌ Main executable signing failed"
@@ -132,9 +139,9 @@ else
     ls -la "$SIGN_APP/Contents/MacOS/"
 fi
 
-# Sign main app bundle
+# Sign main app bundle (not using --deep, sign components individually for better control)
 echo "  Signing main app bundle..."
-codesign --force --deep --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$SIGN_APP"
 echo "  Verifying app bundle signature..."
 codesign --verify --deep --strict "$SIGN_APP" && echo "  ✅ App bundle signed" || echo "  ⚠️ App bundle verification had issues"
 
@@ -204,7 +211,7 @@ if [ -f "$DMG_PATH" ]; then
     MOUNT_INFO=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify)
     
     if echo "$MOUNT_INFO" | grep -q "JarvisInstall"; then
-        # Apply styling with AppleScript to match the reference image
+        # Apply styling with AppleScript
         osascript <<'APPLESCRIPT'
 tell application "Finder"
     tell disk "JarvisInstall"
@@ -213,16 +220,16 @@ tell application "Finder"
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set bounds of container window to {200, 200, 800, 550}
+        set bounds of container window to {100, 100, 700, 500}
         set theViewOptions to icon view options of container window
         set arrangement of theViewOptions to not arranged
         set icon size of theViewOptions to 100
-        set background color of theViewOptions to {50000, 50000, 50000}
+        set background color of theViewOptions to {60000, 60000, 60000}
         try
-            set position of item "Jarvis 6.0.app" to {100, 200}
+            set position of item "Jarvis 6.0.app" to {150, 190}
         end try
         try
-            set position of item "Applications" to {500, 200}
+            set position of item "Applications" to {450, 190}
         end try
         update without registering applications
         delay 1

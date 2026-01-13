@@ -2,37 +2,38 @@ const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShort
 const path = require('path');
 const { exec } = require('child_process');
 
-// Handle Squirrel events for macOS auto-updates
+// Handle Squirrel events for auto-updates (macOS and Windows)
 // This MUST be at the very top before anything else
-if (process.platform === 'darwin') {
-    const handleSquirrelEvent = () => {
-        if (process.argv.length === 1) {
-            return false;
-        }
-
-        const squirrelEvent = process.argv[1];
-        switch (squirrelEvent) {
-            case '--squirrel-install':
-            case '--squirrel-updated':
-                // App was installed or updated, quit immediately
-                app.quit();
-                return true;
-            case '--squirrel-uninstall':
-                // App is being uninstalled
-                app.quit();
-                return true;
-            case '--squirrel-obsolete':
-                // App is being replaced by a newer version
-                app.quit();
-                return true;
-        }
+const handleSquirrelEvent = () => {
+    if (process.argv.length === 1) {
         return false;
-    };
-
-    if (handleSquirrelEvent()) {
-        // Squirrel event handled, app will quit
-        process.exit(0);
     }
+
+    const squirrelEvent = process.argv[1];
+    switch (squirrelEvent) {
+        case '--squirrel-install':
+        case '--squirrel-updated':
+            // App was installed or updated, quit immediately
+            app.quit();
+            return true;
+        case '--squirrel-uninstall':
+            // App is being uninstalled
+            app.quit();
+            return true;
+        case '--squirrel-obsolete':
+            // App is being replaced by a newer version
+            app.quit();
+            return true;
+        case '--squirrel-firstrun':
+            // First run after install - just continue normally
+            return false;
+    }
+    return false;
+};
+
+if (handleSquirrelEvent()) {
+    // Squirrel event handled, app will quit
+    process.exit(0);
 }
 
 // Delay loading electron-updater until app is ready
@@ -1300,6 +1301,12 @@ class JarvisApp {
             mainWindowOptions.acceptFirstMouse = true; // Accept clicks without activating
         }
         
+        // Windows-specific: Make window properly interactive
+        if (process.platform === 'win32') {
+            // Keep skipTaskbar true for overlay feel, but ensure window can receive focus
+            mainWindowOptions.thickFrame = false; // Keep frameless
+        }
+        
         this.mainWindow = new BrowserWindow(mainWindowOptions);
 
         // macOS-only: Enable content protection to hide from screen recording (like Cluely)
@@ -1341,8 +1348,14 @@ class JarvisApp {
             }
         });
 
-        // Make the window click-through by default
-        this.mainWindow.setIgnoreMouseEvents(true);
+        // Make the window click-through by default (macOS only)
+        // On Windows, transparent click-through doesn't work well, so keep it always interactive
+        if (process.platform === 'darwin') {
+            this.mainWindow.setIgnoreMouseEvents(true);
+        } else {
+            // Windows: keep window interactive but use a workaround
+            this.mainWindow.setIgnoreMouseEvents(false);
+        }
         
 
         // Hide Dock for overlay utility feel (macOS)
@@ -1565,8 +1578,9 @@ class JarvisApp {
         });
 
         // Handle focus request from renderer
-        // NOTE: We intentionally do NOT call focus() to avoid triggering browser blur events
+        // NOTE: On macOS we intentionally do NOT call focus() to avoid triggering browser blur events
         // which proctoring software (Canvas, etc.) uses to detect tab switching
+        // On Windows, we MUST focus the window or keyboard input won't work
         ipcMain.handle('request-focus', () => {
             // Don't interfere if account or password reset window is focused
             if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) {
@@ -1578,11 +1592,18 @@ class JarvisApp {
             
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 try {
+                    // Only focus if not already focused (prevents flickering)
+                    const alreadyFocused = this.mainWindow.isFocused();
+                    
                     this.mainWindow.setFocusable(true);
-                    // DO NOT call focus() - this triggers browser blur events
-                    // Instead, just ensure the window is visible and can receive input
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    this.mainWindow.moveTop();
+                    
+                    // On Windows, we MUST focus the window for keyboard input to work
+                    // On macOS, we avoid focus() to prevent proctoring software detection
+                    if (process.platform === 'win32' && !alreadyFocused) {
+                        this.mainWindow.focus();
+                    }
+                    
                     return true;
                 } catch (_) {
                     return false;
@@ -1594,6 +1615,15 @@ class JarvisApp {
         // Handle making overlay click-through
         ipcMain.handle('make-click-through', () => {
             if (this.mainWindow) {
+                // On Windows, skip click-through mode entirely - it doesn't work well with transparent windows
+                if (process.platform === 'win32') {
+                    // Just blur but keep interactive
+                    try {
+                        this.mainWindow.blur();
+                    } catch (_) {}
+                    return;
+                }
+                
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
                 try { 
                     // On Windows, keep window focusable but blurred so it can regain focus when clicked
@@ -1612,6 +1642,9 @@ class JarvisApp {
         // Handle enabling drag-through mode (click-through with event forwarding for drag operations)
         ipcMain.handle('enable-drag-through', () => {
             if (this.mainWindow) {
+                // Skip on Windows - transparent click-through doesn't work well
+                if (process.platform === 'win32') return;
+                
                 // Set to ignore mouse events but forward them, allowing drag to pass through
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
             }
@@ -1697,6 +1730,10 @@ class JarvisApp {
         // Toggle click-through from renderer
         ipcMain.handle('set-ignore-mouse-events', (_event, shouldIgnore) => {
             if (!this.mainWindow) return;
+            
+            // Skip on Windows - transparent click-through doesn't work well
+            if (process.platform === 'win32') return;
+            
             // When ignoring, forward events so underlying apps receive them
             if (shouldIgnore) {
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -2303,8 +2340,19 @@ class JarvisApp {
 
         // Push-to-talk IPC handlers
         ipcMain.handle('start-push-to-talk', async () => {
+            // Check if voice recorder is available
+            if (!this.voiceRecorder) {
+                console.warn('⚠️ Push-to-talk: Voice recorder not available - OpenAI API key not configured');
+                if (this.mainWindow) {
+                    this.mainWindow.webContents.send('voice-recording-error', 
+                        'Voice recording not available - OpenAI API key not configured');
+                }
+                return;
+            }
+            
             // Only start if not already recording
             if (!this.isVoiceRecording) {
+                console.log('🎤 Push-to-talk: Starting voice recording');
                 await this.startVoiceRecording();
             }
         });
@@ -2312,6 +2360,7 @@ class JarvisApp {
         ipcMain.handle('stop-push-to-talk', async () => {
             // Only stop if currently recording
             if (this.isVoiceRecording) {
+                console.log('🎤 Push-to-talk: Stopping voice recording');
                 await this.stopVoiceRecording();
             }
         });
@@ -2970,6 +3019,7 @@ class JarvisApp {
                     const parsedUrl = new URL(PROXY_URL);
                     const postData = JSON.stringify({
                         provider: 'perplexity',
+                        endpoint: 'chat/completions',
                         payload: requestPayload
                     });
                     
@@ -4232,9 +4282,12 @@ class JarvisApp {
         
         // Start with click-through mode - let renderer handle making it interactive on hover
         // This allows clicking through to other windows when not interacting with the overlay
-        try {
-            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-        } catch (_) {}
+        // Skip on Windows - transparent click-through doesn't work well
+        if (process.platform === 'darwin') {
+            try {
+                this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
+            } catch (_) {}
+        }
         
         // On Windows, ensure window is focusable when showing overlay
         if (process.platform === 'win32') {

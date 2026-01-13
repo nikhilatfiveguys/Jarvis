@@ -65,7 +65,7 @@ class SecureConfig {
                 perplexity: productionConfig.perplexity || { apiKey: '' },
                 openrouter: productionConfig.openrouter || { apiKey: '' },
                 google: productionConfig.google || { clientId: '', clientSecret: '' },
-                resend: productionConfig.resend || { apiKey: '' },
+                resend: productionConfig.resend || { apiKey: '', fromEmail: 'onboarding@resend.dev' },
                 app: {
                     environment: 'production',
                     isProduction: true
@@ -131,7 +131,7 @@ class SecureConfig {
     }
 
     getResendConfig() {
-        return this.config.resend || { apiKey: '' };
+        return this.config.resend || { apiKey: '', fromEmail: 'onboarding@resend.dev' };
     }
 
     isProduction() {

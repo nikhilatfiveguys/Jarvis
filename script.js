@@ -498,28 +498,51 @@ class JarvisOverlay {
     }
 
     setupPushToTalk() {
+        // Only setup if in Electron environment
+        if (!this.isElectron || !window.require) {
+            console.warn('⚠️ Push-to-talk not available - not in Electron environment');
+            return;
+        }
+
+        const { ipcRenderer } = window.require('electron');
+        
         // Track if we started recording via push-to-talk
         this.isPushToTalkActive = false;
         this.pushToTalkKey = 'Control'; // The key to hold for push-to-talk
+        this.pushToTalkTimeout = null;
+        
+        // Helper function to safely invoke IPC
+        const safeInvoke = (method, ...args) => {
+            try {
+                if (this.isElectron && window.require) {
+                    ipcRenderer.invoke(method, ...args).catch(err => {
+                        console.error(`❌ Push-to-talk IPC error (${method}):`, err);
+                    });
+                }
+            } catch (error) {
+                console.error(`❌ Push-to-talk error (${method}):`, error);
+            }
+        };
         
         // Listen for keydown - start recording when Control is held
-        document.addEventListener('keydown', (e) => {
+        const handleKeyDown = (e) => {
             // Only trigger on Control key alone (not with other modifiers as part of a combo)
-            if (e.key === 'Control' && !e.repeat && !this.isPushToTalkActive) {
+            // Check that no other modifier keys are pressed
+            if (e.key === 'Control' && !e.repeat && !this.isPushToTalkActive && 
+                !e.shiftKey && !e.altKey && !e.metaKey) {
                 // Small delay to distinguish from Ctrl+key combos
                 this.pushToTalkTimeout = setTimeout(() => {
-                    if (!this.isPushToTalkActive) {
+                    if (!this.isPushToTalkActive && this.isElectron && window.require) {
                         this.isPushToTalkActive = true;
                         console.log('🎤 Push-to-talk: Starting recording (Control held)');
-                        const { ipcRenderer } = window.require('electron');
-                        ipcRenderer.invoke('start-push-to-talk');
+                        safeInvoke('start-push-to-talk');
                     }
                 }, 150); // 150ms delay to avoid triggering on Ctrl+key combos
             }
-        });
+        };
 
         // Listen for keyup - stop recording when Control is released
-        document.addEventListener('keyup', (e) => {
+        const handleKeyUp = (e) => {
             if (e.key === 'Control') {
                 // Clear the timeout if key was released quickly (it was a combo)
                 if (this.pushToTalkTimeout) {
@@ -527,14 +550,21 @@ class JarvisOverlay {
                     this.pushToTalkTimeout = null;
                 }
                 
-                if (this.isPushToTalkActive) {
+                if (this.isPushToTalkActive && this.isElectron && window.require) {
                     this.isPushToTalkActive = false;
                     console.log('🎤 Push-to-talk: Stopping recording (Control released)');
-                    const { ipcRenderer } = window.require('electron');
-                    ipcRenderer.invoke('stop-push-to-talk');
+                    safeInvoke('stop-push-to-talk');
                 }
             }
-        });
+        };
+        
+        // Add event listeners to both window and document for better coverage
+        window.addEventListener('keydown', handleKeyDown, true);
+        window.addEventListener('keyup', handleKeyUp, true);
+        document.addEventListener('keydown', handleKeyDown, true);
+        document.addEventListener('keyup', handleKeyUp, true);
+        
+        console.log('✅ Push-to-talk initialized (hold Control key to record)');
     }
 
     async requestMicrophonePermission() {
@@ -1179,7 +1209,7 @@ class JarvisOverlay {
             if (e.key === 'Enter') this.sendMessage();
         });
         
-        // Windows-specific: Request window focus when input field gets focus
+        // Windows-specific: Request window focus when input field gets focus or is clicked
         // This ensures the window can receive keyboard input
         this.textInput.addEventListener('focus', () => {
             if (this.isElectron) {
@@ -1187,6 +1217,42 @@ class JarvisOverlay {
                 ipcRenderer.invoke('request-focus').catch(() => {});
             }
         });
+        
+        // Also handle click to ensure focus on Windows
+        this.textInput.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.isElectron) {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('request-focus').catch(() => {});
+                // Ensure input gets focus after window is focused
+                setTimeout(() => {
+                    this.textInput.focus();
+                }, 50);
+            }
+        });
+        
+        // Windows: Request focus once on first interaction to ensure window can receive input
+        // This is necessary because Windows requires the window to be focused for clicks to work
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            const isWindows = process.platform === 'win32';
+            
+            if (isWindows) {
+                let lastFocusRequest = 0;
+                const FOCUS_DEBOUNCE_MS = 500; // Only request focus once per 500ms
+                
+                const requestFocusDebounced = () => {
+                    const now = Date.now();
+                    if (now - lastFocusRequest > FOCUS_DEBOUNCE_MS) {
+                        lastFocusRequest = now;
+                        ipcRenderer.invoke('request-focus').catch(() => {});
+                    }
+                };
+                
+                // Only request focus on mousedown (not click to avoid double-firing)
+                document.addEventListener('mousedown', requestFocusDebounced, true);
+            }
+        }
         
         
         if (this.answerThisBtn) {
@@ -3282,6 +3348,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         },
                         body: JSON.stringify({
                             provider: 'perplexity',
+                            endpoint: 'chat/completions',
                             payload: requestPayload
                         })
                     });

@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:  # Allows manual triggering
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     runs-on: macos-latest
@@ -38,14 +41,11 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: jarvis-5.0-macos
+          name: jarvis-macos
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/mac-arm64/*.dmg
-            dist/mac-arm64/*.zip
-            dist/mac/*.dmg
-            dist/mac/*.zip
+            dist/latest-mac.yml
 
   build-windows:
     runs-on: windows-latest
@@ -70,11 +70,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: List build output
+        run: dir dist
+        shell: cmd
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: jarvis-5.0-windows
-          path: dist/*.exe
+          name: jarvis-windows
+          path: |
+            dist/*.exe
+            dist/latest.yml
 
   create-release:
     needs: [build-macos, build-windows]
@@ -85,21 +91,31 @@ jobs:
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: jarvis-5.0-macos
+          name: jarvis-macos
           path: dist-macos
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: jarvis-5.0-windows
+          name: jarvis-windows
           path: dist-windows
+
+      - name: List downloaded files
+        run: |
+          echo "=== macOS files ===" && ls -la dist-macos/ || true
+          echo "=== Windows files ===" && ls -la dist-windows/ || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist-macos/*
-            dist-windows/*
+            dist-macos/*.dmg
+            dist-macos/*.zip
+            dist-macos/latest-mac.yml
+            dist-windows/*.exe
+            dist-windows/latest.yml
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
