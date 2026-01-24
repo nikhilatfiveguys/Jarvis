@@ -153,7 +153,7 @@ class JarvisApp {
     setupAutoUpdater() {
         // Configure auto-updater (only call after app is ready)
         const updater = getAutoUpdater();
-        updater.autoDownload = false; // Don't auto-download, let user choose
+        updater.autoDownload = true; // Auto-download updates when available
         updater.autoInstallOnAppQuit = true; // Auto-install on quit after download
         
         // Enable app to restart after install
@@ -2623,57 +2623,34 @@ class JarvisApp {
             }
         });
 
-        // Handle getting API keys for renderer process
+        // Handle getting API configuration for renderer process
+        // NOTE: API keys are NOT returned - they must be stored in Supabase Edge Function Secrets
         ipcMain.handle('get-api-keys', () => {
             try {
-                const openaiConfig = this.secureConfig.getOpenAIConfig();
-                const exaConfig = this.secureConfig.getExaConfig();
-                const claudeConfig = this.secureConfig.getClaudeConfig();
-                const perplexityConfig = this.secureConfig.getPerplexityConfig();
                 const supabaseConfig = this.secureConfig.getSupabaseConfig();
-                
-                const perplexityKey = perplexityConfig?.apiKey || process.env.PPLX_API_KEY || '';
-                const claudeKey = claudeConfig?.apiKey || process.env.CLAUDE_API_KEY || '';
                 const apiProxyUrl = this.secureConfig.getSupabaseApiProxyUrl() || supabaseConfig?.apiProxyUrl || '';
                 
-                console.log('🔑 Perplexity API key from config:', perplexityConfig?.apiKey ? `${perplexityConfig.apiKey.substring(0, 10)}...` : 'NOT FOUND');
-                console.log('🔑 Perplexity API key from env:', process.env.PPLX_API_KEY ? `${process.env.PPLX_API_KEY.substring(0, 10)}...` : 'NOT FOUND');
-                console.log('🔑 Final Perplexity key present:', !!perplexityKey && perplexityKey.trim() !== '');
+                console.log('🔗 API Proxy URL:', apiProxyUrl || 'NOT CONFIGURED');
+                console.log('🔒 API keys are stored securely in Supabase Edge Function Secrets');
                 
-                console.log('🔑 Claude API key from config:', claudeConfig?.apiKey ? `${claudeConfig.apiKey.substring(0, 10)}...` : 'NOT FOUND');
-                console.log('🔑 Claude API key from env:', process.env.CLAUDE_API_KEY ? `${process.env.CLAUDE_API_KEY.substring(0, 10)}...` : 'NOT FOUND');
-                console.log('🔑 Final Claude key present:', !!claudeKey && claudeKey.trim() !== '');
-                
-                const openrouterConfig = this.secureConfig.getOpenRouterConfig();
-                const openrouterKey = openrouterConfig?.apiKey || '';
-                console.log('🔑 OpenRouter API key from config:', openrouterConfig?.apiKey ? `${openrouterConfig.apiKey.substring(0, 10)}...` : 'NOT FOUND');
-                console.log('🔑 Final OpenRouter key present:', !!openrouterKey && openrouterKey.trim() !== '');
-                
-                console.log('🔗 API Proxy URL:', apiProxyUrl || 'NOT CONFIGURED (will use direct API calls)');
-                
+                // Return only proxy URL and anon key - NO actual API keys
                 return {
-                    openai: openaiConfig?.apiKey || this.openaiApiKey || '',
-                    exa: exaConfig?.apiKey || this.exaApiKey || '',
-                    perplexity: perplexityKey,
-                    claude: claudeKey,
-                    openrouter: openrouterKey,
+                    openai: '', // Keys stored in Supabase Secrets
+                    exa: '', // Keys stored in Supabase Secrets
+                    perplexity: '', // Keys stored in Supabase Secrets
+                    claude: '', // Keys stored in Supabase Secrets
+                    openrouter: '', // Keys stored in Supabase Secrets
                     apiProxyUrl: apiProxyUrl,
                     supabaseAnonKey: supabaseConfig?.anonKey || ''
                 };
             } catch (error) {
-                console.error('Error getting API keys:', error);
-                const perplexityKey = process.env.PPLX_API_KEY || '';
-                const claudeKey = process.env.CLAUDE_API_KEY || '';
-                const openrouterKey = process.env.OPENROUTER_API_KEY || '';
-                console.log('🔑 Fallback Perplexity key present:', !!perplexityKey && perplexityKey.trim() !== '');
-                console.log('🔑 Fallback Claude key present:', !!claudeKey && claudeKey.trim() !== '');
-                console.log('🔑 Fallback OpenRouter key present:', !!openrouterKey && openrouterKey.trim() !== '');
+                console.error('Error getting API configuration:', error);
                 return {
-                    openai: this.openaiApiKey || '',
-                    exa: this.exaApiKey || '',
-                    perplexity: perplexityKey,
-                    claude: claudeKey,
-                    openrouter: openrouterKey,
+                    openai: '',
+                    exa: '',
+                    perplexity: '',
+                    claude: '',
+                    openrouter: '',
                     apiProxyUrl: '',
                     supabaseAnonKey: ''
                 };
@@ -2833,31 +2810,39 @@ class JarvisApp {
                     console.log('🆓 Low model call - skipping cost limit check');
                 }
                 
-                const openrouterConfig = this.secureConfig.getOpenRouterConfig();
-                const OPENROUTER_API_KEY = openrouterConfig?.apiKey || process.env.OPENROUTER_API_KEY;
+                // Always use Supabase Edge Function (API keys stored securely in Supabase Secrets)
+                const supabaseConfig = this.secureConfig.getSupabaseConfig();
+                const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+                const SUPABASE_ANON_KEY = supabaseConfig?.anonKey;
                 
-                if (!OPENROUTER_API_KEY) {
-                    return { ok: false, status: 401, statusText: 'Unauthorized', data: { error: 'OpenRouter API key not configured' } };
+                if (!SUPABASE_ANON_KEY) {
+                    return { ok: false, status: 401, statusText: 'Unauthorized', data: { error: 'Supabase proxy not configured. API keys must be stored in Supabase Edge Function Secrets.' } };
                 }
                 
-                console.log('🔒 Main process: Calling OpenRouter API');
+                const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                console.log('🔒 Main process: Calling OpenRouter API via Supabase Edge Function (keys in Secrets)');
                 console.log('📤 Model:', requestPayload.model);
                 
                 return new Promise((resolve, reject) => {
-                    const postData = JSON.stringify(requestPayload);
+                    const parsedUrl = new URL(PROXY_URL);
+                    const postData = JSON.stringify({
+                        provider: 'openrouter',
+                        endpoint: 'chat/completions',
+                        payload: requestPayload
+                    });
                     
                     const options = {
-                        hostname: 'openrouter.ai',
-                        port: 443,
-                        path: '/api/v1/chat/completions',
+                        hostname: parsedUrl.hostname,
+                        port: parsedUrl.port || 443,
+                        path: parsedUrl.pathname,
                         method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                             'Content-Type': 'application/json',
-                            'HTTP-Referer': 'https://jarvis-ai.app',
-                            'X-Title': 'Jarvis AI',
+                            'apikey': SUPABASE_ANON_KEY,
                             'Content-Length': Buffer.byteLength(postData)
-                        }
+                        },
+                        rejectUnauthorized: false
                     };
                     
                     const req = https.request(options, (res) => {
@@ -2970,6 +2955,7 @@ class JarvisApp {
                     const parsedUrl = new URL(PROXY_URL);
                     const postData = JSON.stringify({
                         provider: 'perplexity',
+                        endpoint: 'chat/completions',
                         payload: requestPayload
                     });
                     
@@ -3110,96 +3096,19 @@ class JarvisApp {
                     }
                 }
                 
-                // Try direct API key first, then fall back to Supabase proxy
-                const claudeConfig = this.secureConfig.getClaudeConfig ? this.secureConfig.getClaudeConfig() : null;
-                const CLAUDE_API_KEY = claudeConfig?.apiKey || process.env.CLAUDE_API_KEY;
+                // Always use Supabase Edge Function (API keys stored securely in Supabase Secrets)
+                const supabaseConfig = this.secureConfig.getSupabaseConfig();
+                const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+                const SUPABASE_ANON_KEY = supabaseConfig?.anonKey;
                 
-                if (CLAUDE_API_KEY && CLAUDE_API_KEY.trim() !== '') {
-                    // Direct Claude API call
-                    console.log('🔒 Main process: Calling Claude API directly');
-                    
-                    return new Promise((resolve, reject) => {
-                        const postData = JSON.stringify(requestPayload);
-                        
-                        const options = {
-                            hostname: 'api.anthropic.com',
-                            port: 443,
-                            path: '/v1/messages',
-                            method: 'POST',
-                            headers: {
-                                'x-api-key': CLAUDE_API_KEY,
-                                'anthropic-version': '2023-06-01',
-                                'Content-Type': 'application/json',
-                                'Content-Length': Buffer.byteLength(postData)
-                            }
-                        };
-                        
-                        const req = https.request(options, (res) => {
-                            let data = '';
-                            res.on('data', (chunk) => { data += chunk; });
-                            res.on('end', async () => {
-                                console.log('📥 Main process Claude: Response status:', res.statusCode);
-                                if (res.statusCode >= 200 && res.statusCode < 300) {
-                                    try {
-                                        const responseData = JSON.parse(data);
-                                        console.log('✅ Main process Claude: Successfully parsed response');
-                                        
-                                        // Track token usage if we have email and usage data
-                                        if (email && this.supabaseIntegration && responseData.usage) {
-                                            const tokensInput = responseData.usage.input_tokens || 0;
-                                            const tokensOutput = responseData.usage.output_tokens || 0;
-                                            const model = requestPayload.model || 'claude';
-                                            
-                                            console.log(`📊 Claude usage - Input: ${tokensInput}, Output: ${tokensOutput}`);
-                                            
-                                            // Record usage asynchronously (don't wait)
-                                            this.supabaseIntegration.recordTokenUsage(
-                                                email, 
-                                                tokensInput, 
-                                                tokensOutput, 
-                                                model, 
-                                                'claude', 
-                                                'chat'
-                                            ).catch(err => console.error('Failed to record Claude token usage:', err));
-                                        }
-                                        
-                                        resolve({ ok: true, status: res.statusCode, statusText: res.statusMessage, data: responseData });
-                                    } catch (parseError) {
-                                        console.error('❌ Main process Claude: Failed to parse response:', parseError);
-                                        resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: `Failed to parse response: ${parseError.message}` } });
-                                    }
-                                } else {
-                                    console.error('❌ Main process Claude: Error response:', res.statusCode);
-                                    try {
-                                        const errorData = JSON.parse(data);
-                                        resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: errorData });
-                                    } catch {
-                                        resolve({ ok: false, status: res.statusCode, statusText: res.statusMessage, data: { error: data.substring(0, 500) } });
-                                    }
-                                }
-                            });
-                        });
-                        req.on('error', (error) => {
-                            console.error('❌ Main process Claude: Request error:', error);
-                            resolve({ ok: false, status: 500, statusText: 'Network Error', data: { error: error.message } });
-                        });
-                        req.write(postData);
-                        req.end();
-                    });
-                } else {
-                    // Fall back to Supabase proxy
-                    const supabaseConfig = this.secureConfig.getSupabaseConfig();
-                    const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
-                    const SUPABASE_ANON_KEY = supabaseConfig?.anonKey;
-                    
-                    if (!SUPABASE_ANON_KEY) {
-                        return { ok: false, status: 401, statusText: 'Unauthorized', data: { error: 'Neither Claude API key nor Supabase proxy configured' } };
-                    }
-                    
-                    const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
-                    console.log('🔒 Main process: Calling Claude API via Supabase proxy');
-                    
-                    return new Promise((resolve, reject) => {
+                if (!SUPABASE_ANON_KEY) {
+                    return { ok: false, status: 401, statusText: 'Unauthorized', data: { error: 'Supabase proxy not configured. API keys must be stored in Supabase Edge Function Secrets.' } };
+                }
+                
+                const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                console.log('🔒 Main process: Calling Claude API via Supabase Edge Function (keys in Secrets)');
+                
+                return new Promise((resolve, reject) => {
                         const parsedUrl = new URL(PROXY_URL);
                         const postData = JSON.stringify({
                             provider: 'claude',
@@ -3267,7 +3176,6 @@ class JarvisApp {
                         req.write(postData);
                         req.end();
                     });
-                }
             } catch (error) {
                 console.error('❌ Main process Claude: API call failed:', error);
                 return { ok: false, status: 500, statusText: 'Internal Error', data: { error: error.message } };
@@ -4382,21 +4290,39 @@ class JarvisApp {
 
     async extractWebsiteContent(url) {
         return new Promise((resolve, reject) => {
+            // Always use Supabase Edge Function - API keys stored in Supabase Secrets
+            const supabaseConfig = this.secureConfig.getSupabaseConfig();
+            const SUPABASE_URL = supabaseConfig?.url || 'https://nbmnbgouiammxpkbyaxj.supabase.co';
+            const SUPABASE_ANON_KEY = supabaseConfig?.anonKey;
+            
+            if (!SUPABASE_ANON_KEY) {
+                resolve({ error: 'Supabase proxy not configured. API keys must be stored in Supabase Edge Function Secrets.' });
+                return;
+            }
+            
+            const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+            const parsedUrl = new URL(PROXY_URL);
             const postData = JSON.stringify({
-                urls: [url],
-                type: "text"
+                provider: 'exa',
+                endpoint: 'contents',
+                payload: {
+                    urls: [url],
+                    type: "text"
+                }
             });
 
             const options = {
-                hostname: 'api.exa.ai',
-                port: 443,
-                path: '/contents',
+                hostname: parsedUrl.hostname,
+                port: parsedUrl.port || 443,
+                path: parsedUrl.pathname,
                 method: 'POST',
                 headers: {
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                     'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(postData),
-                    'x-api-key': this.exaApiKey
-                }
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Content-Length': Buffer.byteLength(postData)
+                },
+                rejectUnauthorized: false
             };
 
             const req = https.request(options, (res) => {

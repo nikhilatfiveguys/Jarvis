@@ -14,7 +14,8 @@ class JarvisOverlay {
         this.selectedModelName = 'Jarvis'; // Track displayed model name
         this.grokFreakyMode = false; // Track Grok freaky mode state
         this.grokVoiceMode = false; // Track Grok voice mode state
-        this.elevenLabsApiKey = 'sk_da38cfd86748d0dbf709c4668986b9c97ca72056b07ed224';
+        // ElevenLabs API key should be stored in Supabase Edge Function Secrets
+        this.elevenLabsApiKey = null;
         this.elevenLabsVoiceId = 'ShB6BQqbEXZxWO5511Qq'; // Female voice
         this.elevenLabsVoiceId2 = '4NejU5DwQjevnR6mh3mb'; // Male voice
         this.useSecondVoice = false; // Toggle between voices
@@ -1165,7 +1166,8 @@ class JarvisOverlay {
         this.claudeApiKey = null;
         this.apiProxyUrl = null;
         this.supabaseAnonKey = null;
-        this.naturalWriteApiKey = 'nw_6f9427e5026add995264a567970f5b0ce09f39be867f8921';
+        // NaturalWrite API key should be stored in Supabase Edge Function Secrets
+        this.naturalWriteApiKey = null;
         // Initialize tools array (will be rebuilt after API keys are loaded)
         this.tools = [];
         
@@ -1810,7 +1812,7 @@ class JarvisOverlay {
             this.pendingUpdate = info;
             this.updateReadyToInstall = true;
             this.showUpdateInMenu(info.version, 'ready');
-            this.showUpdateNotification(`✅ Update v${info.version} ready to install`, 'ready');
+            this.showUpdateNotification(`✅ Update v${info.version} downloaded - will install automatically on next quit`, 'ready');
         });
         
         ipcRenderer.on('update-error', (event, error) => {
@@ -2461,22 +2463,32 @@ class JarvisOverlay {
         try {
             const prompt = userQuestion || "What am I looking at? Please analyze the screen content and describe what you see.";
             
-            const response = await fetch('https://api.openai.com/v1/responses', {
-                        method: 'POST',
-                        headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                    model: this.currentModel,
-                    instructions: 'Answer ONLY with the direct answer. No preface, no restating the question. Be as short as possible while correct.',
-                            input: [{
-                                role: 'user',
-                                content: [
-                            { type: 'input_text', text: prompt },
-                            { type: 'input_image', image_url: imageUrl }
-                        ]
-                    }]
+            // Always use Edge Function - API keys stored in Supabase Secrets
+            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+            }
+            
+            const response = await fetch(this.apiProxyUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                    'Content-Type': 'application/json',
+                    'apikey': this.supabaseAnonKey
+                },
+                body: JSON.stringify({
+                    provider: 'openai',
+                    endpoint: 'responses',
+                    payload: {
+                        model: this.currentModel,
+                        instructions: 'Answer ONLY with the direct answer. No preface, no restating the question. Be as short as possible while correct.',
+                        input: [{
+                            role: 'user',
+                            content: [
+                                { type: 'input_text', text: prompt },
+                                { type: 'input_image', image_url: imageUrl }
+                            ]
+                        }]
+                    }
                 })
             });
 
@@ -2763,14 +2775,23 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         })
                     });
                 } else {
-                    console.log('⚠️ Using direct OpenAI API call (API key required)');
-                    response = await fetch('https://api.openai.com/v1/responses', {
+                    // Always use Edge Function - API keys stored in Supabase Secrets
+                    if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                        throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+                    }
+                    console.log('🔒 Using Supabase Edge Function for OpenAI API');
+                    response = await fetch(this.apiProxyUrl, {
                         method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${this.apiKey}`,
-                            'Content-Type': 'application/json'
+                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                            'Content-Type': 'application/json',
+                            'apikey': this.supabaseAnonKey
                         },
-                        body: JSON.stringify(requestPayload)
+                        body: JSON.stringify({
+                            provider: 'openai',
+                            endpoint: 'responses',
+                            payload: requestPayload
+                        })
                     });
                 }
             }
@@ -3081,15 +3102,23 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         if (ipcError.message === 'LIMIT_EXCEEDED') {
                             return "⚠️ Switched to Jarvis Low. Add credits for other models.";
                         }
-                        console.error('❌ IPC second call failed, falling back to fetch:', ipcError);
-                        // Fall through to fetch below
-                        response = await fetch('https://api.openai.com/v1/responses', {
+                        console.error('❌ IPC second call failed, falling back to Edge Function:', ipcError);
+                        // Fall through to Edge Function fetch below
+                        if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                            throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+                        }
+                        response = await fetch(this.apiProxyUrl, {
                             method: 'POST',
                             headers: {
-                                'Authorization': `Bearer ${this.apiKey}`,
-                                'Content-Type': 'application/json'
+                                'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                                'Content-Type': 'application/json',
+                                'apikey': this.supabaseAnonKey
                             },
-                            body: JSON.stringify(secondCallPayload)
+                            body: JSON.stringify({
+                                provider: 'openai',
+                                endpoint: 'responses',
+                                payload: secondCallPayload
+                            })
                         });
                         
                         if (!response.ok) {
@@ -3099,14 +3128,22 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         data = await response.json();
                     }
                 } else {
-                    // Not in Electron, use fetch
-                    response = await fetch('https://api.openai.com/v1/responses', {
+                    // Not in Electron, use Edge Function
+                    if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                        throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+                    }
+                    response = await fetch(this.apiProxyUrl, {
                         method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${this.apiKey}`,
-                            'Content-Type': 'application/json'
+                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                            'Content-Type': 'application/json',
+                            'apikey': this.supabaseAnonKey
                         },
-                        body: JSON.stringify(secondCallPayload)
+                        body: JSON.stringify({
+                            provider: 'openai',
+                            endpoint: 'responses',
+                            payload: secondCallPayload
+                        })
                     });
                     
                     if (!response.ok) {
@@ -3282,6 +3319,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         },
                         body: JSON.stringify({
                             provider: 'perplexity',
+                            endpoint: 'chat/completions',
                             payload: requestPayload
                         })
                     });
@@ -3514,17 +3552,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         payload: requestPayload
                     })
                 });
-            } else if (this.apiKey) {
-                response = await fetch('https://api.openai.com/v1/responses', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestPayload)
-                });
             } else {
-                throw new Error('No API access available');
+                // Must use Edge Function - no direct API keys allowed
+                throw new Error('No API access available. API keys must be stored in Supabase Edge Function Secrets.');
             }
 
             if (!response.ok) {
@@ -3659,25 +3689,29 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 // Fallback to direct fetch if not in Electron (shouldn't happen in normal use)
                 console.warn('⚠️ Not in Electron environment, using direct fetch (no token tracking)');
                 
-                if (!this.openrouterApiKey || this.openrouterApiKey.trim() === '') {
-                    console.warn('⚠️ OpenRouter API key not available');
-                    return `OpenRouter is not available. Please check your OpenRouter API key configuration.`;
+                // Always use Edge Function - no direct API keys allowed
+                if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                    console.warn('⚠️ Supabase Edge Function not available');
+                    return `OpenRouter is not available. API keys must be stored in Supabase Edge Function Secrets.`;
                 }
                 
-                const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                const response = await fetch(this.apiProxyUrl, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${this.openrouterApiKey}`,
+                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
                         'Content-Type': 'application/json',
-                        'HTTP-Referer': 'https://jarvis-ai.app',
-                        'X-Title': 'Jarvis AI'
+                        'apikey': this.supabaseAnonKey
                     },
                     body: JSON.stringify({
-                        model: model,
-                        messages: [
-                            { role: 'system', content: instructions },
-                            { role: 'user', content: userContent }
-                        ]
+                        provider: 'openrouter',
+                        endpoint: 'chat/completions',
+                        payload: {
+                            model: model,
+                            messages: [
+                                { role: 'system', content: instructions },
+                                { role: 'user', content: userContent }
+                            ]
+                        }
                     })
                 });
 
@@ -3841,38 +3875,26 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 // Fallback to direct fetch if not in Electron (shouldn't happen in normal use)
                 console.warn('⚠️ Not in Electron environment, using direct fetch (no token tracking)');
                 
-                const hasDirectKey = this.claudeApiKey && this.claudeApiKey.trim() !== '';
                 const hasProxy = this.apiProxyUrl && this.supabaseAnonKey;
                 
-                if (!hasDirectKey && !hasProxy) {
-                    return `Claude is not available. Please configure Claude API key.`;
+                if (!hasProxy) {
+                    return `Claude is not available. API keys must be stored in Supabase Edge Function Secrets.`;
                 }
                 
-                let claudeResponse;
-                
-                if (this.apiProxyUrl && this.supabaseAnonKey) {
-                    claudeResponse = await fetch(this.apiProxyUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            provider: 'claude',
-                            payload: requestBody
-                        })
-                    });
-                } else {
-                    claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-                        method: 'POST',
-                        headers: {
-                            'x-api-key': this.claudeApiKey,
-                            'anthropic-version': '2023-06-01',
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(requestBody)
-                    });
-                }
+                // Always use Edge Function - no direct API keys allowed
+                const claudeResponse = await fetch(this.apiProxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                        'Content-Type': 'application/json',
+                        'apikey': this.supabaseAnonKey
+                    },
+                    body: JSON.stringify({
+                        provider: 'claude',
+                        endpoint: 'messages',
+                        payload: requestBody
+                    })
+                });
 
                 if (!claudeResponse.ok) {
                     const errorText = await claudeResponse.text();
@@ -4061,6 +4083,38 @@ ${currentQuestion}`;
         // Check low message limit for free users using Low model
         if (this.isUsingLowModel() && !this.hasPremiumAccess() && this.hasReachedLowMessageLimit()) {
             this.showNotification(`⚠️ You've reached your daily limit of ${this.maxFreeLowMessages} messages with Jarvis Low. Try again tomorrow or upgrade for unlimited access!`, false);
+            return;
+        }
+
+        // Check for /hide command
+        if (message.toLowerCase() === '/hide' || message.toLowerCase().startsWith('/hide ')) {
+            // Clear input
+            if (this.textInput) this.textInput.value = '';
+            // Hide Answer Screen button
+            const answerBtn = document.getElementById('answer-this-btn');
+            if (answerBtn) {
+                answerBtn.classList.add('hidden');
+            }
+            const answerBtnMoved = document.getElementById('answer-this-btn-moved');
+            if (answerBtnMoved) {
+                answerBtnMoved.classList.add('hidden');
+            }
+            return;
+        }
+
+        // Check for /unhide command
+        if (message.toLowerCase() === '/unhide' || message.toLowerCase().startsWith('/unhide ')) {
+            // Clear input
+            if (this.textInput) this.textInput.value = '';
+            // Show Answer Screen button
+            const answerBtn = document.getElementById('answer-this-btn');
+            if (answerBtn) {
+                answerBtn.classList.remove('hidden');
+            }
+            const answerBtnMoved = document.getElementById('answer-this-btn-moved');
+            if (answerBtnMoved) {
+                answerBtnMoved.classList.remove('hidden');
+            }
             return;
         }
 
@@ -5922,17 +5976,25 @@ User request: ${prompt}`;
                         messages.push({ role: 'user', content: textParts.join('\n') });
                     }
                     
-                    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                    // Always use Edge Function - no direct API keys allowed
+                    if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                        throw new Error('Supabase Edge Function not available. API keys must be stored in Supabase Edge Function Secrets.');
+                    }
+                    
+                    const response = await fetch(this.apiProxyUrl, {
                         method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${this.openrouterApiKey}`,
+                            'Authorization': `Bearer ${this.supabaseAnonKey}`,
                             'Content-Type': 'application/json',
-                            'HTTP-Referer': 'https://jarvis-ai.app',
-                            'X-Title': 'Jarvis AI'
+                            'apikey': this.supabaseAnonKey
                         },
                         body: JSON.stringify({
-                            model: this.selectedModel,
-                            messages: messages
+                            provider: 'openrouter',
+                            endpoint: 'chat/completions',
+                            payload: {
+                                model: this.selectedModel,
+                                messages: messages
+                            }
                         })
                     });
                     
@@ -6564,20 +6626,30 @@ User request: ${prompt}`;
             // Use selected voice
             const voiceId = this.useSecondVoice ? this.elevenLabsVoiceId2 : this.elevenLabsVoiceId;
             
-            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+            // Always use Edge Function - API keys stored in Supabase Secrets
+            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+            }
+            
+            const response = await fetch(this.apiProxyUrl, {
                 method: 'POST',
                 headers: {
-                    'xi-api-key': this.elevenLabsApiKey,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                    'Content-Type': 'application/json',
+                    'apikey': this.supabaseAnonKey
                 },
                 body: JSON.stringify({
-                    text: cleanText,
-                    model_id: 'eleven_turbo_v2_5',
-                    voice_settings: {
-                        stability: 0.5,
-                        similarity_boost: 0.75,
-                        style: 0.0,
-                        use_speaker_boost: true
+                    provider: 'elevenlabs',
+                    endpoint: `text-to-speech/${voiceId}`,
+                    payload: {
+                        text: cleanText,
+                        model_id: 'eleven_turbo_v2_5',
+                        voice_settings: {
+                            stability: 0.5,
+                            similarity_boost: 0.75,
+                            style: 0.0,
+                            use_speaker_boost: true
+                        }
                     }
                 })
             });
@@ -6741,20 +6813,30 @@ ${documentContext}
 
 User Question: ${question}`;
 
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            // Always use Edge Function - API keys stored in Supabase Secrets
+            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+            }
+            
+            const response = await fetch(this.apiProxyUrl, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                    'Content-Type': 'application/json',
+                    'apikey': this.supabaseAnonKey
                 },
                 body: JSON.stringify({
-                    model: this.currentModel,
-                    messages: [
-                        { role: 'system', content: instructions },
-                        { role: 'user', content: question }
-                    ],
-                    max_tokens: 1000,
-                    temperature: 0.7
+                    provider: 'openai',
+                    endpoint: 'chat/completions',
+                    payload: {
+                        model: this.currentModel,
+                        messages: [
+                            { role: 'system', content: instructions },
+                            { role: 'user', content: question }
+                        ],
+                        max_tokens: 1000,
+                        temperature: 0.7
+                    }
                 })
             });
 
@@ -9648,21 +9730,31 @@ If you cannot find clear event information, return null. Be precise with dates a
             }
             
             // Fallback: try direct API call
-            const response = await fetch('https://api.openai.com/v1/responses', {
+            // Always use Edge Function - API keys stored in Supabase Secrets
+            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+            }
+            
+            const response = await fetch(this.apiProxyUrl, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                    'Content-Type': 'application/json',
+                    'apikey': this.supabaseAnonKey
                 },
                 body: JSON.stringify({
-                    model: this.currentModel,
-                    instructions: 'Extract calendar event details from the text. Return ONLY valid JSON or null.',
-                    input: [{
-                        role: 'user',
-                        content: [
-                            { type: 'input_text', text: prompt }
-                        ]
-                    }]
+                    provider: 'openai',
+                    endpoint: 'responses',
+                    payload: {
+                        model: this.currentModel,
+                        instructions: 'Extract calendar event details from the text. Return ONLY valid JSON or null.',
+                        input: [{
+                            role: 'user',
+                            content: [
+                                { type: 'input_text', text: prompt }
+                            ]
+                        }]
+                    }
                 })
             });
 
@@ -9870,22 +9962,32 @@ If you cannot find clear event information, return null. Be precise with dates a
             }
             
             // Fallback: try direct API call
-            const response = await fetch('https://api.openai.com/v1/responses', {
+            // Always use Edge Function - API keys stored in Supabase Secrets
+            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
+            }
+            
+            const response = await fetch(this.apiProxyUrl, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                    'Content-Type': 'application/json',
+                    'apikey': this.supabaseAnonKey
                 },
                 body: JSON.stringify({
-                    model: this.currentModel,
-                    instructions: 'Extract calendar event details from the screenshot. Return ONLY valid JSON or null.',
-                    input: [{
-                        role: 'user',
-                        content: [
-                            { type: 'input_text', text: prompt },
-                            { type: 'input_image', image_url: imageUrl }
-                        ]
-                    }]
+                    provider: 'openai',
+                    endpoint: 'responses',
+                    payload: {
+                        model: this.currentModel,
+                        instructions: 'Extract calendar event details from the screenshot. Return ONLY valid JSON or null.',
+                        input: [{
+                            role: 'user',
+                            content: [
+                                { type: 'input_text', text: prompt },
+                                { type: 'input_image', image_url: imageUrl }
+                            ]
+                        }]
+                    }
                 })
             });
 
