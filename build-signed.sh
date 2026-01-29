@@ -204,12 +204,70 @@ if [ -f "$DMG_PATH" ]; then
     MOUNT_INFO=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify)
     
     if echo "$MOUNT_INFO" | grep -q "JarvisInstall"; then
-        # Apply styling with AppleScript to match the reference image
-        osascript <<'APPLESCRIPT'
+        # Apply styling with AppleScript
+        # Create background with arrow using Python
+        echo "  Creating DMG background with arrow..."
+        mkdir -p "$DMG_TEMP/.background"
+        
+        python3 << 'PYTHONSCRIPT'
+import struct
+import zlib
+
+def create_dmg_background(filepath, width=600, height=400):
+    """Create a PNG with dark gray background and white arrow"""
+    def png_chunk(chunk_type, data):
+        chunk_len = len(data)
+        chunk_crc = zlib.crc32(chunk_type + data) & 0xffffffff
+        return struct.pack('>I', chunk_len) + chunk_type + data + struct.pack('>I', chunk_crc)
+    
+    png_signature = b'\x89PNG\r\n\x1a\n'
+    ihdr_data = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+    ihdr = png_chunk(b'IHDR', ihdr_data)
+    
+    raw_data = b''
+    bg = (60, 60, 60)  # Dark gray
+    arrow = (200, 200, 200)  # Light gray arrow
+    
+    cx, cy = width // 2, height // 2 + 30
+    
+    for y in range(height):
+        raw_data += b'\x00'
+        for x in range(width):
+            rx, ry = x - cx, y - cy
+            is_arrow = False
+            # Shaft
+            if -40 <= rx <= 10 and -6 <= ry <= 6:
+                is_arrow = True
+            # Head
+            if 10 <= rx <= 35:
+                h = 20 * (1 - (rx - 10) / 25)
+                if -h <= ry <= h:
+                    is_arrow = True
+            raw_data += bytes(arrow if is_arrow else bg)
+    
+    compressed = zlib.compress(raw_data, 9)
+    idat = png_chunk(b'IDAT', compressed)
+    iend = png_chunk(b'IEND', b'')
+    
+    with open(filepath, 'wb') as f:
+        f.write(png_signature + ihdr + idat + iend)
+
+create_dmg_background('dmg-staging/.background/background.png')
+print("Background created!")
+PYTHONSCRIPT
+
+        if [ -f "$DMG_TEMP/.background/background.png" ]; then
+            echo "  ✅ Arrow background created!"
+        else
+            echo "  ⚠️ Background creation failed, using default styling"
+        fi
+        
+        # Use AppleScript to style the DMG with background image
+        osascript << APPLESCRIPT
 tell application "Finder"
     tell disk "JarvisInstall"
         open
-        delay 1
+        delay 2
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
@@ -217,21 +275,25 @@ tell application "Finder"
         set theViewOptions to icon view options of container window
         set arrangement of theViewOptions to not arranged
         set icon size of theViewOptions to 100
-        set background color of theViewOptions to {50000, 50000, 50000}
         try
-            set position of item "Jarvis 6.0.app" to {100, 200}
+            set background picture of theViewOptions to file ".background:background.png"
+        on error
+            set background color of theViewOptions to {15420, 15420, 15420}
         end try
         try
-            set position of item "Applications" to {500, 200}
+            set position of item "Jarvis 6.0.app" to {150, 200}
+        end try
+        try
+            set position of item "Applications" to {450, 200}
         end try
         update without registering applications
-        delay 1
+        delay 2
         close
     end tell
 end tell
 APPLESCRIPT
         
-        echo "  Styling applied!"
+        echo "  ✅ Styling applied!"
         
         # Sync and unmount
         sync

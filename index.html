@@ -74,7 +74,164 @@
         <a href="#testimonials" class="sidebar-item" id="testimonialsLink">Testimonials</a>
         <a href="#pricing" class="sidebar-item" id="pricingLink">Pricing</a>
         
-        <div class="sidebar-divider"></div>
+        <!-- Settings menu -->
+        <div id="settings-menu" class="settings-menu hidden">
+            <div class="settings-item settings-item-submenu" id="model-switcher-btn">
+                <span class="settings-text">Model: <span id="current-model-display">Jarvis</span></span>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
+                    <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div id="model-submenu" class="model-submenu hidden">
+                <!-- Main models (always visible) -->
+                <div class="model-item" data-model="default" data-tier="high">
+                    <span class="model-name">Jarvis</span>
+                    <span class="model-desc">uses ChatGPT-5.2</span>
+                    <div class="tier-toggle" id="jarvis-tier-toggle">
+                        <label class="tier-switch">
+                            <input type="checkbox" id="tier-toggle-checkbox" checked>
+                            <span class="tier-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="model-item" data-model="google/gemini-3-pro-preview" data-tier="high">
+                    <span class="model-name">Gemini 3 Pro</span>
+                    <span class="model-desc">Google's newest model</span>
+                </div>
+                <div class="model-item" data-model="perplexity/sonar-pro-search" data-tier="high">
+                    <span class="model-name">Perplexity Pro</span>
+                    <span class="model-desc">🔍 Live web search</span>
+                </div>
+                <div class="model-item" data-model="anthropic/claude-opus-4.5" data-tier="high">
+                    <span class="model-name">Claude Opus 4.5</span>
+                    <span class="model-desc">Anthropic's most capable</span>
+                </div>
+                <div class="model-item" data-model="x-ai/grok-4.1-fast" data-tier="high">
+                    <span class="model-name">Grok 4.1 Fast</span>
+                    <span class="model-desc">xAI's fast model</span>
+                    <div class="freaky-toggle" id="freaky-toggle" title="Toggle Freaky Mode">
+                        <label class="freaky-switch">
+                            <input type="checkbox" id="freaky-toggle-checkbox">
+                            <span class="freaky-slider">
+                                <span class="freaky-emoji" id="freaky-emoji">😇</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- More models button -->
+                <div class="model-more-btn" id="model-more-btn">
+                    <span>More models</span>
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                
+                <!-- Hidden models (shown when "More" is clicked) -->
+                <div id="more-models-section" class="more-models-section hidden">
+                    <div class="model-item" data-model="openai/gpt-5-nano" data-tier="high">
+                        <span class="model-name">GPT 5 Nano</span>
+                        <span class="model-desc">OpenAI fastest model</span>
+                    </div>
+                    <div class="model-item" data-model="anthropic/claude-sonnet-4.5" data-tier="high">
+                        <span class="model-name">Claude Sonnet 4.5</span>
+                        <span class="model-desc">Best for reasoning</span>
+                    </div>
+                    <div class="model-item" data-model="google/gemini-2.5-pro" data-tier="high">
+                        <span class="model-name">Gemini 2.5 Pro</span>
+                        <span class="model-desc">Google's flagship</span>
+                    </div>
+                    <div class="model-item" data-model="deepseek/deepseek-chat" data-tier="high">
+                        <span class="model-name">DeepSeek V3</span>
+                        <span class="model-desc">Best for coding</span>
+                    </div>
+                    <div class="model-item" data-model="meta-llama/llama-4-maverick" data-tier="high">
+                        <span class="model-name">Llama 4 Maverick</span>
+                        <span class="model-desc">Meta's latest</span>
+                    </div>
+                    <div class="model-item" data-model="perplexity/sonar-reasoning-pro" data-tier="high">
+                        <span class="model-name">Sonar Reasoning Pro</span>
+                        <span class="model-desc">🔍 Deep research</span>
+                    </div>
+                    <div class="model-item" data-model="allenai/olmo-3-32b-think" data-tier="high">
+                        <span class="model-name">OLMO 3 32B Think</span>
+                        <span class="model-desc">AllenAI's reasoning</span>
+                    </div>
+                    <div class="model-item" data-model="moonshotai/kimi-k2-thinking" data-tier="high">
+                        <span class="model-name">Kimi K2 Thinking</span>
+                        <span class="model-desc">Moonshot AI</span>
+                    </div>
+                    <div class="model-item" data-model="amazon/nova-2-lite-v1" data-tier="high">
+                        <span class="model-name">Amazon Nova 2 Lite</span>
+                        <span class="model-desc">Amazon's efficient</span>
+                    </div>
+                    <div class="model-item" data-model="thedrummer/cydonia-24b-v4.1" data-tier="high">
+                        <span class="model-name">Cydonia 24B v4.1</span>
+                        <span class="model-desc">Creative roleplay</span>
+                    </div>
+                    <div class="model-item" data-model="prime-intellect/intellect-3" data-tier="high">
+                        <span class="model-name">Intellect 3</span>
+                        <span class="model-desc">Prime Intellect</span>
+                    </div>
+                </div>
+            </div>
+            <div class="settings-item settings-item-submenu" id="settings-submenu-btn">
+                <span class="settings-text">Settings</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
+                    <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div id="settings-submenu" class="settings-submenu hidden">
+                <div class="settings-item" id="opacity-slider-item">
+                    <span class="settings-text">Opacity</span>
+                    <div class="slider-container">
+                        <input type="range" id="opacity-slider" min="5" max="95" value="95" 
+                               ondblclick="this.value=95; window.handleOpacitySlider(95);"
+                               oninput="window.handleOpacitySlider(this.value)" 
+                               onchange="window.handleOpacitySlider(this.value)">
+                    </div>
+                </div>
+                <div class="settings-item" id="color-picker-item">
+                    <span class="settings-text">Color</span>
+                    <div class="color-options-row">
+                        <div class="color-dot" data-color="#000000" style="background: #000000; border: 1px solid rgba(255,255,255,0.3);" onclick="event.stopPropagation(); window.handleColorPicker('#000000')"></div>
+                        <div class="color-dot" data-color="#ffffff" style="background: #ffffff;" onclick="event.stopPropagation(); window.handleColorPicker('#ffffff')"></div>
+                        <div class="color-dot" data-color="#ec4899" style="background: #ec4899;" onclick="event.stopPropagation(); window.handleColorPicker('#ec4899')"></div>
+                        <div class="color-dot" data-color="#4A9EFF" style="background: #4A9EFF;" onclick="event.stopPropagation(); window.handleColorPicker('#4A9EFF')"></div>
+                    </div>
+                </div>
+                <div class="settings-item settings-item-toggle" id="stealth-mode-toggle">
+                    <span class="settings-text">Stealth Mode</span>
+                    <label class="toggle-switch" for="stealth-mode-checkbox">
+                        <input type="checkbox" id="stealth-mode-checkbox">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-item" id="hotkeys-btn">
+                    <span class="settings-text">Hotkeys</span>
+                </div>
+                <div class="settings-item" id="check-updates-btn">
+                    <span class="settings-text">Check for Updates</span>
+                    <span class="settings-version" id="app-version-display">v1.0.0</span>
+                </div>
+                <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
+                    <span class="settings-text">🔄 Update Available</span>
+                    <span class="settings-version" id="update-version-display">v1.0.0</span>
+                </div>
+                <div class="settings-item" id="quit-app-btn">
+                    <span class="settings-text">Quit Jarvis</span>
+                </div>
+            </div>
+            <div class="settings-item" id="account-info-btn">
+                <span class="settings-text">Account</span>
+            </div>
+            <div class="settings-item" id="clear-chat-btn">
+                <span class="settings-text">Clear Chat History</span>
+            </div>
+            <div class="settings-item" id="settings-close-btn">
+                <span class="settings-text">Close</span>
+            </div>
+        </div>
         
         <a href="https://www.instagram.com/yes.jarvis?igsh=dzBtcnZmM3B2aWFy&utm_source=qr" target="_blank" rel="noopener noreferrer" class="sidebar-item sidebar-social">
           <svg class="social-icon" viewBox="0 0 24 24" fill="currentColor">

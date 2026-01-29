@@ -1170,6 +1170,8 @@ body {
     flex-direction: column;
     gap: 8px;
     max-width: 240px;
+    pointer-events: auto !important;
+    -webkit-app-region: no-drag;
 }
 
 .update-notification.success {
@@ -1201,6 +1203,11 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    pointer-events: auto !important;
+}
+
+.update-notification * {
+    pointer-events: auto !important;
 }
 
 .update-notification-actions {

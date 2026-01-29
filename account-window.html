@@ -1414,10 +1414,11 @@
                 });
             }
 
-            // Get Premium Button (for free users)
+            // Get Premium Button (for free users) - use onclick so we only ever have one handler
+            // (setupEventListeners runs multiple times; addEventListener would stack and open multiple checkout tabs)
             const getPremiumBtn = document.getElementById('get-premium-btn');
             if (getPremiumBtn) {
-                getPremiumBtn.addEventListener('click', async () => {
+                getPremiumBtn.onclick = async () => {
                     try {
                         getPremiumBtn.disabled = true;
                         getPremiumBtn.textContent = 'Processing...';
@@ -1437,13 +1438,13 @@
                             getPremiumBtn.textContent = 'Get Premium';
                         }
                     }
-                });
+                };
             }
 
-            // Manage Subscription Button (for premium users)
+            // Manage Subscription Button (for premium users) - use onclick to avoid stacked listeners
             const manageSubscriptionBtn = document.getElementById('manage-subscription-btn');
             if (manageSubscriptionBtn) {
-                manageSubscriptionBtn.addEventListener('click', async () => {
+                manageSubscriptionBtn.onclick = async () => {
                     try {
                         manageSubscriptionBtn.disabled = true;
                         manageSubscriptionBtn.textContent = 'Opening...';
@@ -1459,13 +1460,13 @@
                         manageSubscriptionBtn.disabled = false;
                         manageSubscriptionBtn.textContent = 'Manage Subscription';
                     }
-                });
+                };
             }
 
-            // Sign Out Button
+            // Sign Out Button - use onclick to avoid stacked listeners
             const signOutBtn = document.getElementById('sign-out-btn');
             if (signOutBtn) {
-                signOutBtn.addEventListener('click', async () => {
+                signOutBtn.onclick = async () => {
                     try {
                         signOutBtn.disabled = true;
                         signOutBtn.textContent = 'Signing out...';
@@ -1483,7 +1484,7 @@
                         signOutBtn.disabled = false;
                         signOutBtn.textContent = 'Sign Out';
                     }
-                });
+                };
             }
         }
 
@@ -1521,6 +1522,10 @@
                 
                 // Check password status
                 checkPasswordStatus(subscriptionData.email);
+                // Notify overlay to refresh subscription (hide 5/5 counter immediately)
+                try {
+                    ipcRenderer.send('refresh-overlay-subscription');
+                } catch (e) { console.error('refresh-overlay-subscription send:', e); }
             } else {
                 premiumSection.style.display = 'none';
                 freeSection.style.display = 'block';

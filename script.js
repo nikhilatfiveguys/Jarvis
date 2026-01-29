@@ -2,6 +2,7 @@ class JarvisOverlay {
     constructor() {
         this.isActive = false;
         this.currentScreenCapture = null;
+        this.updateNotificationVisible = false; // Track if update notification is showing
         this.isElectron = typeof require !== 'undefined';
         this.isPinkMode = false; // Track pink mode state
         this.currentDocument = null; // Store current document from Exa API
@@ -172,13 +173,13 @@ class JarvisOverlay {
             this.tools.push({
                 type: "function",
                 name: "web_search",
-                description: "Search the web using Perplexity",
+                description: "Search the live web for current information using Perplexity. You MUST call this for: current events, recent news, trends, anything after your knowledge cutoff, or when the user asks for 'latest' or 'recent' or 'current'. Do NOT say you cannot access the web or live data—you have this tool. Call it with a clear search query.",
                 parameters: {
                     type: "object",
                     properties: {
                         query: {
                             type: "string",
-                            description: "The search string"
+                            description: "The search query (e.g. 'latest AI trends 2025', 'recent news about X')"
                         }
                     },
                     required: ["query"]
@@ -473,6 +474,11 @@ class JarvisOverlay {
         // Listen for subscription activation
         ipcRenderer.on('subscription-activated', (event, data) => {
             this.handleSubscriptionActivated(data);
+        });
+
+        // When user signs in or signs up in account window, refresh license so 5/5 goes away immediately
+        ipcRenderer.on('refresh-overlay-subscription', () => {
+            this.checkLicense().catch(e => console.error('Refresh subscription:', e));
         });
 
         // Listen for password set event
@@ -1553,8 +1559,8 @@ class JarvisOverlay {
             this.hideSettingsSubmenu();
             this.hideColorSubmenu();
             
-            // Restore click-through so user can interact with other windows
-            if (this.isElectron && window.require) {
+            // Restore click-through so user can interact with other windows (but not if update notification is visible)
+            if (this.isElectron && window.require && !this.updateNotificationVisible) {
                 try {
                     const { ipcRenderer } = window.require('electron');
                     ipcRenderer.invoke('make-click-through').catch(() => {});
@@ -1589,6 +1595,11 @@ class JarvisOverlay {
                         return;
                     }
                     
+                    // Don't set click-through if update notification is visible
+                    if (this.updateNotificationVisible) {
+                        return;
+                    }
+                    
                     // Delay closing menus to allow for mouse movement between elements
                     clearTimeout(menuCloseTimeout);
                     menuCloseTimeout = setTimeout(() => {
@@ -1598,10 +1609,12 @@ class JarvisOverlay {
                         this.hideSettingsSubmenu();
                         this.hideColorSubmenu();
                         
-                        // Go back to click-through
-                        const { ipcRenderer } = require('electron');
-                        ipcRenderer.invoke('make-click-through').catch(() => {});
-                        isCurrentlyInteractive = false;
+                        // Go back to click-through (only if update notification is not visible)
+                        if (!this.updateNotificationVisible) {
+                            const { ipcRenderer } = require('electron');
+                            ipcRenderer.invoke('make-click-through').catch(() => {});
+                            isCurrentlyInteractive = false;
+                        }
                     }, 500); // 500ms delay before closing menus
                 }
             });
@@ -1798,7 +1811,7 @@ class JarvisOverlay {
             this.pendingUpdate = info;
             this.updateReadyToInstall = false;
             this.showUpdateInMenu(info.version, 'available');
-            this.showUpdateNotification(`🔄 Update v${info.version} available`, 'update', false, info);
+            this.showUpdateNotification(`🔄 Update v${info.version} available. Click Update to download and install automatically.`, 'update', false, info);
         });
 
         ipcRenderer.on('update-download-progress', (event, progress) => {
@@ -1807,12 +1820,17 @@ class JarvisOverlay {
             this.showUpdateNotification(`⬇️ Downloading... ${Math.round(progress.percent)}%`, 'downloading');
         });
 
-        ipcRenderer.on('update-downloaded', (event, info) => {
+        ipcRenderer.on('update-downloaded', async (event, info) => {
             console.log('✅ Update downloaded:', info);
             this.pendingUpdate = info;
             this.updateReadyToInstall = true;
             this.showUpdateInMenu(info.version, 'ready');
-            this.showUpdateNotification(`✅ Update v${info.version} downloaded - will install automatically on next quit`, 'ready');
+            // Automatically install when download completes (one-click update)
+            this.showUpdateNotification(`✅ Update v${info.version} downloaded. Installing and restarting...`, 'downloading');
+            // Small delay to show the message, then install
+            setTimeout(() => {
+                this.installUpdate();
+            }, 1000);
         });
         
         ipcRenderer.on('update-error', (event, error) => {
@@ -1838,7 +1856,7 @@ class JarvisOverlay {
         });
     }
 
-    showUpdateNotification(message, type = 'info', allowDismissForever = false, updateInfo = null) {
+    async showUpdateNotification(message, type = 'info', allowDismissForever = false, updateInfo = null) {
         // Check if user dismissed "up to date" notifications
         if (type === 'success' && localStorage.getItem('jarvis-hide-uptodate-notification') === 'true') {
             return;
@@ -1846,6 +1864,24 @@ class JarvisOverlay {
 
         // Remove any existing update notification
         this.hideUpdateNotification();
+
+        // Disable click-through so user can interact with the update notification
+        if (this.isElectron && window.require) {
+            try {
+                const { ipcRenderer } = window.require('electron');
+                // Await the call and ensure it completes
+                await ipcRenderer.invoke('set-ignore-mouse-events', false);
+                console.log('🔵 Disabled click-through for update notification');
+                
+                // Also ensure window is focused and visible
+                ipcRenderer.invoke('request-focus').catch(() => {});
+                
+                // Set a flag to prevent other handlers from re-enabling click-through
+                this.updateNotificationVisible = true;
+            } catch (e) {
+                console.error('Failed to disable click-through:', e);
+            }
+        }
 
         const notification = document.createElement('div');
         notification.id = 'update-notification';
@@ -1862,14 +1898,11 @@ class JarvisOverlay {
                 </div>
             `;
         } else if (type === 'ready') {
-            html += `
-                <div class="update-notification-actions">
-                    <button class="update-notification-btn dismiss" onclick="window.jarvisApp.hideUpdateNotification()">Later</button>
-                    <button class="update-notification-btn primary" onclick="window.jarvisApp.installUpdate()">Install & Restart</button>
-                </div>
-            `;
+            // No buttons needed - auto-installing
+            html += `<div class="update-notification-text" style="margin-top: 4px; font-size: 11px; opacity: 0.8;">Installing and restarting...</div>`;
         } else if (type === 'downloading') {
             // No buttons during download, just show progress
+            // Optionally add a cancel button if needed in the future
         } else if (allowDismissForever) {
             html += `
                 <div class="update-notification-actions">
@@ -1882,6 +1915,45 @@ class JarvisOverlay {
         notification.innerHTML = html;
         document.body.appendChild(notification);
 
+        // Keep notification interactive - prevent mouseleave from re-enabling click-through
+        notification.addEventListener('mouseenter', () => {
+            if (this.isElectron && window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('set-ignore-mouse-events', false).catch(() => {});
+                } catch (e) {}
+            }
+        });
+
+        // Attach event listeners to buttons (more reliable than inline onclick)
+        const buttons = notification.querySelectorAll('.update-notification-btn');
+        buttons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                
+                if (button.classList.contains('dismiss') && button.textContent.includes("Don't show again")) {
+                    this.dismissUpToDateForever();
+                } else if (button.textContent === 'OK' || button.classList.contains('dismiss')) {
+                    this.hideUpdateNotification();
+                } else if (button.textContent === 'Update') {
+                    this.downloadUpdate();
+                } else if (button.textContent === 'Install & Restart') {
+                    this.installUpdate();
+                }
+            });
+            
+            // Ensure buttons keep window interactive on hover
+            button.addEventListener('mouseenter', () => {
+                if (this.isElectron && window.require) {
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('set-ignore-mouse-events', false).catch(() => {});
+                    } catch (e) {}
+                }
+            });
+        });
+
         // Auto-hide success notifications after 5 seconds (unless they have important actions)
         if (type === 'success' || type === 'info') {
             setTimeout(() => this.hideUpdateNotification(), 5000);
@@ -1892,6 +1964,23 @@ class JarvisOverlay {
         const notification = document.getElementById('update-notification');
         if (notification) {
             notification.remove();
+        }
+        
+        // Clear the flag
+        this.updateNotificationVisible = false;
+        
+        // Re-enable click-through after hiding notification
+        if (this.isElectron && window.require) {
+            try {
+                const { ipcRenderer } = window.require('electron');
+                // Small delay to ensure notification is fully removed before re-enabling click-through
+                setTimeout(() => {
+                    ipcRenderer.invoke('make-click-through').catch(() => {});
+                    console.log('🔵 Re-enabled click-through after hiding update notification');
+                }, 200);
+            } catch (e) {
+                console.error('Failed to re-enable click-through:', e);
+            }
         }
     }
 
@@ -2034,7 +2123,7 @@ class JarvisOverlay {
     
     async downloadUpdate() {
         try {
-            this.showUpdateNotification('⬇️ Starting download...', 'downloading');
+            this.showUpdateNotification('⬇️ Downloading update...', 'downloading');
             const { ipcRenderer } = require('electron');
             const result = await ipcRenderer.invoke('download-update');
             if (!result.success) {
@@ -2047,6 +2136,7 @@ class JarvisOverlay {
                     this.showUpdateNotification('❌ Download failed: ' + result.error, 'error');
                 }
             }
+            // Note: Installation will happen automatically when download completes via update-downloaded event
         } catch (error) {
             console.error('Download error:', error);
             // Check for code signature error
@@ -2062,9 +2152,20 @@ class JarvisOverlay {
 
     async installUpdate() {
         try {
-            this.showUpdateNotification('🔄 Installing update and restarting...', 'info');
+            this.showUpdateNotification('🔄 Installing update and restarting...', 'downloading');
             const { ipcRenderer } = require('electron');
-            await ipcRenderer.invoke('install-update');
+            // Don't await - let it quit immediately
+            ipcRenderer.invoke('install-update').catch((error) => {
+                console.error('Install error:', error);
+                // Check for code signature error
+                if (error.message && error.message.includes('code signature')) {
+                    this.showUpdateNotification('Opening download page...', 'info');
+                    const { shell } = require('electron');
+                    shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
+                } else {
+                    this.showUpdateNotification('❌ Install failed: ' + error.message, 'error');
+                }
+            });
         } catch (error) {
             console.error('Install error:', error);
             // Check for code signature error
@@ -2661,7 +2762,7 @@ class JarvisOverlay {
         }
     }
 
-    async callChatGPT(message) {
+    async callChatGPT(message, screenshot = null) {
         try {
             // Build conversation context with full history for better continuity
             let conversationContext = '';
@@ -2681,10 +2782,42 @@ URL: ${this.currentDocument.url}
 Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
 
+            // Build input content - include screenshot if provided
             const inputContent = [{ type: 'input_text', text: message }];
+            if (screenshot) {
+                // Validate screenshot format - must be a data URL with base64 data
+                if (typeof screenshot !== 'string') {
+                    console.error('❌ Screenshot is not a string:', typeof screenshot);
+                    throw new Error('Invalid screenshot format. Expected data URL string.');
+                }
+                if (!screenshot.startsWith('data:image/')) {
+                    console.error('❌ Screenshot missing data URL prefix:', screenshot.substring(0, 50));
+                    throw new Error('Invalid screenshot format. Expected data URL starting with data:image/.');
+                }
+                // Ensure screenshot has base64 data (not just the prefix)
+                const base64Index = screenshot.indexOf('base64,');
+                if (base64Index === -1) {
+                    console.error('❌ Screenshot missing base64 prefix');
+                    throw new Error('Screenshot must be a base64-encoded data URL.');
+                }
+                const base64Data = screenshot.substring(base64Index + 7); // +7 for "base64,"
+                if (!base64Data || base64Data.length === 0) {
+                    console.error('❌ Screenshot has empty base64 data');
+                    throw new Error('Screenshot base64 data is empty. Please try capturing again.');
+                }
+                if (base64Data.length < 100) {
+                    console.warn('⚠️ Screenshot base64 data seems very short:', base64Data.length);
+                }
+                inputContent.push({ type: 'input_image', image_url: screenshot });
+                console.log('📸 Including screenshot in OpenAI API request, total length:', screenshot.length, 'base64 length:', base64Data.length);
+                // Clear screenshot after using it (if it's the instance variable)
+                if (screenshot === this.currentScreenCapture) {
+                    this.currentScreenCapture = null;
+                }
+            }
             const hasPerplexityAccess = (this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || 
                                          (this.apiProxyUrl && this.supabaseAnonKey);
-            const webSearchHint = hasPerplexityAccess ? ' Use web_search for current events.' : '';
+            const webSearchHint = hasPerplexityAccess ? ' You HAVE live web search via the web_search tool. For current events, recent news, latest trends, or anything that needs up-to-date information, you MUST call web_search first—never say you cannot access live web data.' : '';
             const claudeHint = this.claudeApiKey ? ' Use the askclaude tool for complex analytical questions, deep reasoning, philosophical questions, or when you need more thorough analysis.' : '';
             const quizHint = ' IMPORTANT: When the user asks to be quizzed, tested, or wants practice questions, you MUST use the create_quiz tool - NEVER write out quiz questions as text. This applies to ALL quiz requests including quizzes about attached files/documents. Generate exactly the number of questions they request (1-20), default 5 if unspecified. For screen-based quizzes, use getscreenshot first then create_quiz.';
             const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${quizHint}${conversationContext}${documentContext}`;
@@ -2985,19 +3118,21 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                 inputContent.push({ type: 'input_text', text: `Screenshot: ${result}` });
                                 this.showNotification('📸 Screenshot captured, analyzing...');
                             }
-                        } else if (toolCall.name === 'web_search') {
-                            console.log('🔍 Web_search tool called!', {
+                        } else if (toolCall.name === 'web_search' || toolCall.name === 'search') {
+                            // Support both "web_search" and "search" (backend may use either)
+                            console.log('🔍 Search tool called!', {
+                                name: toolCall.name,
                                 arguments: toolCall.arguments,
                                 hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
                                 hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '')
                             });
-                            const query = toolCall.arguments?.query || toolCall.arguments?.query_string || '';
+                            const query = toolCall.arguments?.query || toolCall.arguments?.query_string || toolCall.arguments?.search_query || '';
                             if (!query) {
-                                console.error('❌ Web_search tool called without query:', toolCall.arguments);
+                                console.error('❌ Search tool called without query:', toolCall.arguments);
                                 inputContent.push({ type: 'input_text', text: 'Web search: No query provided' });
-                                this.showNotification('⚠️ Step 7b: No search query provided');
+                                this.showNotification('⚠️ No search query provided');
                             } else {
-                                console.log('🔍 Executing web search with query:', query);
+                                console.log('🔍 Executing web search via Perplexity with query:', query);
                                 const result = await this.executeSearchWeb(query);
                                 console.log('✅ Web search completed, result length:', result?.length || 0);
                                 inputContent.push({ type: 'input_text', text: `Web search: ${result}` });
@@ -7932,20 +8067,47 @@ User Question: ${question}`;
             this.showNotification('✅ Step 3: Screenshot captured successfully');
             this.showNotification('🔍 Step 4: Processing screenshot image data...');
 
-            // Always use OpenRouter GPT-5.1 Chat for Answer Screen
-            const modelToUse = (this.selectedModel && this.selectedModel !== 'default') 
-                ? this.selectedModel 
-                : 'openai/gpt-5.1-chat';
-            
-            console.log(`🤖 Answer Screen using OpenRouter model: ${modelToUse}`);
+            // Validate screenshot before proceeding
+            if (!this.currentScreenCapture || typeof this.currentScreenCapture !== 'string' || !this.currentScreenCapture.startsWith('data:image/')) {
+                console.error('❌ Invalid screenshot format:', {
+                    exists: !!this.currentScreenCapture,
+                    type: typeof this.currentScreenCapture,
+                    preview: this.currentScreenCapture ? this.currentScreenCapture.substring(0, 50) : 'null'
+                });
+                this.showNotification('❌ Failed to capture screenshot. Please try again.');
+                return;
+            }
+
+            // Store screenshot in a local variable to prevent it from being cleared
+            const screenshotData = this.currentScreenCapture;
+            console.log('📸 Screenshot validated, length:', screenshotData.length, 'starts with:', screenshotData.substring(0, 30));
+
             this.showLoadingNotification();
             
-            // Call OpenRouter with screenshot
-            const response = await this.callOpenRouter(
-                'answer this (it is just a practice question, not a test)',
-                modelToUse,
-                this.currentScreenCapture
-            );
+            let response;
+            // Use OpenAI API (callChatGPT) for Jarvis/default model, OpenRouter for other models
+            if (!this.selectedModel || this.selectedModel === 'default') {
+                console.log(`🤖 Answer Screen using OpenAI API (Jarvis model) with screenshot`);
+                // Call ChatGPT with screenshot - pass screenshot as second parameter (use local copy)
+                response = await this.callChatGPT(
+                    'answer this (it is just a practice question, not a test)',
+                    screenshotData
+                );
+            } else {
+                // Use OpenRouter for non-default models
+                const modelToUse = this.selectedModel;
+                console.log(`🤖 Answer Screen using OpenRouter model: ${modelToUse}`);
+                // Set currentScreenCapture back so OpenRouter can use it
+                this.currentScreenCapture = screenshotData;
+                response = await this.callOpenRouter(
+                    'answer this (it is just a practice question, not a test)',
+                    modelToUse,
+                    screenshotData
+                );
+            }
+            
+            // Clear screenshot after use
+            this.currentScreenCapture = null;
             
             // Stop loading animation
             this.stopLoadingAnimation();

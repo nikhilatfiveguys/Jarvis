@@ -1800,6 +1800,13 @@ class JarvisApp {
             }
             this.createAccountWindow();
         });
+
+        // When account window shows premium (sign-in/sign-up success), tell overlay to refresh so 5/5 goes away
+        ipcMain.on('refresh-overlay-subscription', () => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('refresh-overlay-subscription');
+            }
+        });
         
         // Handle opening account in browser
         ipcMain.handle('open-account-in-browser', async () => {
@@ -2948,7 +2955,7 @@ class JarvisApp {
                 
                 console.log('🔒 Main process: Calling Perplexity API via Edge Function');
                 console.log('📤 URL:', PROXY_URL);
-                console.log('📤 Payload:', JSON.stringify({ provider: 'perplexity', payload: requestPayload }, null, 2));
+                console.log('📤 Payload:', JSON.stringify({ provider: 'perplexity', endpoint: 'chat/completions', payload: requestPayload }, null, 2));
                 
                 // Use Node.js https module (more reliable than fetch in older Node versions)
                 return new Promise((resolve, reject) => {
