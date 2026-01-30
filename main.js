@@ -213,7 +213,6 @@ class JarvisApp {
         
         updater.on('download-progress', (progressObj) => {
             const message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
-            console.log(message);
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('update-download-progress', {
                     percent: progressObj.percent,
@@ -482,6 +481,7 @@ class JarvisApp {
         const userDataPath = app.getPath('userData');
         const onboardingFile = path.join(userDataPath, 'onboarding_complete.json');
         
+        console.log('File exists?', fs.existsSync(onboardingFile));
         
         if (fs.existsSync(onboardingFile)) {
             try {
@@ -1519,6 +1519,7 @@ class JarvisApp {
                         }, 100);
                     }
                     
+                    console.log('✅ [MAIN] make-interactive completed (no focus steal)');
                     return { success: true };
                 } catch (error) {
                     console.error('❌ [MAIN] Error making window interactive:', error);
@@ -1902,6 +1903,7 @@ class JarvisApp {
                         globalShortcut.unregister(currentShortcut);
                     } catch (_) {}
                 }
+                console.log('Custom toggle shortcut unbound (defaults still active)');
             } catch (e) {
                 console.error('Failed to unbind toggle shortcut:', e);
             }
@@ -2366,6 +2368,7 @@ class JarvisApp {
         ipcMain.handle('download-update', async () => {
             try {
                 const updater = getAutoUpdater();
+                console.log('📥 [IPC] autoUpdater state:', {
                     autoDownload: updater.autoDownload,
                     autoInstallOnAppQuit: updater.autoInstallOnAppQuit
                 });
@@ -2634,6 +2637,7 @@ class JarvisApp {
                         };
                     }
                 } else if (isLowModel) {
+                    console.log('🆓 Low model (OpenAI) - skipping cost limit check');
                 }
                 
                 const supabaseConfig = this.secureConfig.getSupabaseConfig();
@@ -2690,6 +2694,7 @@ class JarvisApp {
                                             model, 
                                             'openai', 
                                             'chat'
+                                        ).then(() => console.log('✅ OpenAI token usage recorded successfully'))
                                         .catch(err => console.error('❌ Failed to record OpenAI token usage:', err));
                                     } else {
                                     }
@@ -2759,6 +2764,7 @@ class JarvisApp {
                 }
                 
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                console.log('🔒 Main process: Calling OpenRouter API via Supabase Edge Function (keys in Secrets)');
                 
                 return new Promise((resolve, reject) => {
                     const parsedUrl = new URL(PROXY_URL);
@@ -2812,6 +2818,7 @@ class JarvisApp {
                                             'openrouter', 
                                             'chat',
                                             apiCost  // Pass API cost if available
+                                        ).then(() => console.log('✅ OpenRouter usage recorded successfully'))
                                         .catch(err => console.error('❌ Failed to record OpenRouter usage:', err));
                                     } else {
                                     }
@@ -2874,6 +2881,7 @@ class JarvisApp {
                 const SUPABASE_ANON_KEY = supabaseConfig?.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
                 
+                console.log('📤 Payload:', JSON.stringify({ provider: 'perplexity', endpoint: 'chat/completions', payload: requestPayload }, null, 2));
                 
                 // Use Node.js https module (more reliable than fetch in older Node versions)
                 return new Promise((resolve, reject) => {
@@ -3026,6 +3034,7 @@ class JarvisApp {
                 }
                 
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
+                console.log('🔒 Main process: Calling Claude API via Supabase Edge Function (keys in Secrets)');
                 
                 return new Promise((resolve, reject) => {
                         const parsedUrl = new URL(PROXY_URL);
@@ -3051,9 +3060,11 @@ class JarvisApp {
                             let data = '';
                             res.on('data', (chunk) => { data += chunk; });
                             res.on('end', async () => {
+                                console.log('📥 Main process Claude (proxy): Response status:', res.statusCode);
                                 if (res.statusCode >= 200 && res.statusCode < 300) {
                                     try {
                                         const responseData = JSON.parse(data);
+                                        console.log('✅ Main process Claude (proxy): Successfully parsed response');
                                         
                                         // Track token usage if we have email and usage data
                                         if (email && this.supabaseIntegration && responseData.usage) {
@@ -3195,6 +3206,7 @@ class JarvisApp {
                     
                     // Track current user email for token usage tracking
                     this.currentUserEmail = email;
+                    console.log(`📧 Token tracking: User email set to ${email} (sign-in)`);
 
                     return {
                         success: true,
@@ -4325,6 +4337,11 @@ class JarvisApp {
             
             // Use native module if available (applies ALL 11+ stealth methods)
             if (this.nativeContentProtection && this.nativeContentProtection.isAvailable()) {
+                console.log('   3. OS Privacy Restrictions (secure window)');
+                console.log('   4. Overlay window (non-capturable)');
+                console.log('   5. Secure Rendering (NSWindowSharingNone)');
+                console.log('   10. Protected swapchain (GPU-level)');
+                console.log('   11. 🔐 System-Level Secure Input (NEW!)');
                 
                 // Use comprehensive stealth (applies all methods at once)
                 if (this.nativeContentProtection.applyComprehensiveStealth) {
@@ -4343,6 +4360,8 @@ class JarvisApp {
                 }
             } else {
                 // Fallback to Electron's built-in API (Method 5 only)
+                console.log('⚠️ Using Electron built-in API (native module not available)');
+                console.log('   Only Method 5 (Secure Rendering) will be applied');
                 window.setContentProtection(enable);
             }
             

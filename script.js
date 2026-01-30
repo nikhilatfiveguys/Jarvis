@@ -90,6 +90,9 @@ class JarvisOverlay {
                         this.openrouterApiKey = apiKeys.openrouter;
                         this.apiProxyUrl = apiKeys.apiProxyUrl;
                         this.supabaseAnonKey = apiKeys.supabaseAnonKey;
+                        console.log('API Proxy URL:', this.apiProxyUrl || 'NOT CONFIGURED (using direct API calls)');
+                        console.log('Supabase Anon Key value:', this.supabaseAnonKey ? this.supabaseAnonKey.substring(0, 30) + '...' : 'MISSING');
+                        console.log('Has Perplexity access:', !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || !!(this.apiProxyUrl && this.supabaseAnonKey));
                         
                         // Verify the anon key matches what we expect
                         const expectedAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
@@ -125,6 +128,7 @@ class JarvisOverlay {
                 console.warn('⚠️ No OpenRouter API key found in environment or IPC.');
             }
             
+            console.log('✅ API keys loaded (fallback method)');
             // Rebuild tools array now that API keys are loaded
             this.rebuildToolsArray();
         } catch (error) {
@@ -171,6 +175,7 @@ class JarvisOverlay {
                     required: ["query"]
                 }
             });
+            console.log('✅ Perplexity web search tool added', {
                 usingProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
                 hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '')
             });
@@ -493,6 +498,7 @@ class JarvisOverlay {
                 this.pushToTalkTimeout = setTimeout(() => {
                     if (!this.isPushToTalkActive) {
                         this.isPushToTalkActive = true;
+                        console.log('🎤 Push-to-talk: Starting recording (Control held)');
                         const { ipcRenderer } = window.require('electron');
                         ipcRenderer.invoke('start-push-to-talk');
                     }
@@ -511,6 +517,7 @@ class JarvisOverlay {
                 
                 if (this.isPushToTalkActive) {
                     this.isPushToTalkActive = false;
+                    console.log('🎤 Push-to-talk: Stopping recording (Control released)');
                     const { ipcRenderer } = window.require('electron');
                     ipcRenderer.invoke('stop-push-to-talk');
                 }
@@ -2676,6 +2683,7 @@ class JarvisOverlay {
             
             // Handle Jarvis Low (GPT-5 Mini) model - uses OpenAI API directly
             if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
+                console.log(`🤖 [MODEL SWITCHER] Using Jarvis Low (GPT-5 Mini) via OpenAI API: ${this.lowModelId}`);
                 response = await this.callLowModel(message);
                 
                 // Increment low message count for free users
@@ -2683,8 +2691,10 @@ class JarvisOverlay {
                     this.incrementLowMessageCount();
                 }
             } else if (this.selectedModel && this.selectedModel !== 'default') {
+                console.log(`🤖 [MODEL SWITCHER] Using OpenRouter model: ${this.selectedModel} (${this.selectedModelName})`);
                 response = await this.callOpenRouter(message, this.selectedModel);
             } else {
+                console.log(`🤖 [MODEL SWITCHER] Using default Responses API (currentModel: ${this.currentModel})`);
                 response = await this.callChatGPT(message);
             }
             
@@ -2766,11 +2776,16 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${quizHint}${conversationContext}${documentContext}`;
 
             // Debug: Log available tools
+            console.log('🔧 Available tools:', this.tools.map(t => t.name));
+            console.log('🔧 Has web_search tool:', this.tools.some(t => t.name === 'web_search'));
+            console.log('🔧 Has create_quiz tool:', this.tools.some(t => t.name === 'create_quiz'));
+            console.log('🔧 Perplexity access check:', {
                 hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== ''),
                 hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
                 apiProxyUrl: this.apiProxyUrl || 'NOT SET',
                 supabaseAnonKey: this.supabaseAnonKey ? 'SET' : 'NOT SET'
             });
+            console.log('Claude tool registered:', this.tools.some(t => t.name === 'askclaude'));
             
             const requestPayload = {
                 model: this.currentModel,
@@ -2779,6 +2794,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 tools: this.tools
             };
             
+            console.log('API Request payload:', JSON.stringify(requestPayload, null, 2));
 
             this.showLoadingNotification();
             
@@ -2928,6 +2944,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             let data = await response.json();
             
             // Debug: Log full response structure to understand format
+            console.log('API Response structure:', JSON.stringify(data, null, 2));
             
             // Check for tool calls in multiple possible locations
             const toolCalls = [];
@@ -3019,8 +3036,14 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             
             // Debug: Log tool calls found
             if (toolCalls.length > 0) {
+                console.log('Tool call names:', toolCalls.map(tc => tc.name));
+                console.log('Is create_quiz in detected tools?', toolCalls.some(tc => tc.name === 'create_quiz'));
+                console.log('Is askclaude in detected tools?', toolCalls.some(tc => tc.name === 'askclaude'));
             } else {
+                console.log('Full API response:', JSON.stringify(data, null, 2));
+                console.log('Response keys:', Object.keys(data));
                 if (data.output) {
+                    console.log('Output array items:', data.output.map(item => ({ type: item.type, name: item.name })));
                 }
             }
             
@@ -3041,6 +3064,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             }
                         } else if (toolCall.name === 'web_search' || toolCall.name === 'search') {
                             // Support both "web_search" and "search" (backend may use either)
+                            console.log('🔍 Search tool called!', {
                                 name: toolCall.name,
                                 arguments: toolCall.arguments,
                                 hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
@@ -3067,6 +3091,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                 inputContent.push({ type: 'input_text', text: `Claude's detailed analysis:\n\n${result}` });
                             }
                         } else if (toolCall.name === 'create_quiz') {
+                            console.log('📝 QUIZ TOOL CALLED! Full toolCall:', JSON.stringify(toolCall, null, 2));
                             
                             try {
                                 const topic = toolCall.arguments?.topic || 'General Knowledge';
@@ -3078,6 +3103,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                     inputContent.push({ type: 'input_text', text: 'Quiz: No questions provided by AI' });
                                     this.showNotification('⚠️ Quiz creation failed: No questions generated');
                                 } else {
+                                    console.log('📝 First question:', JSON.stringify(questions[0], null, 2));
                                     // Stop loading and show quiz
                                     this.stopLoadingAnimation();
                                     if (this.dragOutput) {
@@ -3121,6 +3147,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 if (this.isElectron && window.require) {
                     try {
                         const { ipcRenderer } = window.require('electron');
+                        console.log('🔒 SECOND CALL: Using IPC for second OpenAI call (with tool results)');
                         const result = await ipcRenderer.invoke('call-openai-api', secondCallPayload);
                         
                         if (result && result.ok && result.data) {
@@ -3273,6 +3300,8 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
             
             // Force use of hardcoded values (ignore loaded values since test script works)
+            console.log('🔒 Using Supabase Edge Function proxy for Perplexity (hardcoded values from test script)');
+            console.log('📤 Request details:', {
                 url: PROXY_URL,
                 anonKeyPrefix: SUPABASE_ANON_KEY.substring(0, 30) + '...',
                 isElectron: this.isElectron
@@ -3282,8 +3311,11 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (this.isElectron && window.require) {
                 try {
                     const { ipcRenderer } = window.require('electron');
+                    console.log('📤 Request payload:', JSON.stringify(requestPayload, null, 2));
                     
                     const result = await ipcRenderer.invoke('call-perplexity-api', requestPayload);
+                    console.log('📥 IPC result received (FULL):', JSON.stringify(result, null, 2));
+                    console.log('📥 IPC result received (summary):', {
                         ok: result.ok,
                         status: result.status,
                         hasData: !!result.data,
@@ -3539,6 +3571,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (this.isElectron && window.require) {
                 try {
                     const { ipcRenderer } = window.require('electron');
+                    console.log('🔒 Calling OpenAI (Low Model) via main process IPC');
                     const result = await ipcRenderer.invoke('call-openai-api', requestPayload, true); // true = isLowModel
                     
                     if (result && result.ok && result.data) {
@@ -4017,6 +4050,7 @@ ${currentQuestion}`;
                 messages: messages
             };
             
+            console.log('Calling Claude API (tool call) with:', {
                 model: requestBody.model,
                 messageCount: messages.length
             });
@@ -4025,6 +4059,7 @@ ${currentQuestion}`;
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
                 
+                console.log('🔒 Calling Claude (tool) via main process IPC');
                 const result = await ipcRenderer.invoke('call-claude-api', requestBody);
                 
                 if (!result.ok) {
@@ -4233,6 +4268,7 @@ ${currentQuestion}`;
         const textContent = String(text || '');
         const isError = textContent.startsWith('❌') || textContent.startsWith('⚠️');
         if (this.quizState && this.dragOutput.classList.contains('quiz-active') && !isError) {
+            console.log('📝 Quiz active - skipping notification:', textContent.substring(0, 50));
             return;
         }
         
@@ -4564,6 +4600,7 @@ ${currentQuestion}`;
     }
 
     showQuiz(topic, questions) {
+        console.log('📝 questions received:', JSON.stringify(questions, null, 2));
         
         // Stop any loading animation first
         this.stopLoadingAnimation();
@@ -5329,6 +5366,9 @@ ${currentQuestion}`;
     }
 
     selectModel(model, modelName) {
+        console.log(`🤖 [MODEL SWITCHER] selectModel called: ${modelName} (${model})`);
+        console.log(`🤖 [MODEL SWITCHER] Previous model: ${this.selectedModel} (${this.selectedModelName})`);
+        console.log(`🤖 [MODEL SWITCHER] Has premium: ${this.hasPremiumAccess()}`);
         
         // Free users can only use the default Jarvis model (with Low/High toggle)
         // Block selection of any other model
@@ -5391,6 +5431,7 @@ ${currentQuestion}`;
             this.grokVoiceMode = false;
         }
         
+        console.log(`🤖 [MODEL SWITCHER] Successfully switched to ${modelName} (${model})`);
     }
 
     clearChatHistory() {
@@ -7196,6 +7237,7 @@ User Question: ${question}`;
                     }
                 }
             };
+            console.log('Free tier - showing upgrade button (0 messages remaining)');
         } else {
             this.messageCountText.textContent = `${remaining}/${this.maxFreeMessages}`;
             this.messageCounter.style.cursor = 'default';
@@ -7259,6 +7301,7 @@ User Question: ${question}`;
             if (this.subscriptionActivatedTime) {
                 const timeSinceActivation = Date.now() - this.subscriptionActivatedTime;
                 if (timeSinceActivation < 30000) {
+                    console.log('🚫 Block 2: Blocked - subscription just activated (grace period)');
                     return;
                 }
             } else {
@@ -7279,6 +7322,7 @@ User Question: ${question}`;
             this.countdownTimerInterval = null;
         }
         
+        console.log('⚠️ Showing message limit notification - free tier user (all blocks passed)');
         
         const timeUntilReset = this.getTimeUntilReset();
         const resetTimeText = timeUntilReset ? this.formatTimeUntilReset(timeUntilReset) : 'soon';
@@ -7912,12 +7956,14 @@ User Question: ${question}`;
 
             // Store screenshot in a local variable to prevent it from being cleared
             const screenshotData = this.currentScreenCapture;
+            console.log('📸 Screenshot validated, length:', screenshotData.length, 'starts with:', screenshotData.substring(0, 30));
 
             this.showLoadingNotification();
             
             let response;
             // Use OpenAI API (callChatGPT) for Jarvis/default model, OpenRouter for other models
             if (!this.selectedModel || this.selectedModel === 'default') {
+                console.log(`🤖 Answer Screen using OpenAI API (Jarvis model) with screenshot`);
                 // Call ChatGPT with screenshot - pass screenshot as second parameter (use local copy)
                 response = await this.callChatGPT(
                     'answer this (it is just a practice question, not a test)',
@@ -8314,6 +8360,7 @@ User Question: ${question}`;
             
             // Debug logging (only log significant changes)
             if (Math.abs(scrollAccumulator - previousScrollAccumulator) > 5) {
+                console.log('Scroll:', {
                     acc: scrollAccumulator.toFixed(0),
                     prev: previousScrollAccumulator.toFixed(0),
                     maxScroll,
@@ -9030,6 +9077,7 @@ User Question: ${question}`;
             }
             
             // Debug: Log what elements were found
+            console.log('Document selection modal elements:', {
                 modal: !!this.documentSelectionModal,
                 list: !!this.documentList,
                 loading: !!this.documentListLoading,
@@ -9400,6 +9448,7 @@ User Question: ${question}`;
             const { ipcRenderer } = window.require('electron');
             
             // Show document selection modal directly (with New Doc button)
+            console.log('Calling promptDocumentId() to show document selection modal');
             let documentId = await this.promptDocumentId();
             
             if (!documentId) {
