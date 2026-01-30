@@ -90,15 +90,6 @@ class JarvisOverlay {
                         this.openrouterApiKey = apiKeys.openrouter;
                         this.apiProxyUrl = apiKeys.apiProxyUrl;
                         this.supabaseAnonKey = apiKeys.supabaseAnonKey;
-                        console.log('✅ API keys loaded from main process');
-                        console.log('OpenAI key present:', !!this.apiKey);
-                        console.log('Perplexity key present:', !!this.perplexityApiKey);
-                        console.log('Claude key present:', !!this.claudeApiKey);
-                        console.log('OpenRouter key present:', !!this.openrouterApiKey);
-                        console.log('API Proxy URL:', this.apiProxyUrl || 'NOT CONFIGURED (using direct API calls)');
-                        console.log('Supabase Anon Key present:', !!this.supabaseAnonKey);
-                        console.log('Supabase Anon Key value:', this.supabaseAnonKey ? this.supabaseAnonKey.substring(0, 30) + '...' : 'MISSING');
-                        console.log('Has Perplexity access:', !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || !!(this.apiProxyUrl && this.supabaseAnonKey));
                         
                         // Verify the anon key matches what we expect
                         const expectedAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
@@ -134,11 +125,6 @@ class JarvisOverlay {
                 console.warn('⚠️ No OpenRouter API key found in environment or IPC.');
             }
             
-            console.log('✅ API keys loaded (fallback method)');
-            console.log('OpenAI key present:', !!this.apiKey);
-            console.log('Perplexity key present:', !!this.perplexityApiKey);
-            console.log('Claude key present:', !!this.claudeApiKey);
-            console.log('OpenRouter key present:', !!this.openrouterApiKey);
             // Rebuild tools array now that API keys are loaded
             this.rebuildToolsArray();
         } catch (error) {
@@ -185,7 +171,6 @@ class JarvisOverlay {
                     required: ["query"]
                 }
             });
-            console.log('✅ Perplexity web search tool added', {
                 usingProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
                 hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '')
             });
@@ -213,7 +198,6 @@ class JarvisOverlay {
                     required: ["question"]
                 }
             });
-            console.log('✅ Claude AI tool added');
         } else {
             console.warn('⚠️ Claude API key not available - Claude tool not added');
         }
@@ -265,7 +249,6 @@ class JarvisOverlay {
                 required: ["topic", "questions"]
             }
         });
-        console.log('✅ Quiz tool added');
     }
 
     async checkLicense() {
@@ -285,7 +268,6 @@ class JarvisOverlay {
                         screenshot_analysis: true,
                         voice_activation: true
                     };
-                    console.log('✅ Premium subscription active');
                     
                     // Check if user needs to set password
                     this.checkPasswordNotification(subscriptionResult.subscriptionData.email);
@@ -298,7 +280,6 @@ class JarvisOverlay {
                             currentContent.includes('Message Limit Reached') || 
                             currentContent.includes('message limit') || 
                             (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
-                            console.log('🧹 Clearing message limit notification after subscription check');
                             this.dragOutput.classList.add('hidden');
                             this.dragOutput.innerHTML = '';
                             this.dragOutput.textContent = '';
@@ -307,7 +288,6 @@ class JarvisOverlay {
                 } else {
                     this.licenseStatus = { valid: false, type: 'free' };
                     this.features = {};
-                    console.log('ℹ️ Free tier - subscription not active');
                     // Hide password notification for non-premium users
                     this.hidePasswordNotification();
                 }
@@ -341,7 +321,6 @@ class JarvisOverlay {
             const dismissed = localStorage.getItem(dismissedKey);
             
             if (result.success && !result.hasPassword && !dismissed) {
-                console.log('🔐 User needs to set password, showing notification');
                 this.showPasswordNotification();
             } else {
                 this.hidePasswordNotification();
@@ -397,7 +376,6 @@ class JarvisOverlay {
         // Model switcher is always visible in hamburger menu, but we check premium access when clicked
         // Reset to default model if not premium (only if a non-default model was selected)
         if (!hasPremium && this.selectedModel && this.selectedModel !== 'default') {
-            console.log(`🤖 [MODEL SWITCHER] Resetting to default - premium required for ${this.selectedModel}`);
             this.selectedModel = 'default';
             this.selectedModelName = 'Jarvis';
             if (this.currentModelDisplay) {
@@ -483,7 +461,6 @@ class JarvisOverlay {
 
         // Listen for password set event
         ipcRenderer.on('password-set', (event, email) => {
-            console.log('🔐 Password set notification received for:', email);
             this.hidePasswordNotification();
             // Clear the dismissal flag since password is now set
             localStorage.removeItem('jarvis-password-notification-dismissed');
@@ -491,7 +468,6 @@ class JarvisOverlay {
         
         // Listen for answer screen shortcut trigger
         ipcRenderer.on('trigger-answer-screen', () => {
-            console.log('🖥️ Answer screen triggered via shortcut');
             this.answerThis();
         });
 
@@ -517,7 +493,6 @@ class JarvisOverlay {
                 this.pushToTalkTimeout = setTimeout(() => {
                     if (!this.isPushToTalkActive) {
                         this.isPushToTalkActive = true;
-                        console.log('🎤 Push-to-talk: Starting recording (Control held)');
                         const { ipcRenderer } = window.require('electron');
                         ipcRenderer.invoke('start-push-to-talk');
                     }
@@ -536,7 +511,6 @@ class JarvisOverlay {
                 
                 if (this.isPushToTalkActive) {
                     this.isPushToTalkActive = false;
-                    console.log('🎤 Push-to-talk: Stopping recording (Control released)');
                     const { ipcRenderer } = window.require('electron');
                     ipcRenderer.invoke('stop-push-to-talk');
                 }
@@ -849,11 +823,9 @@ class JarvisOverlay {
     }
 
     async handleSubscriptionActivated(data) {
-        console.log('🎉 Subscription activated event received:', data);
         
         // Stop countdown timer immediately
         if (this.countdownTimerInterval) {
-            console.log('🛑 Stopping countdown timer');
             clearInterval(this.countdownTimerInterval);
             this.countdownTimerInterval = null;
         }
@@ -861,7 +833,6 @@ class JarvisOverlay {
         // Set flag to prevent showing limit notification
         this.subscriptionJustActivated = true;
         this.subscriptionActivatedTime = Date.now();
-        console.log('🏁 Set subscription activation flag - will block limit notifications for 30 seconds');
         
         // Immediately clear any "message limit reached" notifications
         if (this.dragOutput) {
@@ -871,7 +842,6 @@ class JarvisOverlay {
                 currentContent.includes('Message Limit Reached') || 
                 currentContent.includes('message limit') ||
                 (currentContent.includes('Wait') && currentContent.includes('subscribe'))) {
-                console.log('🧹 Clearing message limit notification on subscription activation');
                 this.dragOutput.classList.add('hidden');
                 this.dragOutput.innerHTML = '';
                 this.dragOutput.textContent = '';
@@ -934,7 +904,6 @@ class JarvisOverlay {
             }
         }, 2000); // Check every 2 seconds
         
-        console.log('✅ Subscription activation complete');
     }
 
     showPaywall() {
@@ -1358,9 +1327,7 @@ class JarvisOverlay {
         }
         
         const handleFileInputChange = async (e) => {
-            console.log('📂 File input changed');
             const files = Array.from(e.target.files || []);
-            console.log('📄 Selected files:', files.length);
             if (files.length > 0) {
                 await this.handleSelectedFiles(files);
                 this.hideSettingsMenu();
@@ -1369,9 +1336,7 @@ class JarvisOverlay {
 
         // Add file button - directly opens file picker
         if (this.fileBtn && this.fileInput) {
-            console.log('✅ Add button and file input found, setting up listeners');
             this.fileBtn.addEventListener('click', (e) => {
-                console.log('🖱️ Add button clicked');
                 e.stopPropagation();
                 this.fileInput.value = '';
                 this.fileInput.click();
@@ -1443,7 +1408,6 @@ class JarvisOverlay {
             const stealthModeEnabled = savedPreference === null ? true : savedPreference === 'true';
             this.stealthModeEnabled = stealthModeEnabled; // Initialize state
             this.stealthModeCheckbox.checked = stealthModeEnabled;
-            console.log('🔧 Initial stealth mode state:', stealthModeEnabled);
             
             // Apply on load (with a small delay to ensure Electron is ready)
             // Only enable stealth mode on load if user has premium
@@ -1452,7 +1416,6 @@ class JarvisOverlay {
                 if (stealthModeEnabled && !this.hasPremiumAccess()) {
                     this.stealthModeCheckbox.checked = false;
                     this.stealthModeEnabled = false;
-                    console.log('🔧 Stealth mode disabled on load - requires premium');
                 } else {
                 this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
                 }
@@ -1462,7 +1425,6 @@ class JarvisOverlay {
             // This will fire when checkbox is clicked directly OR when label is clicked
             this.stealthModeCheckbox.addEventListener('change', (e) => {
                 const enabled = e.target.checked;
-                console.log('🔧 Checkbox changed event fired! New state:', enabled);
                 
                 // Check if user has premium access (only allow enabling stealth mode with premium)
                 if (enabled && !this.hasPremiumAccess()) {
@@ -1479,7 +1441,6 @@ class JarvisOverlay {
             
             // Also listen for click events as a backup
             this.stealthModeCheckbox.addEventListener('click', (e) => {
-                console.log('🔧 Checkbox clicked! Current checked state:', this.stealthModeCheckbox.checked);
                 // Don't prevent default - let checkbox toggle naturally
             });
             
@@ -1505,9 +1466,7 @@ class JarvisOverlay {
                     
                     // Always toggle the checkbox manually to ensure it works
                     const currentState = this.stealthModeCheckbox.checked;
-                    console.log('🔧 Toggle item clicked, current state:', currentState);
                     this.stealthModeCheckbox.checked = !currentState;
-                    console.log('🔧 Toggled to:', this.stealthModeCheckbox.checked);
                     
                     // Trigger change event to fire all handlers (including IPC call)
                     const changeEvent = new Event('change', { bubbles: true, cancelable: true });
@@ -1807,7 +1766,6 @@ class JarvisOverlay {
         
         // Auto-update handlers
         ipcRenderer.on('update-available', (event, info) => {
-            console.log('📦 Update available:', info);
             this.pendingUpdate = info;
             this.updateReadyToInstall = false;
             this.showUpdateInMenu(info.version, 'available');
@@ -1815,13 +1773,11 @@ class JarvisOverlay {
         });
 
         ipcRenderer.on('update-download-progress', (event, progress) => {
-            console.log('📥 Download progress:', progress.percent);
             this.showUpdateInMenu(null, 'downloading', progress.percent);
             this.showUpdateNotification(`⬇️ Downloading... ${Math.round(progress.percent)}%`, 'downloading');
         });
 
         ipcRenderer.on('update-downloaded', async (event, info) => {
-            console.log('✅ Update downloaded:', info);
             this.pendingUpdate = info;
             this.updateReadyToInstall = true;
             this.showUpdateInMenu(info.version, 'ready');
@@ -1851,7 +1807,6 @@ class JarvisOverlay {
         });
         
         ipcRenderer.on('update-not-available', (event) => {
-            console.log('✅ App is up to date');
             this.showUpdateNotification("You're up to date! ✅", 'success', true);
         });
     }
@@ -2097,7 +2052,6 @@ class JarvisOverlay {
         // Polar product ID for adding credits
         const creditsProductId = 'f1c1e554-61c7-40fd-802f-b79c238383a2';
         
-        console.log('🛒 Opening Polar checkout for credits...');
 
         if (this.isElectron && window.require) {
             try {
@@ -2681,7 +2635,6 @@ class JarvisOverlay {
             if (!shouldBlock && this.hasReachedMessageLimit()) {
                 // One final check before showing
                 if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
-                    console.log('🚫 Final block - premium detected before showing notification');
                     return;
                 }
                 this.showMessageLimitReached();
@@ -2723,7 +2676,6 @@ class JarvisOverlay {
             
             // Handle Jarvis Low (GPT-5 Mini) model - uses OpenAI API directly
             if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
-                console.log(`🤖 [MODEL SWITCHER] Using Jarvis Low (GPT-5 Mini) via OpenAI API: ${this.lowModelId}`);
                 response = await this.callLowModel(message);
                 
                 // Increment low message count for free users
@@ -2731,17 +2683,13 @@ class JarvisOverlay {
                     this.incrementLowMessageCount();
                 }
             } else if (this.selectedModel && this.selectedModel !== 'default') {
-                console.log(`🤖 [MODEL SWITCHER] Using OpenRouter model: ${this.selectedModel} (${this.selectedModelName})`);
-                console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
                 response = await this.callOpenRouter(message, this.selectedModel);
             } else {
-                console.log(`🤖 [MODEL SWITCHER] Using default Responses API (currentModel: ${this.currentModel})`);
                 response = await this.callChatGPT(message);
             }
             
             // Don't show notification if quiz or other interactive content was displayed
             if (response === '__QUIZ_DISPLAYED__') {
-                console.log('📝 Quiz displayed - skipping showNotification');
                 return;
             }
             
@@ -2805,7 +2753,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     console.warn('⚠️ Screenshot base64 data seems very short:', base64Data.length);
                 }
                 inputContent.push({ type: 'input_image', image_url: screenshot });
-                console.log('📸 Including screenshot in OpenAI API request, total length:', screenshot.length, 'base64 length:', base64Data.length);
                 // Clear screenshot after using it (if it's the instance variable)
                 if (screenshot === this.currentScreenCapture) {
                     this.currentScreenCapture = null;
@@ -2819,16 +2766,11 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${quizHint}${conversationContext}${documentContext}`;
 
             // Debug: Log available tools
-            console.log('🔧 Available tools:', this.tools.map(t => t.name));
-            console.log('🔧 Has web_search tool:', this.tools.some(t => t.name === 'web_search'));
-            console.log('🔧 Has create_quiz tool:', this.tools.some(t => t.name === 'create_quiz'));
-            console.log('🔧 Perplexity access check:', {
                 hasDirectKey: !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== ''),
                 hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
                 apiProxyUrl: this.apiProxyUrl || 'NOT SET',
                 supabaseAnonKey: this.supabaseAnonKey ? 'SET' : 'NOT SET'
             });
-            console.log('Claude tool registered:', this.tools.some(t => t.name === 'askclaude'));
             
             const requestPayload = {
                 model: this.currentModel,
@@ -2837,7 +2779,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 tools: this.tools
             };
             
-            console.log('API Request payload:', JSON.stringify(requestPayload, null, 2));
 
             this.showLoadingNotification();
             
@@ -2846,11 +2787,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (this.isElectron && window.require) {
                 try {
                     const { ipcRenderer } = window.require('electron');
-                    console.log('🔒 Using IPC to main process for OpenAI API');
                     const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
                     
                     if (result && result.ok && result.data) {
-                        console.log('✅ Main process OpenAI call succeeded');
                         // Create a mock response object that looks like a fetch response
                         response = {
                             ok: true,
@@ -2890,7 +2829,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             // Fallback to fetch if IPC didn't work
             if (!response) {
                 if (this.apiProxyUrl && this.supabaseAnonKey) {
-                    console.log('🔒 Using fetch to Supabase Edge Function proxy for OpenAI');
                     response = await fetch(this.apiProxyUrl, {
                         method: 'POST',
                         headers: {
@@ -2908,7 +2846,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     if (!this.apiProxyUrl || !this.supabaseAnonKey) {
                         throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
                     }
-                    console.log('🔒 Using Supabase Edge Function for OpenAI API');
                     response = await fetch(this.apiProxyUrl, {
                         method: 'POST',
                         headers: {
@@ -2991,7 +2928,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             let data = await response.json();
             
             // Debug: Log full response structure to understand format
-            console.log('API Response structure:', JSON.stringify(data, null, 2));
             
             // Check for tool calls in multiple possible locations
             const toolCalls = [];
@@ -3001,7 +2937,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 for (const item of data.output) {
                     // Check for function_call type - may have different statuses or no status
                     if (item.type === 'function_call' || item.function_call) {
-                        console.log('Found function_call in output:', item);
                         
                         // Handle both direct function_call and nested
                         const funcCall = item.function_call || item;
@@ -3036,7 +2971,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             
             // Method 2: Check for tool_calls array (standard format)
             if (data.tool_calls && Array.isArray(data.tool_calls)) {
-                console.log('Found tool_calls array:', data.tool_calls);
                 for (const toolCall of data.tool_calls) {
                     let parsedArgs = {};
                     try {
@@ -3061,7 +2995,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             
             // Method 3: Check choices[0].message.tool_calls (chat completions format)
             if (data.choices && Array.isArray(data.choices) && data.choices[0]?.message?.tool_calls) {
-                console.log('Found tool_calls in choices:', data.choices[0].message.tool_calls);
                 for (const toolCall of data.choices[0].message.tool_calls) {
                     let parsedArgs = {};
                     try {
@@ -3086,16 +3019,8 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             
             // Debug: Log tool calls found
             if (toolCalls.length > 0) {
-                console.log('✅ Tool calls detected:', toolCalls);
-                console.log('Tool call names:', toolCalls.map(tc => tc.name));
-                console.log('Is create_quiz in detected tools?', toolCalls.some(tc => tc.name === 'create_quiz'));
-                console.log('Is askclaude in detected tools?', toolCalls.some(tc => tc.name === 'askclaude'));
             } else {
-                console.log('❌ No tool calls detected in response');
-                console.log('Full API response:', JSON.stringify(data, null, 2));
-                console.log('Response keys:', Object.keys(data));
                 if (data.output) {
-                    console.log('Output array items:', data.output.map(item => ({ type: item.type, name: item.name })));
                 }
             }
             
@@ -3116,7 +3041,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             }
                         } else if (toolCall.name === 'web_search' || toolCall.name === 'search') {
                             // Support both "web_search" and "search" (backend may use either)
-                            console.log('🔍 Search tool called!', {
                                 name: toolCall.name,
                                 arguments: toolCall.arguments,
                                 hasProxy: !!(this.apiProxyUrl && this.supabaseAnonKey),
@@ -3128,9 +3052,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                 inputContent.push({ type: 'input_text', text: 'Web search: No query provided' });
                                 this.showNotification('⚠️ No search query provided');
                             } else {
-                                console.log('🔍 Executing web search via Perplexity with query:', query);
                                 const result = await this.executeSearchWeb(query);
-                                console.log('✅ Web search completed, result length:', result?.length || 0);
                                 inputContent.push({ type: 'input_text', text: `Web search: ${result}` });
                             }
                         } else if (toolCall.name === 'askclaude') {
@@ -3140,32 +3062,22 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                 inputContent.push({ type: 'input_text', text: 'Claude analysis: No question provided' });
                                 this.showNotification('⚠️ Step 7c: No question provided for Claude');
                             } else {
-                                console.log('Calling Claude with question:', question);
                                 const result = await this.executeAskClaude(question);
-                                console.log('Claude response received, length:', result?.length || 0);
                                 // Pass Claude's full response - don't truncate it
                                 inputContent.push({ type: 'input_text', text: `Claude's detailed analysis:\n\n${result}` });
                             }
                         } else if (toolCall.name === 'create_quiz') {
-                            console.log('📝 QUIZ TOOL CALLED! Full toolCall:', JSON.stringify(toolCall, null, 2));
-                            console.log('📝 toolCall.arguments:', toolCall.arguments);
-                            console.log('📝 toolCall.arguments type:', typeof toolCall.arguments);
                             
                             try {
                                 const topic = toolCall.arguments?.topic || 'General Knowledge';
                                 const questions = toolCall.arguments?.questions || [];
                                 
-                                console.log('📝 Parsed topic:', topic);
-                                console.log('📝 Parsed questions:', questions);
-                                console.log('📝 Questions length:', questions.length);
                                 
                                 if (questions.length === 0) {
                                     console.error('📝 Quiz tool called without questions:', toolCall.arguments);
                                     inputContent.push({ type: 'input_text', text: 'Quiz: No questions provided by AI' });
                                     this.showNotification('⚠️ Quiz creation failed: No questions generated');
                                 } else {
-                                    console.log('📝 Creating quiz on topic:', topic, 'with', questions.length, 'questions');
-                                    console.log('📝 First question:', JSON.stringify(questions[0], null, 2));
                                     // Stop loading and show quiz
                                     this.stopLoadingAnimation();
                                     if (this.dragOutput) {
@@ -3198,8 +3110,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     ? `You are Jarvis. Claude has provided a detailed analysis. Present Claude's analysis clearly and comprehensively. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Don't summarize or shorten it unless the user asks.${conversationContext}`
                     : `You are Jarvis. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}`;
                 
-                console.log('🔄 Making second API call with tool results. Has Claude response:', hasClaudeResponse);
-                console.log('🔄 isElectron:', this.isElectron, 'hasRequire:', !!window.require);
                 
                 const secondCallPayload = {
                     model: this.currentModel,
@@ -3211,13 +3121,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 if (this.isElectron && window.require) {
                     try {
                         const { ipcRenderer } = window.require('electron');
-                        console.log('🔒 SECOND CALL: Using IPC for second OpenAI call (with tool results)');
-                        console.log('📤 SECOND CALL: Invoking call-openai-api via IPC...');
                         const result = await ipcRenderer.invoke('call-openai-api', secondCallPayload);
-                        console.log('📥 SECOND CALL: IPC result:', { ok: result?.ok, status: result?.status });
                         
                         if (result && result.ok && result.data) {
-                            console.log('✅ Second OpenAI call via IPC succeeded');
                             data = result.data;
                         } else {
                             console.error('❌ Second OpenAI call via IPC failed:', result);
@@ -3367,8 +3273,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
             
             // Force use of hardcoded values (ignore loaded values since test script works)
-            console.log('🔒 Using Supabase Edge Function proxy for Perplexity (hardcoded values from test script)');
-            console.log('📤 Request details:', {
                 url: PROXY_URL,
                 anonKeyPrefix: SUPABASE_ANON_KEY.substring(0, 30) + '...',
                 isElectron: this.isElectron
@@ -3378,12 +3282,8 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (this.isElectron && window.require) {
                 try {
                     const { ipcRenderer } = window.require('electron');
-                    console.log('📤 Making Perplexity API call via main process IPC');
-                    console.log('📤 Request payload:', JSON.stringify(requestPayload, null, 2));
                     
                     const result = await ipcRenderer.invoke('call-perplexity-api', requestPayload);
-                    console.log('📥 IPC result received (FULL):', JSON.stringify(result, null, 2));
-                    console.log('📥 IPC result received (summary):', {
                         ok: result.ok,
                         status: result.status,
                         hasData: !!result.data,
@@ -3392,7 +3292,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     });
                     
                     if (result && result.ok && result.data) {
-                        console.log('✅ Main process API call succeeded');
                         // Handle success - extract content directly
                         const perplexityData = result.data;
                         
@@ -3440,7 +3339,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             // Fallback to direct fetch if IPC didn't work or not in Electron
             if (!perplexityResponse) {
                 try {
-                    console.log('📤 Making fetch request to:', PROXY_URL);
                     perplexityResponse = await fetch(PROXY_URL, {
                         method: 'POST',
                         headers: {
@@ -3454,7 +3352,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             payload: requestPayload
                         })
                     });
-                    console.log('✅ Fetch request completed, status:', perplexityResponse.status);
                 } catch (fetchError) {
                     console.error('❌ Fetch request failed:', fetchError);
                     this.stopLoadingAnimation();
@@ -3473,7 +3370,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 return errorMsg;
             }
             
-            console.log('📥 Perplexity response status:', perplexityResponse.status, perplexityResponse.statusText);
             
             if (!perplexityResponse.ok) {
                 const errorText = await perplexityResponse.text().catch(() => 'Unknown error');
@@ -3643,11 +3539,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (this.isElectron && window.require) {
                 try {
                     const { ipcRenderer } = window.require('electron');
-                    console.log('🔒 Calling OpenAI (Low Model) via main process IPC');
                     const result = await ipcRenderer.invoke('call-openai-api', requestPayload, true); // true = isLowModel
                     
                     if (result && result.ok && result.data) {
-                        console.log('✅ Low model call succeeded');
                         const content = this.extractText(result.data) || 'No response generated';
                         
                         // Add to conversation history
@@ -3715,7 +3609,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
         try {
             // Check if this is a Claude model - route to Claude API directly
             if (model.startsWith('anthropic/claude-')) {
-                console.log(`🤖 Detected Claude model: ${model}, routing to Claude API`);
                 return await this.callClaudeDirect(message, model);
             }
 
@@ -3745,7 +3638,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
             const instructions = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}${voiceInstructions}`;
 
-            console.log(`🤖 Calling OpenRouter with model: ${model}`);
             
             // Build message content - include screenshot if available
             let userContent;
@@ -3754,7 +3646,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     { type: 'text', text: message },
                     { type: 'image_url', image_url: { url: this.currentScreenCapture } }
                 ];
-                console.log('📸 Including screenshot in OpenRouter request');
                 // Clear screenshot after using it
                 this.currentScreenCapture = null;
             } else {
@@ -3773,7 +3664,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     ]
                 };
                 
-                console.log('🔒 Calling OpenRouter via main process IPC');
                 const result = await ipcRenderer.invoke('call-openrouter-api', requestPayload, false); // false = not low model (low model uses OpenAI API)
                 
                 if (!result.ok) {
@@ -3956,13 +3846,11 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 messages: messages
             };
 
-            console.log(`🤖 Calling Claude API with model: ${claudeModel}`);
             
             // Use IPC to call Claude through main process (for token tracking and limit enforcement)
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
                 
-                console.log('🔒 Calling Claude via main process IPC');
                 const result = await ipcRenderer.invoke('call-claude-api', requestBody);
                 
                 if (!result.ok) {
@@ -4129,7 +4017,6 @@ ${currentQuestion}`;
                 messages: messages
             };
             
-            console.log('Calling Claude API (tool call) with:', {
                 model: requestBody.model,
                 messageCount: messages.length
             });
@@ -4138,7 +4025,6 @@ ${currentQuestion}`;
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
                 
-                console.log('🔒 Calling Claude (tool) via main process IPC');
                 const result = await ipcRenderer.invoke('call-claude-api', requestBody);
                 
                 if (!result.ok) {
@@ -4175,7 +4061,6 @@ ${currentQuestion}`;
                         .filter(block => block.type === 'text')
                         .map(block => block.text)
                         .join('\n\n');
-                    console.log('Claude response extracted, length:', textContent.length);
                 } else if (claudeData.content && typeof claudeData.content === 'string') {
                     textContent = claudeData.content;
                 } else {
@@ -4348,7 +4233,6 @@ ${currentQuestion}`;
         const textContent = String(text || '');
         const isError = textContent.startsWith('❌') || textContent.startsWith('⚠️');
         if (this.quizState && this.dragOutput.classList.contains('quiz-active') && !isError) {
-            console.log('📝 Quiz active - skipping notification:', textContent.substring(0, 50));
             return;
         }
         
@@ -4359,7 +4243,6 @@ ${currentQuestion}`;
         
         // Don't show "message limit reached" notifications if user has premium
         if (this.hasPremiumAccess() && (content.includes('Message limit reached') || content.includes('message limit reached') || content.includes('Message Limit Reached') || content.includes('message limit') || (content.includes('Wait') && content.includes('subscribe')))) {
-            console.log('🚫 Blocked message limit notification in showNotification - user has premium');
             return;
         }
         
@@ -4681,8 +4564,6 @@ ${currentQuestion}`;
     }
 
     showQuiz(topic, questions) {
-        console.log('📝 showQuiz called with topic:', topic);
-        console.log('📝 questions received:', JSON.stringify(questions, null, 2));
         
         // Stop any loading animation first
         this.stopLoadingAnimation();
@@ -4719,7 +4600,6 @@ ${currentQuestion}`;
             return;
         }
         
-        console.log('📝 Valid quiz data - creating quiz with', questions.length, 'questions');
         
         // Store quiz state and show type selection
         this.quizState = {
@@ -5058,7 +4938,6 @@ ${currentQuestion}`;
             display.textContent = savedOpacity + '%';
         }
         
-        console.log('✅ Opacity slider ready, value:', savedOpacity + '%');
     }
 
     toggleModelSubmenu() {
@@ -5138,7 +5017,6 @@ ${currentQuestion}`;
     
     
     setOverlayOpacity(opacity) {
-        console.log(`setOverlayOpacity called with: ${opacity}%`);
         // Store opacity for new messages
         this.currentOpacity = opacity;
         const opacityValue = (opacity / 100).toString();
@@ -5182,7 +5060,6 @@ ${currentQuestion}`;
             });
         });
         
-        console.log(`Opacity set to ${opacity}% for all overlay elements`);
     }
     
     setOverlayColor(color) {
@@ -5452,10 +5329,6 @@ ${currentQuestion}`;
     }
 
     selectModel(model, modelName) {
-        console.log(`🤖 [MODEL SWITCHER] selectModel called: ${modelName} (${model})`);
-        console.log(`🤖 [MODEL SWITCHER] Previous model: ${this.selectedModel} (${this.selectedModelName})`);
-        console.log(`🤖 [MODEL SWITCHER] Has premium: ${this.hasPremiumAccess()}`);
-        console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
         
         // Free users can only use the default Jarvis model (with Low/High toggle)
         // Block selection of any other model
@@ -5479,7 +5352,6 @@ ${currentQuestion}`;
         // Update the display in the hamburger menu
         if (this.currentModelDisplay) {
             this.currentModelDisplay.textContent = modelName;
-            console.log(`🤖 [MODEL SWITCHER] Updated display to: ${modelName}`);
         } else {
             console.warn(`🤖 [MODEL SWITCHER] currentModelDisplay element not found!`);
         }
@@ -5519,7 +5391,6 @@ ${currentQuestion}`;
             this.grokVoiceMode = false;
         }
         
-        console.log(`🤖 [MODEL SWITCHER] Successfully switched to ${modelName} (${model})`);
     }
 
     clearChatHistory() {
@@ -5644,9 +5515,7 @@ ${currentQuestion}`;
         
         try {
             const { ipcRenderer } = window.require('electron');
-            console.log(`🔄 Calling IPC to toggle stealth mode to: ${enabled}`);
             ipcRenderer.invoke('toggle-stealth-mode', enabled).then((success) => {
-                console.log(`✅ Stealth mode IPC result: ${success}, enabled: ${enabled}`);
                 if (success && showNotification) {
                     const message = enabled ? 'Stealth Mode: ON 🥷 (Hidden from screen share, sounds disabled)' : 'Stealth Mode: OFF 👁️ (Visible in screen share)';
                     this.showNotification(message, true);
@@ -5705,7 +5574,6 @@ ${currentQuestion}`;
                     const audio = new window._originalAudio(...args);
                     const originalPlay = audio.play.bind(audio);
                     audio.play = function() {
-                        console.log('🔇 Audio playback blocked in stealth mode');
                         return Promise.resolve(); // Return resolved promise to prevent errors
                     };
                     return audio;
@@ -5970,7 +5838,6 @@ ${currentQuestion}`;
             if (!shouldBlockLimit && this.hasReachedMessageLimit()) {
                 // Final check before showing
                 if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
-                    console.log('🚫 Blocked in analyzeFilesWithChatGPT - premium detected');
                     return;
                 }
                 this.showMessageLimitReached();
@@ -6011,7 +5878,6 @@ ${currentQuestion}`;
             if (this.selectedModel && this.selectedModel !== 'default') {
                 // Check if this is a Claude model - route to Claude API directly
                 if (this.selectedModel.startsWith('anthropic/claude-')) {
-                    console.log(`🤖 Detected Claude model for file analysis: ${this.selectedModel}`);
                     
                     // Check if this is a quiz request
                     const lowerPrompt = prompt.toLowerCase();
@@ -6047,7 +5913,6 @@ User request: ${prompt}`;
                             if (quizMatch) {
                                 const quizData = JSON.parse(quizMatch[0]);
                                 if (quizData.quiz && quizData.questions && quizData.questions.length > 0) {
-                                    console.log('📝 Quiz detected in Claude response!');
                                     this.stopLoadingAnimation();
                                     if (this.dragOutput) {
                                         this.dragOutput.classList.remove('loading-notification');
@@ -6063,7 +5928,6 @@ User request: ${prompt}`;
                                 }
                             }
                         } catch (parseError) {
-                            console.log('No quiz JSON found in Claude response, treating as regular analysis');
                         }
                     }
                     
@@ -6143,7 +6007,6 @@ User request: ${prompt}`;
                         if (quizMatch) {
                             const quizData = JSON.parse(quizMatch[0]);
                             if (quizData.quiz && quizData.questions && quizData.questions.length > 0) {
-                                console.log('📝 Quiz detected in OpenRouter response!');
                                 this.stopLoadingAnimation();
                                 if (this.dragOutput) {
                                     this.dragOutput.classList.remove('loading-notification');
@@ -6160,7 +6023,6 @@ User request: ${prompt}`;
                             }
                         }
                     } catch (parseError) {
-                        console.log('No quiz JSON found in response, treating as regular analysis');
                     }
                     
                     analysis = responseContent;
@@ -6191,11 +6053,9 @@ User request: ${prompt}`;
                 if (this.isElectron && window.require) {
                     try {
                         const { ipcRenderer } = window.require('electron');
-                        console.log('🔒 Using IPC to main process for file analysis');
                         const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
                         
                         if (result && result.ok && result.data) {
-                            console.log('✅ Main process file analysis succeeded');
                             apiData = result.data;
                         } else {
                             // Check if it's a limit exceeded error
@@ -6218,7 +6078,6 @@ User request: ${prompt}`;
                 // Fallback to API proxy if IPC didn't work
                 if (!apiData && !response) {
                     if (this.apiProxyUrl && this.supabaseAnonKey) {
-                        console.log('🔒 Using Supabase proxy for file analysis');
                         response = await fetch(this.apiProxyUrl, {
                             method: 'POST',
                             headers: {
@@ -6248,7 +6107,6 @@ User request: ${prompt}`;
                     const quizCall = toolCalls.find(tc => tc.name === 'create_quiz');
                     
                     if (quizCall) {
-                        console.log('📝 Quiz tool called from file analysis!', quizCall);
                         try {
                             // Parse arguments if they're a string
                             let args = quizCall.arguments;
@@ -6274,7 +6132,6 @@ User request: ${prompt}`;
                                 return; // Exit early - quiz is displayed
                             } else {
                                 // Quiz tool called but no questions - treat as regular response
-                                console.log('📝 Quiz tool called but no questions generated');
                             }
                         } catch (quizError) {
                             console.error('📝 Error creating quiz:', quizError);
@@ -6792,7 +6649,6 @@ User request: ${prompt}`;
             }
             
             const audioBlob = await response.blob();
-            console.log('🔊 Audio blob received, size:', audioBlob.size);
             const audioUrl = URL.createObjectURL(audioBlob);
             const audio = new Audio(audioUrl);
             audio.volume = 1.0;
@@ -6818,7 +6674,6 @@ User request: ${prompt}`;
         
         // Case 1: URL is the ONLY thing in the message (just pasted a link)
         if (textWithoutUrl.length === 0) {
-            console.log('📄 URL is alone - will load document');
             return true;
         }
         
@@ -6843,7 +6698,6 @@ User request: ${prompt}`;
         
         for (const pattern of loadIntentPatterns) {
             if (pattern.test(textWithoutUrl)) {
-                console.log('📄 Detected document loading intent - will load document');
                 return true;
             }
         }
@@ -6854,7 +6708,6 @@ User request: ${prompt}`;
             // Short messages with certain keywords suggest document loading
             const loadKeywords = ['read', 'load', 'open', 'extract', 'summarize', 'summary', 'analyze', 'check', 'article', 'page', 'document'];
             if (words.some(word => loadKeywords.includes(word))) {
-                console.log('📄 Short message with load keyword - will load document');
                 return true;
             }
         }
@@ -6865,7 +6718,6 @@ User request: ${prompt}`;
         // - "what is the price on https://..."
         // - "is https://... a good source?"
         // - "compare https://... with ..."
-        console.log('📄 URL is part of a larger message - will NOT auto-load document');
         return false;
     }
 
@@ -7081,7 +6933,6 @@ User Question: ${question}`;
                 this.saveMessageCount();
                 this.saveMessageResetTimestamp();
                 this.updateMessageCounter();
-                console.log('Message count reset after 24 hours');
             }
         } catch (e) {
             console.error('Failed to check and reset message count:', e);
@@ -7127,7 +6978,6 @@ User Question: ${question}`;
         if (this.subscriptionJustActivated && this.subscriptionActivatedTime) {
             const timeSinceActivation = Date.now() - this.subscriptionActivatedTime;
             if (timeSinceActivation < 30000) { // 30 seconds grace period
-                console.log('⏱️ Subscription just activated, blocking message limit check');
                 return false;
             } else {
                 // Clear flag after grace period
@@ -7203,7 +7053,6 @@ User Question: ${question}`;
                 this.lowMessageCount = 0;
                 this.saveLowMessageCount();
                 this.saveLowMessageResetTimestamp();
-                console.log('Low model message count reset after 24 hours');
             }
         } catch (e) {
             console.error('Failed to check and reset low message count:', e);
@@ -7237,7 +7086,6 @@ User Question: ${question}`;
     }
 
     switchToLowModel(silent = false) {
-        console.log('🔄 Switching to Jarvis Low');
         this.selectedModel = 'jarvis-low';
         this.selectedModelName = 'Jarvis Low';
         this.isLowModelMode = true;
@@ -7279,7 +7127,6 @@ User Question: ${question}`;
         checkbox.addEventListener('change', (e) => {
             e.stopPropagation();
             const isHigh = e.target.checked;
-            console.log(`🔄 Tier toggle changed to: ${isHigh ? 'High' : 'Low'}`);
             
             if (isHigh) {
                 // Switch to High (default Jarvis)
@@ -7314,7 +7161,6 @@ User Question: ${question}`;
         if (this.hasPremiumAccess()) {
             this.messageCounter.classList.add('hidden');
             this.messageCounter.classList.remove('upgrade-btn');
-            console.log('Premium access - hiding message counter');
             return;
         }
         
@@ -7350,12 +7196,10 @@ User Question: ${question}`;
                     }
                 }
             };
-            console.log('Free tier - showing upgrade button (0 messages remaining)');
         } else {
             this.messageCountText.textContent = `${remaining}/${this.maxFreeMessages}`;
             this.messageCounter.style.cursor = 'default';
             this.messageCounter.onclick = null;
-            console.log(`Free tier - showing ${remaining}/${this.maxFreeMessages} messages remaining`);
         
         if (remaining <= 2) {
             this.messageCounter.classList.add('critical');
@@ -7407,7 +7251,6 @@ User Question: ${question}`;
         
         // Block 1: Check premium access (synchronous check)
         if (this.hasPremiumAccess()) {
-            console.log('🚫 Block 1: Blocked - user has premium access');
             return;
         }
         
@@ -7416,12 +7259,10 @@ User Question: ${question}`;
             if (this.subscriptionActivatedTime) {
                 const timeSinceActivation = Date.now() - this.subscriptionActivatedTime;
                 if (timeSinceActivation < 30000) {
-                    console.log('🚫 Block 2: Blocked - subscription just activated (grace period)');
                     return;
                 }
             } else {
                 // Flag is set but no time - still block
-                console.log('🚫 Block 2b: Blocked - subscription activation flag set');
                 return;
             }
         }
@@ -7429,18 +7270,15 @@ User Question: ${question}`;
         // Block 3: Check license status directly
         if (this.licenseStatus && this.licenseStatus.valid && 
             (this.licenseStatus.type === 'premium' || this.licenseStatus.type === 'active')) {
-            console.log('🚫 Block 3: Blocked - license status shows premium');
             return;
         }
         
         // Block 4: Stop countdown timer if it's running
         if (this.countdownTimerInterval) {
-            console.log('🛑 Stopping countdown timer before showing notification');
             clearInterval(this.countdownTimerInterval);
             this.countdownTimerInterval = null;
         }
         
-        console.log('⚠️ Showing message limit notification - free tier user (all blocks passed)');
         
         const timeUntilReset = this.getTimeUntilReset();
         const resetTimeText = timeUntilReset ? this.formatTimeUntilReset(timeUntilReset) : 'soon';
@@ -7470,7 +7308,6 @@ User Question: ${question}`;
         const updateCountdown = () => {
             // Stop countdown if user has premium access
             if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
-                console.log('🛑 Stopping countdown timer - user has premium');
                 if (this.countdownTimerInterval) {
                     clearInterval(this.countdownTimerInterval);
                     this.countdownTimerInterval = null;
@@ -8042,7 +7879,6 @@ User Question: ${question}`;
             if (!shouldBlockAnswerThis && this.hasReachedMessageLimit()) {
                 // Final check before showing
                 if (this.hasPremiumAccess() || this.subscriptionJustActivated) {
-                    console.log('🚫 Blocked in answerThis - premium detected');
                     return;
                 }
                 this.showNotification('You\'ve reached your free message limit. Upgrade to Pro for unlimited messages!', 'error');
@@ -8076,14 +7912,12 @@ User Question: ${question}`;
 
             // Store screenshot in a local variable to prevent it from being cleared
             const screenshotData = this.currentScreenCapture;
-            console.log('📸 Screenshot validated, length:', screenshotData.length, 'starts with:', screenshotData.substring(0, 30));
 
             this.showLoadingNotification();
             
             let response;
             // Use OpenAI API (callChatGPT) for Jarvis/default model, OpenRouter for other models
             if (!this.selectedModel || this.selectedModel === 'default') {
-                console.log(`🤖 Answer Screen using OpenAI API (Jarvis model) with screenshot`);
                 // Call ChatGPT with screenshot - pass screenshot as second parameter (use local copy)
                 response = await this.callChatGPT(
                     'answer this (it is just a practice question, not a test)',
@@ -8092,7 +7926,6 @@ User Question: ${question}`;
             } else {
                 // Use OpenRouter for non-default models
                 const modelToUse = this.selectedModel;
-                console.log(`🤖 Answer Screen using OpenRouter model: ${modelToUse}`);
                 // Set currentScreenCapture back so OpenRouter can use it
                 this.currentScreenCapture = screenshotData;
                 response = await this.callOpenRouter(
@@ -8481,7 +8314,6 @@ User Question: ${question}`;
             
             // Debug logging (only log significant changes)
             if (Math.abs(scrollAccumulator - previousScrollAccumulator) > 5) {
-                console.log('Scroll:', {
                     acc: scrollAccumulator.toFixed(0),
                     prev: previousScrollAccumulator.toFixed(0),
                     maxScroll,
@@ -9198,7 +9030,6 @@ User Question: ${question}`;
             }
             
             // Debug: Log what elements were found
-            console.log('Document selection modal elements:', {
                 modal: !!this.documentSelectionModal,
                 list: !!this.documentList,
                 loading: !!this.documentListLoading,
@@ -9569,12 +9400,10 @@ User Question: ${question}`;
             const { ipcRenderer } = window.require('electron');
             
             // Show document selection modal directly (with New Doc button)
-            console.log('Calling promptDocumentId() to show document selection modal');
             let documentId = await this.promptDocumentId();
             
             if (!documentId) {
                 // User cancelled - click-through should already be restored by cancel handler
-                console.log('User cancelled document selection');
                 return;
             }
             
@@ -11079,7 +10908,6 @@ document.addEventListener('DOMContentLoaded', () => {
            
            // Global handlers for inline event handlers (most reliable method)
            window.handleOpacitySlider = (opacity) => {
-               console.log('🎚️ Opacity slider changed:', opacity + '%');
                const opacityValue = parseInt(opacity);
                jarvis.currentOpacity = opacityValue;
                jarvis.setOverlayOpacity(opacityValue);
@@ -11092,7 +10920,6 @@ document.addEventListener('DOMContentLoaded', () => {
            };
            
            window.handleColorPicker = (color) => {
-               console.log('🎨 Color picker changed:', color);
                jarvis.setOverlayColor(color);
                // Hide color submenu after selection
                const colorSubmenu = document.getElementById('color-submenu');
@@ -11100,19 +10927,13 @@ document.addEventListener('DOMContentLoaded', () => {
            };
            
            window.toggleColorSubmenu = () => {
-               console.log('🎨 toggleColorSubmenu called');
                const colorSubmenu = document.getElementById('color-submenu');
-               console.log('🎨 colorSubmenu element:', colorSubmenu);
                if (colorSubmenu) {
-                   console.log('🎨 Current classes:', colorSubmenu.className);
                    if (colorSubmenu.classList.contains('hidden')) {
                        colorSubmenu.classList.remove('hidden');
-                       console.log('🎨 Removed hidden class - submenu should be visible');
                    } else {
                        colorSubmenu.classList.add('hidden');
-                       console.log('🎨 Added hidden class - submenu should be hidden');
            }
-                   console.log('🎨 New classes:', colorSubmenu.className);
                } else {
                    console.error('🎨 Color submenu element not found!');
                }

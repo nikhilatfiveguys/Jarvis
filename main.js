@@ -60,7 +60,6 @@ let nativeContentProtection = null;
 if (process.platform === 'darwin') {
     try {
         nativeContentProtection = require('./native/mac-content-protection');
-        console.log('✅ Native content protection module loaded');
     } catch (error) {
         console.warn('⚠️ Native content protection module not available:', error.message);
         console.warn('   Screen recording protection will use Electron\'s built-in API only');
@@ -123,7 +122,6 @@ class JarvisApp {
             const keyPreview = this.openaiApiKey.length > 7 
                 ? `${this.openaiApiKey.substring(0, 7)}...` 
                 : '***';
-            console.log(`✅ Initializing voice recorder with OpenAI API key: ${keyPreview}`);
             this.voiceRecorder = new VoiceRecorder(this.openaiApiKey);
         } else {
             console.warn('⚠️ OpenAI API key not configured. Voice recording will be disabled.');
@@ -183,14 +181,12 @@ class JarvisApp {
         
         // Handle update events
         updater.on('checking-for-update', () => {
-            console.log('Checking for updates...');
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('update-checking');
             }
         });
         
         updater.on('update-available', (info) => {
-            console.log('Update available:', info.version);
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('update-available', {
                     version: info.version,
@@ -201,7 +197,6 @@ class JarvisApp {
         });
         
         updater.on('update-not-available', (info) => {
-            console.log('Update not available. Current version is latest.');
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('update-not-available');
             }
@@ -230,7 +225,6 @@ class JarvisApp {
         });
         
         updater.on('update-downloaded', (info) => {
-            console.log('Update downloaded:', info.version);
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('update-downloaded', {
                     version: info.version,
@@ -381,13 +375,11 @@ class JarvisApp {
         // Register the new shortcut
         try {
             globalShortcut.register(shortcut, () => {
-                console.log('🖥️ Answer Screen shortcut triggered');
                 if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                     this.mainWindow.webContents.send('trigger-answer-screen');
                 }
             });
             this.currentAnswerScreenShortcut = shortcut;
-            console.log('✅ Answer screen shortcut registered:', shortcut);
         } catch (e) {
             console.error('Failed to register answer screen shortcut:', e);
         }
@@ -425,11 +417,9 @@ class JarvisApp {
         // Register the new shortcut
         try {
             globalShortcut.register(shortcut, () => {
-                console.log('🎤 Voice shortcut triggered');
                 this.toggleVoiceRecording();
             });
             this.currentVoiceShortcut = shortcut;
-            console.log('✅ Voice shortcut registered:', shortcut);
         } catch (e) {
             console.error('Failed to register voice shortcut:', e);
         }
@@ -492,24 +482,17 @@ class JarvisApp {
         const userDataPath = app.getPath('userData');
         const onboardingFile = path.join(userDataPath, 'onboarding_complete.json');
         
-        console.log('Checking onboarding status at:', onboardingFile);
-        console.log('File exists?', fs.existsSync(onboardingFile));
         
         if (fs.existsSync(onboardingFile)) {
             try {
                 const fileContent = fs.readFileSync(onboardingFile, 'utf8');
-                console.log('File content:', fileContent);
                 const data = JSON.parse(fileContent);
-                console.log('Onboarding file exists, completed:', data.completed);
                 const result = data.completed === true;
-                console.log('Returning:', result);
                 return result;
             } catch (error) {
-                console.log('Error reading onboarding file:', error);
                 return false;
             }
         }
-        console.log('Onboarding file does not exist, showing onboarding');
         // FORCE SHOW ONBOARDING - return false to always show onboarding
         return false;
     }
@@ -532,7 +515,6 @@ class JarvisApp {
             return;
         }
 
-        console.log('Creating onboarding window, step:', step);
 
         const windowOptions = {
             width: 520,
@@ -566,14 +548,11 @@ class JarvisApp {
         // Load the appropriate onboarding screen
         if (step === 'features') {
             this.onboardingWindow.loadFile('onboarding-features.html');
-            console.log('Loading features onboarding');
         } else {
             this.onboardingWindow.loadFile('onboarding.html');
-            console.log('Loading permissions onboarding');
                 }
         
         this.onboardingWindow.on('closed', () => {
-            console.log('Onboarding window closed');
             // Only clear reference if we're not transitioning (transition handler will manage it)
             if (!this.isTransitioningOnboarding) {
             this.onboardingWindow = null;
@@ -583,18 +562,15 @@ class JarvisApp {
         });
 
         this.onboardingWindow.once('ready-to-show', () => {
-            console.log('Onboarding window ready to show');
             if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
                 this.onboardingWindow.show();
                 this.onboardingWindow.focus();
                 this.onboardingWindow.setAlwaysOnTop(true);
-                console.log('Onboarding window should now be visible');
             }
         });
 
         // Also show it when the page finishes loading
         this.onboardingWindow.webContents.once('did-finish-load', () => {
-            console.log('Onboarding page finished loading');
             if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
                 this.onboardingWindow.show();
                 this.onboardingWindow.focus();
@@ -653,10 +629,8 @@ class JarvisApp {
         try {
             // Check current permission status
             const screenStatus = systemPreferences.getMediaAccessStatus('screen');
-            console.log('🔐 Current screen recording permission status:', screenStatus);
             
             if (screenStatus === 'granted') {
-                console.log('✅ Screen recording permission already granted');
                 this.screenRecordingPermissionGranted = true;
                 return;
             }
@@ -664,7 +638,6 @@ class JarvisApp {
             this.screenRecordingPermissionGranted = false;
             
             // Permission not granted - show banner and trigger the macOS dialog
-            console.log('🔐 Screen recording permission not granted, triggering permission dialog...');
             
             // Notify the overlay to show permission banner FIRST (before dialog appears)
             setTimeout(() => {
@@ -681,11 +654,9 @@ class JarvisApp {
                     thumbnailSize: { width: 100, height: 100 }
                 });
             } catch (e) {
-                console.log('🔐 Permission request triggered');
             }
             
         } catch (error) {
-            console.log('🔐 Screen recording permission error:', error.message);
         }
     }
 
@@ -1064,7 +1035,6 @@ class JarvisApp {
 
         // Handle paywall events
         ipcMain.on('paywall-complete', async () => {
-            console.log('Paywall complete event received');
             if (this.paywallWindow) {
                 this.paywallWindow.close();
                 this.paywallWindow = null;
@@ -1145,7 +1115,6 @@ class JarvisApp {
 
         // Handle password set notification
         ipcMain.on('password-set', (event, email) => {
-            console.log('🔐 Password set for:', email);
             // Notify main window to hide password notification
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('password-set', email);
@@ -1550,7 +1519,6 @@ class JarvisApp {
                         }, 100);
                     }
                     
-                    console.log('✅ [MAIN] make-interactive completed (no focus steal)');
                     return { success: true };
                 } catch (error) {
                     console.error('❌ [MAIN] Error making window interactive:', error);
@@ -1635,13 +1603,11 @@ class JarvisApp {
                 if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                     // Temporarily ensure content protection is enabled for screenshot
                     // The overlay will stay visible but won't appear in the screenshot
-                    console.log('📸 Ensuring content protection is enabled for screenshot');
                     this.mainWindow.setContentProtection(true);
                 }
                 
                 // Check screen recording permission status first
                 const screenStatus = systemPreferences.getMediaAccessStatus('screen');
-                console.log('📸 Screen recording permission status:', screenStatus);
                 
                 // Use Electron's built-in desktopCapturer with proper error handling
                 let sources;
@@ -1936,7 +1902,6 @@ class JarvisApp {
                         globalShortcut.unregister(currentShortcut);
                     } catch (_) {}
                 }
-                console.log('Custom toggle shortcut unbound (defaults still active)');
             } catch (e) {
                 console.error('Failed to unbind toggle shortcut:', e);
             }
@@ -1958,7 +1923,6 @@ class JarvisApp {
                     globalShortcut.unregister(this.currentAnswerScreenShortcut);
                     this.currentAnswerScreenShortcut = null;
                 }
-                console.log('Answer screen shortcut unbound');
             } catch (e) {
                 console.error('Failed to unbind answer screen shortcut:', e);
             }
@@ -2019,7 +1983,6 @@ class JarvisApp {
                 try {
                     globalShortcut.register('Option+V', () => { this.toggleVoiceRecording(); });
                 } catch (_) {}
-                console.log('Voice shortcut unbound, defaults restored');
             } catch (e) {
                 console.error('Failed to unbind voice shortcut:', e);
             }
@@ -2169,7 +2132,6 @@ class JarvisApp {
         // Handle stealth mode toggle
         ipcMain.handle('toggle-stealth-mode', async (_event, enabled) => {
             try {
-                console.log(`🔄 Toggling stealth mode to: ${enabled}`);
                 
                 // Apply to all windows (including future ones)
                 const windows = BrowserWindow.getAllWindows();
@@ -2188,8 +2150,6 @@ class JarvisApp {
                 const stealthFile = path.join(userDataPath, 'stealth_mode.json');
                 fs.writeFileSync(stealthFile, JSON.stringify({ enabled: enabled }, null, 2));
                 
-                console.log(`✅ Stealth mode ${enabled ? 'ENABLED' : 'DISABLED'} - Protected ${protectedCount} windows`);
-                console.log(`   Windows will be ${enabled ? 'HIDDEN' : 'VISIBLE'} in screen sharing`);
                 
                 return true;
             } catch (error) {
@@ -2204,7 +2164,6 @@ class JarvisApp {
                 // On macOS, we can't directly disable system sounds, but we can prevent
                 // our app from triggering them. The CSS in renderer process handles visual feedback.
                 // This handler exists for future cross-platform support.
-                console.log(`🔇 System sounds ${disabled ? 'DISABLED' : 'ENABLED'} for stealth mode`);
                 return true;
             } catch (error) {
                 console.error('❌ Error disabling system sounds:', error);
@@ -2407,28 +2366,21 @@ class JarvisApp {
         ipcMain.handle('download-update', async () => {
             try {
                 const updater = getAutoUpdater();
-                console.log('📥 [IPC] download-update handler called');
-                console.log('📥 [IPC] autoUpdater state:', {
                     autoDownload: updater.autoDownload,
                     autoInstallOnAppQuit: updater.autoInstallOnAppQuit
                 });
                 
                 // First check if update is available
-                console.log('📥 [IPC] Checking for updates first...');
                 const checkResult = await updater.checkForUpdates();
-                console.log('📥 [IPC] Check result:', checkResult);
                 
                 if (!checkResult || !checkResult.updateInfo) {
                     console.error('❌ [IPC] No update available');
                     return { success: false, error: 'No update available. Please check for updates first.' };
                 }
                 
-                console.log('📥 [IPC] Update found:', checkResult.updateInfo.version);
-                console.log('📥 [IPC] Starting download...');
                 
                 // Try to download directly - electron-updater should handle the state
                 await updater.downloadUpdate();
-                console.log('✅ [IPC] Download initiated successfully');
                 return { success: true };
             } catch (error) {
                 console.error('❌ [IPC] Error downloading update:', error);
@@ -2439,7 +2391,6 @@ class JarvisApp {
 
         ipcMain.handle('install-update', () => {
             try {
-                console.log('📦 Installing update...');
                 // Set a flag so we know we're updating
                 app.isQuitting = true;
                 
@@ -2470,7 +2421,6 @@ class JarvisApp {
 
         // Restart the app (used after granting permissions)
         ipcMain.handle('restart-app', () => {
-            console.log('🔄 Restarting app...');
             app.relaunch();
             app.exit(0);
         });
@@ -2635,8 +2585,6 @@ class JarvisApp {
                 const supabaseConfig = this.secureConfig.getSupabaseConfig();
                 const apiProxyUrl = this.secureConfig.getSupabaseApiProxyUrl() || supabaseConfig?.apiProxyUrl || '';
                 
-                console.log('🔗 API Proxy URL:', apiProxyUrl || 'NOT CONFIGURED');
-                console.log('🔒 API keys are stored securely in Supabase Edge Function Secrets');
                 
                 // Return only proxy URL and anon key - NO actual API keys
                 return {
@@ -2673,7 +2621,6 @@ class JarvisApp {
                 if (!isLowModel && email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
-                        console.log(`🚫 User ${email} blocked: ${limitCheck.reason}`);
                         return {
                             ok: false,
                             status: 429,
@@ -2687,7 +2634,6 @@ class JarvisApp {
                         };
                     }
                 } else if (isLowModel) {
-                    console.log('🆓 Low model (OpenAI) - skipping cost limit check');
                 }
                 
                 const supabaseConfig = this.secureConfig.getSupabaseConfig();
@@ -2695,8 +2641,6 @@ class JarvisApp {
                 const SUPABASE_ANON_KEY = supabaseConfig?.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
                 
-                console.log('🔒 Main process: Calling OpenAI API via Edge Function');
-                console.log('📤 URL:', PROXY_URL);
                 
                 return new Promise((resolve, reject) => {
                     const parsedUrl = new URL(PROXY_URL);
@@ -2724,17 +2668,14 @@ class JarvisApp {
                         let data = '';
                         res.on('data', (chunk) => { data += chunk; });
                         res.on('end', async () => {
-                            console.log('📥 Main process OpenAI: Response status:', res.statusCode);
                             if (res.statusCode >= 200 && res.statusCode < 300) {
                                 try {
                                     const responseData = JSON.parse(data);
-                                    console.log('✅ Main process OpenAI: Successfully parsed response');
                                     
                                     // Track token usage if we have email and usage data
                                     // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
                                     
                                     if (isLowModel) {
-                                        console.log('🆓 Low model - skipping cost tracking');
                                     } else if (email && this.supabaseIntegration && responseData.usage) {
                                         const tokensInput = responseData.usage.input_tokens || responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.output_tokens || responseData.usage.completion_tokens || 0;
@@ -2749,10 +2690,8 @@ class JarvisApp {
                                             model, 
                                             'openai', 
                                             'chat'
-                                        ).then(() => console.log('✅ OpenAI token usage recorded successfully'))
                                         .catch(err => console.error('❌ Failed to record OpenAI token usage:', err));
                                     } else {
-                                        console.log('⚠️ OpenAI tracking skipped - missing email, supabase, or usage data');
                                     }
                                     
                                     resolve({ ok: true, status: res.statusCode, statusText: res.statusMessage, data: responseData });
@@ -2795,7 +2734,6 @@ class JarvisApp {
                 if (!isLowModel && email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
-                        console.log(`🚫 User ${email} blocked from OpenRouter: ${limitCheck.reason}`);
                         return {
                             ok: false,
                             status: 429,
@@ -2809,7 +2747,6 @@ class JarvisApp {
                         };
                     }
                 } else if (isLowModel) {
-                    console.log('🆓 Low model call - skipping cost limit check');
                 }
                 
                 // Always use Supabase Edge Function (API keys stored securely in Supabase Secrets)
@@ -2822,8 +2759,6 @@ class JarvisApp {
                 }
                 
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
-                console.log('🔒 Main process: Calling OpenRouter API via Supabase Edge Function (keys in Secrets)');
-                console.log('📤 Model:', requestPayload.model);
                 
                 return new Promise((resolve, reject) => {
                     const parsedUrl = new URL(PROXY_URL);
@@ -2851,17 +2786,14 @@ class JarvisApp {
                         let data = '';
                         res.on('data', (chunk) => { data += chunk; });
                         res.on('end', async () => {
-                            console.log('📥 Main process OpenRouter: Response status:', res.statusCode);
                             if (res.statusCode >= 200 && res.statusCode < 300) {
                                 try {
                                     const responseData = JSON.parse(data);
-                                    console.log('✅ Main process OpenRouter: Successfully parsed response');
                                     
                                     // Track token usage if we have email and usage data
                                     // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
                                     
                                     if (isLowModel) {
-                                        console.log('🆓 Low model - skipping cost tracking');
                                     } else if (email && this.supabaseIntegration && responseData.usage) {
                                         const tokensInput = responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.completion_tokens || 0;
@@ -2880,10 +2812,8 @@ class JarvisApp {
                                             'openrouter', 
                                             'chat',
                                             apiCost  // Pass API cost if available
-                                        ).then(() => console.log('✅ OpenRouter usage recorded successfully'))
                                         .catch(err => console.error('❌ Failed to record OpenRouter usage:', err));
                                     } else {
-                                        console.log('⚠️ OpenRouter tracking skipped - missing email or usage data');
                                     }
                                     
                                     resolve({ ok: true, status: res.statusCode, statusText: res.statusMessage, data: responseData });
@@ -2925,7 +2855,6 @@ class JarvisApp {
                 if (email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
-                        console.log(`🚫 User ${email} blocked from Perplexity: ${limitCheck.reason}`);
                         return {
                             ok: false,
                             status: 429,
@@ -2945,9 +2874,6 @@ class JarvisApp {
                 const SUPABASE_ANON_KEY = supabaseConfig?.anonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibW5iZ291aWFtbXhwa2J5YXhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1MjEwODcsImV4cCI6MjA3ODA5NzA4N30.ppFaxEFUyBWjwkgdszbvP2HUdXXKjC0Bu-afCQr0YxE';
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
                 
-                console.log('🔒 Main process: Calling Perplexity API via Edge Function');
-                console.log('📤 URL:', PROXY_URL);
-                console.log('📤 Payload:', JSON.stringify({ provider: 'perplexity', endpoint: 'chat/completions', payload: requestPayload }, null, 2));
                 
                 // Use Node.js https module (more reliable than fetch in older Node versions)
                 return new Promise((resolve, reject) => {
@@ -2980,13 +2906,10 @@ class JarvisApp {
                         });
                         
                         res.on('end', async () => {
-                            console.log('📥 Main process Perplexity: Response status:', res.statusCode);
-                            console.log('📥 Main process Perplexity: Response data length:', data.length);
                             
                             if (res.statusCode >= 200 && res.statusCode < 300) {
                                 try {
                                     const responseData = JSON.parse(data);
-                                    console.log('✅ Main process Perplexity: Successfully parsed response');
                                     
                                     // Track token usage if we have email and usage data
                                     if (email && this.supabaseIntegration && responseData.usage) {
@@ -3079,7 +3002,6 @@ class JarvisApp {
                 if (email && this.supabaseIntegration) {
                     const limitCheck = await this.supabaseIntegration.checkUserLimits(email);
                     if (!limitCheck.allowed) {
-                        console.log(`🚫 User ${email} blocked from Claude: ${limitCheck.reason}`);
                         return {
                             ok: false,
                             status: 429,
@@ -3104,7 +3026,6 @@ class JarvisApp {
                 }
                 
                 const PROXY_URL = `${SUPABASE_URL}/functions/v1/jarvis-api-proxy`;
-                console.log('🔒 Main process: Calling Claude API via Supabase Edge Function (keys in Secrets)');
                 
                 return new Promise((resolve, reject) => {
                         const parsedUrl = new URL(PROXY_URL);
@@ -3130,11 +3051,9 @@ class JarvisApp {
                             let data = '';
                             res.on('data', (chunk) => { data += chunk; });
                             res.on('end', async () => {
-                                console.log('📥 Main process Claude (proxy): Response status:', res.statusCode);
                                 if (res.statusCode >= 200 && res.statusCode < 300) {
                                     try {
                                         const responseData = JSON.parse(data);
-                                        console.log('✅ Main process Claude (proxy): Successfully parsed response');
                                         
                                         // Track token usage if we have email and usage data
                                         if (email && this.supabaseIntegration && responseData.usage) {
@@ -3226,7 +3145,6 @@ class JarvisApp {
                     };
                 }
 
-                console.log('🔐 Signing in user:', email);
 
                 // Check subscription in Supabase
                 if (!this.supabaseIntegration) {
@@ -3277,9 +3195,7 @@ class JarvisApp {
                     
                     // Track current user email for token usage tracking
                     this.currentUserEmail = email;
-                    console.log(`📧 Token tracking: User email set to ${email} (sign-in)`);
 
-                    console.log('✅ User signed in successfully with active subscription');
                     return {
                         success: true,
                         hasSubscription: true,
@@ -3288,7 +3204,6 @@ class JarvisApp {
                     };
                 } else {
                     // No active subscription found
-                    console.log('ℹ️ No active subscription found for email:', email);
                     return {
                         success: true,
                         hasSubscription: false,
@@ -3307,7 +3222,6 @@ class JarvisApp {
         // Handle sign-out user
         ipcMain.handle('sign-out-user', async () => {
             try {
-                console.log('🔐 Signing out user...');
 
                 const fs = require('fs');
                 const path = require('path');
@@ -3317,14 +3231,12 @@ class JarvisApp {
                 const userFile = path.join(userDataPath, 'jarvis_user.json');
                 if (fs.existsSync(userFile)) {
                     fs.unlinkSync(userFile);
-                    console.log('✅ Removed user email file');
                 }
 
                 // Remove subscription status file
                 const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
                 if (fs.existsSync(subscriptionFile)) {
                     fs.unlinkSync(subscriptionFile);
-                    console.log('✅ Removed subscription status file');
                 }
 
                 // Notify main window if it exists
@@ -3337,7 +3249,6 @@ class JarvisApp {
                     this.accountWindow.webContents.send('subscription-status-changed', { status: 'free' });
                 }
 
-                console.log('✅ User signed out successfully');
                 return {
                     success: true
                 };
@@ -3468,7 +3379,6 @@ class JarvisApp {
                     }
                 });
 
-                console.log('✅ Password reset email sent to:', email);
                 return {
                     success: true
                 };
@@ -3688,7 +3598,6 @@ class JarvisApp {
                 // TEMPORARY: Force free mode for testing
                 const testModeFile = path.join(userDataPath, 'TEST_MODE_FREE_USER');
                 if (fs.existsSync(testModeFile)) {
-                    console.log('🧪 TEST MODE: Skipping subscription validation');
                     return { 
                         hasActiveSubscription: false, 
                         subscriptionData: null,
@@ -3766,7 +3675,6 @@ class JarvisApp {
         // Handle creating checkout session for adding credits
         ipcMain.handle('create-credits-checkout', async (event, productId) => {
             try {
-                console.log('🛒 Creating credits checkout for product:', productId);
                 
                 // Get user email (optional - user can enter it during checkout)
                 const userEmail = this.getUserEmail();
@@ -3797,7 +3705,6 @@ class JarvisApp {
                 const userEmail = this.getUserEmail();
                 
                 if (!userEmail) {
-                    console.log('No user email found, returning free status');
                     return {
                         status: 'free',
                         hasActiveSubscription: false,
@@ -3834,7 +3741,6 @@ class JarvisApp {
                     const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
                     if (fs.existsSync(subscriptionFile)) {
                         fs.unlinkSync(subscriptionFile);
-                        console.log('Removed local subscription file - no active subscription in Supabase');
                     }
                     
                     return {
@@ -4397,11 +4303,9 @@ class JarvisApp {
             if (fs.existsSync(stealthFile)) {
                 const stealthData = JSON.parse(fs.readFileSync(stealthFile, 'utf8'));
                 const enabled = stealthData.enabled !== false; // Default to true if not explicitly false
-                console.log(`📋 Loaded stealth mode preference: ${enabled ? 'ENABLED' : 'DISABLED'}`);
                 return enabled;
             } else {
                 // File doesn't exist, default to enabled
-                console.log('📋 No stealth mode preference found, defaulting to ENABLED');
                 return true;
             }
         } catch (error) {
@@ -4414,7 +4318,6 @@ class JarvisApp {
     // Applies ALL 10 stealth methods to make window invisible to screen sharing/recording
     setWindowContentProtection(window, enable) {
         if (!window || process.platform !== 'darwin') {
-            console.log(`⚠️ Skipping content protection: window=${!!window}, platform=${process.platform}`);
             return;
         }
         
@@ -4422,21 +4325,6 @@ class JarvisApp {
             
             // Use native module if available (applies ALL 11+ stealth methods)
             if (this.nativeContentProtection && this.nativeContentProtection.isAvailable()) {
-                console.log('✅ Using native module with ALL 11+ anti-capture methods:');
-                console.log('   1. GPU-exclusive rendering');
-                console.log('   2. Fullscreen exclusive mode behavior');
-                console.log('   3. OS Privacy Restrictions (secure window)');
-                console.log('   4. Overlay window (non-capturable)');
-                console.log('   5. Secure Rendering (NSWindowSharingNone)');
-                console.log('   6. Hardware-accelerated video surface blocking');
-                console.log('   7. Virtual desktops/Spaces isolation');
-                console.log('   8. Sandbox/containerized app behavior');
-                console.log('   9. System-level overlay prevention');
-                console.log('   10. Protected swapchain (GPU-level)');
-                console.log('   11. 🔐 System-Level Secure Input (NEW!)');
-                console.log('       → Makes window appear BLANK/TRANSPARENT');
-                console.log('       → Same as password fields, Touch ID, Keychain');
-                console.log('       → STRONGEST PROTECTION AVAILABLE');
                 
                 // Use comprehensive stealth (applies all methods at once)
                 if (this.nativeContentProtection.applyComprehensiveStealth) {
@@ -4450,15 +4338,11 @@ class JarvisApp {
                 // This ensures maximum compatibility
                 try {
                     window.setContentProtection(enable);
-                    console.log('✅ Also applied Electron built-in content protection as backup');
                 } catch (e) {
                     console.warn('⚠️ Electron backup content protection failed:', e);
                 }
             } else {
                 // Fallback to Electron's built-in API (Method 5 only)
-                console.log('⚠️ Using Electron built-in API (native module not available)');
-                console.log('   Only Method 5 (Secure Rendering) will be applied');
-                console.log('   NOTE: This may not hide from screenshots, only screen sharing');
                 window.setContentProtection(enable);
             }
             
@@ -4470,7 +4354,6 @@ class JarvisApp {
                 this.removeScreenshotDetection();
             }
             
-            console.log(`✅ Stealth mode ${enable ? 'ENABLED' : 'DISABLED'} successfully`);
         } catch (error) {
             console.error('❌ Failed to set stealth mode:', error);
             // Try fallback
@@ -4481,7 +4364,6 @@ class JarvisApp {
                 } else {
                     this.removeScreenshotDetection();
                 }
-                console.log('✅ Fallback content protection applied');
             } catch (fallbackError) {
                 console.error('❌ Fallback also failed:', fallbackError);
             }
@@ -4494,7 +4376,6 @@ class JarvisApp {
         if (this.screenshotDetectionSetup) return; // Already setup
         
         this.screenshotDetectionSetup = true;
-        console.log('📸 Setting up screenshot detection for stealth mode');
         
         // Monitor for screenshot shortcuts (Cmd+Shift+3, Cmd+Shift+4, Cmd+Shift+5)
         const screenshotShortcuts = [
@@ -4506,7 +4387,6 @@ class JarvisApp {
         screenshotShortcuts.forEach(shortcut => {
             try {
                 const registered = globalShortcut.register(shortcut, () => {
-                    console.log(`🥷 Screenshot shortcut detected: ${shortcut}`);
                     if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.isVisible()) {
                         // Make opacity change so fast it's imperceptible
                         // Set opacity to near-zero and restore immediately
@@ -4525,7 +4405,6 @@ class JarvisApp {
                 });
                 
                 if (registered) {
-                    console.log(`✅ Registered screenshot shortcut: ${shortcut}`);
                 } else {
                     console.warn(`⚠️ Failed to register screenshot shortcut: ${shortcut}`);
                 }
@@ -4552,7 +4431,6 @@ class JarvisApp {
         if (!this.screenshotDetectionSetup) return;
         
         this.screenshotDetectionSetup = false;
-        console.log('📸 Removing screenshot detection');
         
         // Unregister shortcuts
         const screenshotShortcuts = [
@@ -4586,12 +4464,9 @@ class JarvisApp {
                 
                 if (subscriptionData.email) {
                     this.currentUserEmail = subscriptionData.email;
-                    console.log(`📧 Token tracking: User email loaded on startup: ${subscriptionData.email}`);
                 } else {
-                    console.log('⚠️ Token tracking: No email found in saved subscription');
                 }
             } else {
-                console.log('⚠️ Token tracking: No saved subscription file found');
             }
         } catch (error) {
             console.error('❌ Error loading user email for token tracking:', error);
@@ -4613,7 +4488,6 @@ class JarvisApp {
                     // Track current user email for token usage
                     if (subscriptionData.email) {
                         this.currentUserEmail = subscriptionData.email;
-                        console.log(`📧 Token tracking: User email set to ${subscriptionData.email}`);
                     }
                     
                     return {
@@ -4649,7 +4523,6 @@ class JarvisApp {
                 createdAt: new Date().toISOString()
             };
             fs.writeFileSync(subscriptionFile, JSON.stringify(dataToStore, null, 2));
-            console.log('✅ Subscription data stored:', subscriptionFile);
             
             // CRITICAL: Also store email in jarvis_user.json so getUserEmail() can find it
             if (subscriptionData.email) {
@@ -4659,7 +4532,6 @@ class JarvisApp {
                     updatedAt: new Date().toISOString()
                 };
                 fs.writeFileSync(userFile, JSON.stringify(userData, null, 2));
-                console.log('✅ User email stored:', userFile, 'Email:', subscriptionData.email);
             } else {
                 console.warn('⚠️ No email in subscriptionData, cannot store user email');
             }
