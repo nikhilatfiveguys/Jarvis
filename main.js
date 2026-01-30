@@ -1517,12 +1517,10 @@ class JarvisApp {
             
             if (this.mainWindow) {
                 try {
-                    console.log('🔵 [MAIN] make-interactive called (focus-safe mode)');
                     
                     // CRITICAL: Only enable mouse events - DO NOT call focus()
                     // This allows interaction without triggering browser blur events
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    console.log('🔵 [MAIN] setIgnoreMouseEvents(false) called');
                     
                     // Make window focusable but don't actually focus it
                     // The user clicking on the input will naturally give it focus
@@ -2734,17 +2732,14 @@ class JarvisApp {
                                     
                                     // Track token usage if we have email and usage data
                                     // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
-                                    console.log(`📊 OpenAI tracking check - Email: ${email || 'NOT SET'}, Supabase: ${this.supabaseIntegration ? 'YES' : 'NO'}, Usage in response: ${responseData.usage ? 'YES' : 'NO'}, isLowModel: ${isLowModel}`);
                                     
                                     if (isLowModel) {
                                         console.log('🆓 Low model - skipping cost tracking');
                                     } else if (email && this.supabaseIntegration && responseData.usage) {
-                                        console.log(`📊 OpenAI FULL usage object:`, JSON.stringify(responseData.usage, null, 2));
                                         const tokensInput = responseData.usage.input_tokens || responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.output_tokens || responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'gpt-4';
                                         
-                                        console.log(`📊 OpenAI usage - Input: ${tokensInput}, Output: ${tokensOutput}, Model: ${model}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         this.supabaseIntegration.recordTokenUsage(
@@ -2864,19 +2859,16 @@ class JarvisApp {
                                     
                                     // Track token usage if we have email and usage data
                                     // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
-                                    console.log(`📊 OpenRouter tracking check - Email: ${email || 'NOT SET'}, Usage in response: ${responseData.usage ? 'YES' : 'NO'}, isLowModel: ${isLowModel}`);
                                     
                                     if (isLowModel) {
                                         console.log('🆓 Low model - skipping cost tracking');
                                     } else if (email && this.supabaseIntegration && responseData.usage) {
-                                        console.log(`📊 OpenRouter FULL usage object:`, JSON.stringify(responseData.usage, null, 2));
                                         const tokensInput = responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'openrouter';
                                         // OpenRouter may return cost directly - check for it
                                         const apiCost = responseData.usage.total_cost || responseData.usage.cost || null;
                                         
-                                        console.log(`📊 OpenRouter usage - Input: ${tokensInput}, Output: ${tokensOutput}, Model: ${model}, API Cost: ${apiCost || 'not provided'}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         // Pass API-provided cost if available
@@ -3002,7 +2994,6 @@ class JarvisApp {
                                         const tokensOutput = responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'perplexity';
                                         
-                                        console.log(`📊 Perplexity usage - Input: ${tokensInput}, Output: ${tokensOutput}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         this.supabaseIntegration.recordTokenUsage(
@@ -3151,7 +3142,6 @@ class JarvisApp {
                                             const tokensOutput = responseData.usage.output_tokens || 0;
                                             const model = requestPayload.model || 'claude';
                                             
-                                            console.log(`📊 Claude (proxy) usage - Input: ${tokensInput}, Output: ${tokensOutput}`);
                                             
                                             this.supabaseIntegration.recordTokenUsage(
                                                 email, 
@@ -4429,7 +4419,6 @@ class JarvisApp {
         }
         
         try {
-            console.log(`🔒 Setting COMPREHENSIVE STEALTH MODE to ${enable ? 'ENABLED' : 'DISABLED'} for window`);
             
             // Use native module if available (applies ALL 11+ stealth methods)
             if (this.nativeContentProtection && this.nativeContentProtection.isAvailable()) {

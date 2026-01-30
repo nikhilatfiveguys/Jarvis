@@ -1871,7 +1871,6 @@ class JarvisOverlay {
                 const { ipcRenderer } = window.require('electron');
                 // Await the call and ensure it completes
                 await ipcRenderer.invoke('set-ignore-mouse-events', false);
-                console.log('🔵 Disabled click-through for update notification');
                 
                 // Also ensure window is focused and visible
                 ipcRenderer.invoke('request-focus').catch(() => {});
@@ -1976,7 +1975,6 @@ class JarvisOverlay {
                 // Small delay to ensure notification is fully removed before re-enabling click-through
                 setTimeout(() => {
                     ipcRenderer.invoke('make-click-through').catch(() => {});
-                    console.log('🔵 Re-enabled click-through after hiding update notification');
                 }, 200);
             } catch (e) {
                 console.error('Failed to re-enable click-through:', e);
@@ -2060,7 +2058,6 @@ class JarvisOverlay {
             closeTriggered = true;
             e.preventDefault();
             e.stopPropagation();
-            console.log('🔵 Close button triggered');
             this.hideLimitExceededNotification();
         };
         
@@ -2069,7 +2066,6 @@ class JarvisOverlay {
             addCreditsTriggered = true;
             e.preventDefault();
             e.stopPropagation();
-            console.log('🔵 Add Credits button triggered');
             this.openAddCredits();
         };
 
