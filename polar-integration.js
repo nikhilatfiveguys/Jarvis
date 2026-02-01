@@ -73,37 +73,6 @@ class PolarIntegration {
     }
 
     /**
-     * Get the first available product for checkout
-     */
-    async getFirstProduct() {
-        try {
-            console.log('Fetching products from Polar...');
-            
-            const products = await this.polar.products.list({
-                organizationId: config.polar.organizationId,
-                limit: 1
-            });
-
-            if (products.items && products.items.length > 0) {
-                const product = products.items[0];
-                console.log('Found product:', product.name);
-                return {
-                    success: true,
-                    product: product
-                };
-            } else {
-                throw new Error('No products found in Polar organization');
-            }
-        } catch (error) {
-            console.error('Error fetching products:', error);
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }
-
-    /**
      * Get customer by email
      */
     async getCustomerByEmail(email) {
@@ -161,36 +130,6 @@ class PolarIntegration {
                 success: false,
                 error: error.message
             };
-        }
-    }
-
-    /**
-     * Get subscription status by customer ID (for validation)
-     */
-    async getSubscriptionStatusByCustomerId(customerId) {
-        try {
-            console.log(`Checking subscription status for customer ID: ${customerId}`);
-            
-            // Get subscriptions for this customer
-            const subscriptions = await this.polar.subscriptions.list({
-                customerId: customerId,
-                limit: 1
-            });
-
-            console.log(`Found ${subscriptions.items?.length || 0} subscriptions for customer`);
-            
-            // Check if any subscription is active
-            const hasActiveSubscription = subscriptions.items?.some(sub => 
-                sub.status === 'active' || sub.status === 'trialing'
-            ) || false;
-
-            console.log(`Customer has active subscription: ${hasActiveSubscription}`);
-            return hasActiveSubscription;
-
-        } catch (error) {
-            console.error('Error checking subscription status by customer ID:', error);
-            // Don't return false on API errors - let the caller handle it
-            throw error;
         }
     }
 

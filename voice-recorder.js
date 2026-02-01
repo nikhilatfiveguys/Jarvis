@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const axios = require('axios');
+const https = require('https');
 const FormData = require('form-data');
 
 class VoiceRecorder {
@@ -123,7 +123,7 @@ class VoiceRecorder {
 
             console.log(`Transcribing audio file: ${audioFilePath} (${stats.size} bytes)`);
 
-            // Use axios for better multipart form handling
+            // Use form-data with https for multipart form handling
             const form = new FormData();
             form.append('file', fs.createReadStream(audioFilePath), {
                 filename: 'recording.wav',
@@ -143,13 +143,28 @@ class VoiceRecorder {
             const keyPreview = apiKey.length > 7 ? `${apiKey.substring(0, 7)}...` : '***';
             console.log(`🔊 Transcribing audio with API key: ${keyPreview}`);
 
-            const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', form, {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    ...form.getHeaders()
-                },
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity
+            const response = await new Promise((resolve, reject) => {
+                const req = https.request({
+                    hostname: 'api.openai.com',
+                    path: '/v1/audio/transcriptions',
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        ...form.getHeaders()
+                    }
+                }, (res) => {
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => {
+                        try {
+                            resolve({ data: JSON.parse(data) });
+                        } catch (e) {
+                            reject(new Error(`Failed to parse response: ${data}`));
+                        }
+                    });
+                });
+                req.on('error', reject);
+                form.pipe(req);
             });
 
             console.log('Transcription result:', response.data);

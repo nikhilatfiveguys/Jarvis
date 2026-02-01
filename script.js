@@ -12,7 +12,7 @@ class JarvisOverlay {
         this.currentLoadingMessage = null; // Current loading message being displayed
         this.loadingMessageIndex = 0; // Index for rotating loading messages
         this.selectedModel = 'default'; // Track selected AI model
-        this.selectedModelName = 'Jarvis'; // Track displayed model name
+        this.selectedModelName = 'ChatGPT 5.2'; // Track displayed model name
         this.grokFreakyMode = false; // Track Grok freaky mode state
         this.grokVoiceMode = false; // Track Grok voice mode state
         // ElevenLabs API key should be stored in Supabase Edge Function Secrets
@@ -20,8 +20,15 @@ class JarvisOverlay {
         this.elevenLabsVoiceId = 'ShB6BQqbEXZxWO5511Qq'; // Female voice
         this.elevenLabsVoiceId2 = '4NejU5DwQjevnR6mh3mb'; // Male voice
         this.useSecondVoice = false; // Toggle between voices
-        this.hasBeenPositioned = false; // Track if overlay has been positioned (to avoid recentering)
         this.stealthModeEnabled = false; // Track stealth mode state
+        
+        // OpenClaw Gateway integration
+        this.openClawClient = null;
+        this.openClawConnected = false;
+        this.jbotAccepted = false; // Track if user has accepted J Bot warning
+        
+        // For cancelling running commands
+        this.currentAbortController = null;
         
         // Interactive tutorial state
         this.tutorialStep = 0;
@@ -44,7 +51,7 @@ class JarvisOverlay {
         this.countdownTimerInterval = null; // Track countdown timer to stop it
         
         // Message tracking for free users (High tier models)
-        this.maxFreeMessages = 5;
+        this.maxFreeMessages = 20;
         this.messageCount = this.loadMessageCount();
         
         // Low model tracking for free users (30/day)
@@ -399,9 +406,9 @@ class JarvisOverlay {
         if (!hasPremium && this.selectedModel && this.selectedModel !== 'default') {
             console.log(`🤖 [MODEL SWITCHER] Resetting to default - premium required for ${this.selectedModel}`);
             this.selectedModel = 'default';
-            this.selectedModelName = 'Jarvis';
+            this.selectedModelName = 'ChatGPT 5.2';
             if (this.currentModelDisplay) {
-                this.currentModelDisplay.textContent = 'Jarvis';
+                this.currentModelDisplay.textContent = 'ChatGPT 5.2';
             }
         }
         
@@ -508,26 +515,79 @@ class JarvisOverlay {
         // Track if we started recording via push-to-talk
         this.isPushToTalkActive = false;
         this.pushToTalkKey = 'Control'; // The key to hold for push-to-talk
+        this.pushToTalkKeyDown = false; // Track if key is currently held
+        this.otherKeyPressed = false; // Track if another key was pressed during Control hold
+        this.globalPushToTalkEnabled = false; // Track if global push-to-talk is handling things
+        
+        // Listen for global push-to-talk events from main process
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            
+            ipcRenderer.on('global-push-to-talk-started', () => {
+                console.log('🎤 Global push-to-talk started (from main process)');
+                this.globalPushToTalkEnabled = true;
+                this.isPushToTalkActive = true;
+                this.showVoiceRecordingIndicator();
+            });
+            
+            ipcRenderer.on('global-push-to-talk-stopped', () => {
+                console.log('🎤 Global push-to-talk stopped (from main process)');
+                this.globalPushToTalkEnabled = false;
+                this.isPushToTalkActive = false;
+                this.hideVoiceRecordingIndicator();
+            });
+        }
         
         // Listen for keydown - start recording when Control is held
+        // This is a fallback for when global hook isn't available
         document.addEventListener('keydown', (e) => {
+            // Skip if global push-to-talk is handling it
+            if (this.globalPushToTalkEnabled) return;
+            
+            // Track if any other key is pressed while Control is held (indicates a combo like Ctrl+C)
+            if (this.pushToTalkKeyDown && e.key !== 'Control') {
+                this.otherKeyPressed = true;
+                // Cancel recording if it was starting
+                if (this.pushToTalkTimeout) {
+                    clearTimeout(this.pushToTalkTimeout);
+                    this.pushToTalkTimeout = null;
+                }
+                // Stop recording if it already started
+                if (this.isPushToTalkActive) {
+                    this.isPushToTalkActive = false;
+                    console.log('🎤 Push-to-talk: Cancelled (Ctrl+key combo detected)');
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('stop-push-to-talk');
+                }
+                return;
+            }
+            
             // Only trigger on Control key alone (not with other modifiers as part of a combo)
-            if (e.key === 'Control' && !e.repeat && !this.isPushToTalkActive) {
-                // Small delay to distinguish from Ctrl+key combos
+            if (e.key === 'Control' && !e.repeat && !this.isPushToTalkActive && !this.pushToTalkKeyDown) {
+                this.pushToTalkKeyDown = true;
+                this.otherKeyPressed = false;
+                
+                // Very short delay (50ms) just to catch immediate Ctrl+key combos
                 this.pushToTalkTimeout = setTimeout(() => {
-                    if (!this.isPushToTalkActive) {
+                    // Only start if no other key was pressed and global isn't handling it
+                    if (!this.otherKeyPressed && !this.isPushToTalkActive && this.pushToTalkKeyDown && !this.globalPushToTalkEnabled) {
                         this.isPushToTalkActive = true;
-                        console.log('🎤 Push-to-talk: Starting recording (Control held)');
+                        console.log('🎤 Push-to-talk: Starting recording (Control held - local fallback)');
                         const { ipcRenderer } = window.require('electron');
                         ipcRenderer.invoke('start-push-to-talk');
                     }
-                }, 150); // 150ms delay to avoid triggering on Ctrl+key combos
+                }, 50); // Reduced to 50ms for faster response
             }
         });
 
         // Listen for keyup - stop recording when Control is released
         document.addEventListener('keyup', (e) => {
+            // Skip if global push-to-talk is handling it
+            if (this.globalPushToTalkEnabled) return;
+            
             if (e.key === 'Control') {
+                this.pushToTalkKeyDown = false;
+                
                 // Clear the timeout if key was released quickly (it was a combo)
                 if (this.pushToTalkTimeout) {
                     clearTimeout(this.pushToTalkTimeout);
@@ -536,10 +596,25 @@ class JarvisOverlay {
                 
                 if (this.isPushToTalkActive) {
                     this.isPushToTalkActive = false;
-                    console.log('🎤 Push-to-talk: Stopping recording (Control released)');
+                    console.log('🎤 Push-to-talk: Stopping recording (Control released - local fallback)');
                     const { ipcRenderer } = window.require('electron');
                     ipcRenderer.invoke('stop-push-to-talk');
                 }
+                
+                // Reset other key flag
+                this.otherKeyPressed = false;
+            }
+        });
+        
+        // Also listen for window blur to stop recording if user switches away
+        // (only for local fallback - global hook handles its own state)
+        window.addEventListener('blur', () => {
+            if (this.isPushToTalkActive && !this.globalPushToTalkEnabled) {
+                this.isPushToTalkActive = false;
+                this.pushToTalkKeyDown = false;
+                console.log('🎤 Push-to-talk: Stopped (window lost focus)');
+                const { ipcRenderer } = window.require('electron');
+                ipcRenderer.invoke('stop-push-to-talk');
             }
         });
     }
@@ -610,15 +685,15 @@ class JarvisOverlay {
     }
 
     showVoiceProcessingState() {
-        // Show thinking indicator in the output area
-        if (this.outputArea) {
-            this.outputArea.innerHTML = '<div class="thinking">transcribing...</div>';
-            this.outputArea.style.display = 'block';
+        // Show transcribing indicator
+        if (this.dragOutput) {
+            this.dragOutput.classList.remove('hidden');
+            this.dragOutput.innerHTML = '<div style="color: rgba(255,255,255,0.7); font-style: italic;">transcribing...</div>';
         }
     }
 
     hideVoiceProcessingState() {
-        // Will be replaced by actual content or cleared on error
+        // Content will be replaced by actual response
     }
 
     handleVoiceTranscription(text) {
@@ -642,143 +717,6 @@ class JarvisOverlay {
                 if (this.textInput) this.textInput.value = '';
                 // Take screenshot and analyze
                 this.takeScreenshotAndAnalyze();
-                return;
-            }
-            
-            // Check for voice commands to write to docs (including /docs command)
-            const docsCommandPatterns = [
-                '/docs',
-                'add to docs',
-                'write to docs',
-                'write on docs',
-                'write on my doc',
-                'write to my doc',
-                'add to my doc',
-                'write on my docs',
-                'write to my docs',
-                'add to my docs',
-                'save to docs',
-                'save to my doc',
-                'save to my docs',
-                'put this in my doc',
-                'put this in docs',
-                'write this to my doc',
-                'write this in my doc'
-            ];
-            
-            // Check for exact match or contains pattern
-            const isDocsCommand = docsCommandPatterns.some(pattern => {
-                if (pattern === '/docs') {
-                    // Exact match for /docs command
-                    return lowerText === '/docs' || lowerText.startsWith('/docs ');
-                }
-                return lowerText.includes(pattern);
-            });
-            
-            if (isDocsCommand) {
-                // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
-                // Check if it's paste mode (user said "paste" in the command)
-                const isPasteMode = lowerText.includes('paste') || lowerText.startsWith('/docs paste');
-                // Trigger write to docs
-                this.writeToDocs(isPasteMode);
-                return;
-            }
-            
-            // Check for Gmail voice commands
-            const emailPatterns = [
-                'what are my emails',
-                'check my emails',
-                'check my email',
-                'show my emails',
-                'show my email',
-                'any emails',
-                'any new emails',
-                'emails today',
-                'today\'s emails',
-                'todays emails',
-                'important emails',
-                'any important emails',
-                'unread emails',
-                'new emails',
-                'check gmail',
-                'open gmail',
-                'what\'s in my inbox',
-                'whats in my inbox',
-                'show inbox'
-            ];
-            
-            const isEmailCommand = emailPatterns.some(pattern => lowerText.includes(pattern));
-            
-            if (isEmailCommand) {
-                // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
-                
-                // Determine which type of emails to fetch
-                if (lowerText.includes('important')) {
-                    this.getImportantEmails();
-                } else if (lowerText.includes('unread') || lowerText.includes('new')) {
-                    this.getUnreadEmails();
-                } else {
-                    this.getTodaysEmails();
-                }
-                return;
-            }
-            
-            // Check for Calendar view commands
-            const calendarViewPatterns = [
-                'what\'s on my calendar',
-                'whats on my calendar',
-                'what is on my calendar',
-                'show my calendar',
-                'show calendar',
-                'check my calendar',
-                'check calendar',
-                'my schedule',
-                'upcoming events',
-                'upcoming meetings',
-                'what do i have today',
-                'what do i have this week',
-                'any meetings',
-                'any events'
-            ];
-            
-            const isCalendarViewCommand = calendarViewPatterns.some(pattern => lowerText.includes(pattern));
-            
-            if (isCalendarViewCommand) {
-                // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
-                this.getUpcomingEvents();
-                return;
-            }
-            
-            // Check for Calendar add/create commands
-            const calendarPatterns = [
-                'add to calendar',
-                'add to my calendar',
-                'add this to calendar',
-                'add this to my calendar',
-                'schedule',
-                'create event',
-                'create a meeting',
-                'create meeting',
-                'book a meeting',
-                'book meeting',
-                'set a reminder',
-                'set reminder',
-                'add event',
-                'calendar event',
-                'put on my calendar',
-                'put this on my calendar'
-            ];
-            
-            const isCalendarCommand = calendarPatterns.some(pattern => lowerText.includes(pattern));
-            
-            if (isCalendarCommand) {
-                // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
-                // Show the calendar modal for manual event creation
-                this.createCalendarEvent();
                 return;
             }
             
@@ -1524,7 +1462,7 @@ class JarvisOverlay {
             this.accountModalOk.addEventListener('click', () => this.hideAccountModal());
         }
         
-        // Jarvis Low/High tier toggle (inside dropdown)
+        // GPT 5.2 Mini/High tier toggle (inside dropdown)
         this.setupTierToggle();
         
         
@@ -1871,6 +1809,7 @@ class JarvisOverlay {
                 const { ipcRenderer } = window.require('electron');
                 // Await the call and ensure it completes
                 await ipcRenderer.invoke('set-ignore-mouse-events', false);
+                console.log('🔵 Disabled click-through for update notification');
                 
                 // Also ensure window is focused and visible
                 ipcRenderer.invoke('request-focus').catch(() => {});
@@ -1975,6 +1914,7 @@ class JarvisOverlay {
                 // Small delay to ensure notification is fully removed before re-enabling click-through
                 setTimeout(() => {
                     ipcRenderer.invoke('make-click-through').catch(() => {});
+                    console.log('🔵 Re-enabled click-through after hiding update notification');
                 }, 200);
             } catch (e) {
                 console.error('Failed to re-enable click-through:', e);
@@ -2058,6 +1998,7 @@ class JarvisOverlay {
             closeTriggered = true;
             e.preventDefault();
             e.stopPropagation();
+            console.log('🔵 Close button triggered');
             this.hideLimitExceededNotification();
         };
         
@@ -2066,6 +2007,7 @@ class JarvisOverlay {
             addCreditsTriggered = true;
             e.preventDefault();
             e.stopPropagation();
+            console.log('🔵 Add Credits button triggered');
             this.openAddCredits();
         };
 
@@ -2469,14 +2411,20 @@ class JarvisOverlay {
         this.overlay.classList.remove('hidden');
         this.instructions.classList.add('hidden');
         
-        // DISABLED: No automatic recentering - position is set by CSS
-        // if (!this.hasBeenPositioned) {
-        //     this.recenterOverlay();
-        //     this.hasBeenPositioned = true;
-        // }
-        
         this.isActive = true;
-        this.textInput.focus();
+        
+        // Make overlay immediately interactive so user can type right away
+        // This fixes the delay after toggling where you couldn't click/type
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            ipcRenderer.invoke('make-interactive').catch(() => {});
+            ipcRenderer.invoke('request-focus').catch(() => {});
+        }
+        
+        // Focus text input after making window interactive
+        setTimeout(() => {
+            this.textInput.focus();
+        }, 50);
         
         // Update message counter to reflect current subscription status
         this.updateMessageCounter();
@@ -2487,25 +2435,6 @@ class JarvisOverlay {
         }
     }
 
-    recenterOverlay() {
-        if (!this.overlay) return;
-        
-        const overlayWidth = this.overlay.offsetWidth || 400;
-        const overlayHeight = this.overlay.offsetHeight || 200;
-        const centerX = Math.max(0, (window.innerWidth - overlayWidth) / 2);
-        const centerY = Math.max(0, (window.innerHeight - overlayHeight) / 2);
-        
-        // Ensure overlay stays within bounds
-        const maxLeft = window.innerWidth - 10;
-        const maxTop = window.innerHeight - 10;
-        const finalX = Math.min(maxLeft, Math.max(-(overlayWidth - 10), centerX));
-        const finalY = Math.min(maxTop, Math.max(-(overlayHeight - 10), centerY));
-        
-        this.overlay.style.left = `${finalX}px`;
-        this.overlay.style.top = `${finalY}px`;
-        this.overlay.style.transform = 'none';
-        this.overlay.style.position = 'fixed';
-    }
 
 
     async captureScreen() {
@@ -2600,7 +2529,7 @@ class JarvisOverlay {
             this.conversationHistory.push({ 
                 role: 'assistant', 
                 content: analysis,
-                model: this.selectedModelName || 'Jarvis'
+                model: this.selectedModelName || 'ChatGPT 5.2'
             });
             
             if (this.conversationHistory.length > 30) {
@@ -2716,14 +2645,21 @@ class JarvisOverlay {
                 // The URL will be included in the message sent to the AI
             }
             
-            this.showLoadingNotification();
-            
             // Route to OpenRouter if a specific model is selected, otherwise use default ChatGPT
             let response;
             
-            // Handle Jarvis Low (GPT-5 Mini) model - uses OpenAI API directly
-            if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
-                console.log(`🤖 [MODEL SWITCHER] Using Jarvis Low (GPT-5 Mini) via OpenAI API: ${this.lowModelId}`);
+            // Handle OpenClaw Gateway model - streams its own content, no loading notification needed
+            if (this.selectedModel === 'openclaw') {
+                response = await this.callOpenClaw(message);
+                
+                // If cancelled or null response, don't show anything
+                if (response === null) {
+                    return;
+                }
+            }
+            // Handle GPT 5.2 Mini (GPT-5 Mini) model - uses OpenAI API directly
+            else if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
+                this.showLoadingNotification();
                 response = await this.callLowModel(message);
                 
                 // Increment low message count for free users
@@ -2731,10 +2667,12 @@ class JarvisOverlay {
                     this.incrementLowMessageCount();
                 }
             } else if (this.selectedModel && this.selectedModel !== 'default') {
+                this.showLoadingNotification();
                 console.log(`🤖 [MODEL SWITCHER] Using OpenRouter model: ${this.selectedModel} (${this.selectedModelName})`);
                 console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
                 response = await this.callOpenRouter(message, this.selectedModel);
             } else {
+                this.showLoadingNotification();
                 console.log(`🤖 [MODEL SWITCHER] Using default Responses API (currentModel: ${this.currentModel})`);
                 response = await this.callChatGPT(message);
             }
@@ -2879,7 +2817,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     }
                 } catch (ipcError) {
                     if (ipcError.message === 'LIMIT_EXCEEDED') {
-                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                        return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                     }
                     console.error('❌ IPC OpenAI call failed, falling back to fetch:', ipcError);
                     // Fall through to fetch backup below
@@ -2961,7 +2899,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     if (response.status === 429 && (errorData.costLimitDollars || errorData.isBlocked !== undefined)) {
                         console.error('🚫 OpenAI blocked via proxy - limit exceeded');
                         this.showLimitExceededNotification();
-                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                        return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                     }
                     
                     // Check if it's a Supabase Edge Function error
@@ -3231,7 +3169,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         }
                     } catch (ipcError) {
                         if (ipcError.message === 'LIMIT_EXCEEDED') {
-                            return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                            return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                         }
                         console.error('❌ IPC second call failed, falling back to Edge Function:', ipcError);
                         // Fall through to Edge Function fetch below
@@ -3294,7 +3232,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             this.conversationHistory.push({ 
                 role: 'assistant', 
                 content: safeResponse,
-                model: this.selectedModelName || 'Jarvis'
+                model: this.selectedModelName || 'ChatGPT 5.2'
             });
             
             if (this.conversationHistory.length > 30) {
@@ -3417,7 +3355,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
                             console.error('🚫 Perplexity blocked - limit exceeded');
                             this.showLimitExceededNotification();
-                            return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                            return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                         }
                         const errorData = result.data || {};
                         const errorMsg = errorData.error?.message || errorData.details || errorData.error || `HTTP ${result.status}: ${result.statusText}`;
@@ -3429,7 +3367,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     }
                 } catch (ipcError) {
                     if (ipcError.message === 'LIMIT_EXCEEDED') {
-                        return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                        return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                     }
                     console.error('❌ IPC call failed:', ipcError);
                     this.showNotification(`❌ IPC call failed: ${ipcError.message}. Trying direct fetch...`, false);
@@ -3601,7 +3539,187 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
         }
     }
 
-    // Jarvis Low model - uses OpenAI API with gpt-4o-mini (no cost tracking)
+    // OpenClaw Gateway - connects to local OpenClaw instance
+    async callOpenClaw(message) {
+        try {
+            // Initialize OpenClaw client if not already done
+            if (!this.openClawClient) {
+                await this.initOpenClawClient();
+            }
+
+            // Check if connected
+            if (!this.openClawConnected) {
+                throw new Error('OpenClaw Gateway not connected. Make sure OpenClaw is running on your machine.');
+            }
+
+            // Build conversation context
+            let conversationContext = '';
+            if (this.conversationHistory.length > 0) {
+                conversationContext = '\n\nPREVIOUS CONVERSATION:\n' + 
+                    this.conversationHistory.slice(-5).map((msg, idx) => 
+                        `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.substring(0, 300)}`
+                    ).join('\n');
+            }
+
+            const fullMessage = conversationContext ? `${message}${conversationContext}` : message;
+
+            // Send message to OpenClaw gateway with streaming callback
+            const sessionKey = this.openClawSessionKey || 'jarvis-main';
+            
+            // Track what we're showing (thinking vs response)
+            let currentStreamType = null;
+            
+            const response = await this.openClawClient.sendMessage(fullMessage, {
+                thinking: 'medium',
+                sessionKey: sessionKey,
+                onStream: (text, streamType) => {
+                    // Update the display based on stream type
+                    if (streamType === 'thinking') {
+                        // Show thinking process with a distinct style
+                        currentStreamType = 'thinking';
+                        this.showStreamingContent(`💭 ${text}`, 'thinking');
+                    } else if (streamType === 'tool') {
+                        // Show tool usage
+                        this.showStreamingContent(text, 'tool');
+                    } else if (streamType === 'response') {
+                        // Show actual response - clear thinking indicator
+                        if (currentStreamType === 'thinking') {
+                            currentStreamType = 'response';
+                        }
+                        this.showStreamingContent(text, 'response');
+                    } else if (streamType === 'status') {
+                        // Show status updates briefly
+                        this.showStreamingContent(`⏳ ${text}`, 'status');
+                    }
+                }
+            });
+
+            // Extract the response text
+            let responseText = '';
+            if (typeof response === 'string') {
+                responseText = response;
+            } else if (response && response.text) {
+                responseText = response.text;
+            } else if (response && response.content) {
+                responseText = response.content;
+            } else if (response && response.message) {
+                responseText = response.message;
+            } else {
+                responseText = JSON.stringify(response);
+            }
+
+            // Add to conversation history
+            this.conversationHistory.push({
+                role: 'user',
+                content: message,
+                model: 'J bot'
+            });
+            this.conversationHistory.push({
+                role: 'assistant',
+                content: responseText,
+                model: 'J bot'
+            });
+            this.saveConversationHistory();
+
+            return responseText;
+        } catch (error) {
+            console.error('[OpenClaw] Error:', error);
+            
+            // If cancelled by user, don't show error
+            if (error.message.includes('cancelled by user')) {
+                return null;
+            }
+            
+            // If connection failed, offer to reconnect
+            if (error.message.includes('not connected')) {
+                return `🤖 J bot Gateway is not connected.\n\nTo use J bot:\n1. Make sure OpenClaw is installed (npm install -g openclaw)\n2. Start the gateway: openclaw gateway\n3. Try your message again`;
+            }
+            
+            return `🤖 J bot Error: ${error.message}`;
+        }
+    }
+
+    // Show streaming content in the output area
+    showStreamingContent(text, streamType = 'response') {
+        if (!this.dragOutput) return;
+        
+        // Make sure output is visible
+        this.dragOutput.classList.remove('hidden');
+        if (this.closeOutputFloating) {
+            this.closeOutputFloating.classList.remove('hidden');
+        }
+        
+        // Style based on stream type
+        let styledContent = '';
+        if (streamType === 'thinking') {
+            // Thinking has a subtle, italic style
+            styledContent = `<div class="streaming-thinking">${this.escapeHtml(text)}</div>`;
+        } else if (streamType === 'tool') {
+            // Tool usage has a distinct style
+            styledContent = `<div class="streaming-tool">${this.escapeHtml(text)}</div>`;
+        } else if (streamType === 'status') {
+            // Status is minimal
+            styledContent = `<div class="streaming-status">${this.escapeHtml(text)}</div>`;
+        } else {
+            // Regular response
+            styledContent = this.processContent(text, false);
+        }
+        
+        this.dragOutput.innerHTML = styledContent;
+    }
+
+    // Escape HTML for safe display
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async initOpenClawClient() {
+        return new Promise((resolve, reject) => {
+            try {
+                // Load the OpenClaw client
+                const OpenClawClient = require('./openclaw-integration.js');
+                
+                this.openClawClient = new OpenClawClient({
+                    url: 'ws://127.0.0.1:18789',
+                    token: 'test123',  // Token for gateway auth
+                    onConnect: (hello) => {
+                        console.log('[OpenClaw] Connected to gateway:', hello);
+                        this.openClawConnected = true;
+                        this.showNotification('🤖 Connected to J bot Gateway', true);
+                        resolve();
+                    },
+                    onDisconnect: (info) => {
+                        console.log('[OpenClaw] Disconnected:', info);
+                        this.openClawConnected = false;
+                    },
+                    onError: (error) => {
+                        console.error('[OpenClaw] Connection error:', error);
+                        this.openClawConnected = false;
+                    },
+                    onAgentStream: (payload) => {
+                        // Handle streaming responses if needed
+                        console.log('[OpenClaw] Agent stream:', payload);
+                    }
+                });
+
+                this.openClawClient.start();
+
+                // Set a timeout for connection
+                setTimeout(() => {
+                    if (!this.openClawConnected) {
+                        reject(new Error('OpenClaw connection timeout - make sure the gateway is running'));
+                    }
+                }, 5000);
+            } catch (error) {
+                console.error('[OpenClaw] Failed to initialize client:', error);
+                reject(error);
+            }
+        });
+    }
+
+    // GPT 5.2 Mini model - uses OpenAI API with gpt-4o-mini (no cost tracking)
     async callLowModel(message) {
         try {
             // Build conversation context
@@ -3619,13 +3737,13 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 documentContext = `\n\nDOCUMENT CONTEXT:\nTitle: ${this.currentDocument.title}\nContent: ${this.currentDocument.content.substring(0, 1500)}...`;
             }
 
-            const instructions = `You are Jarvis Low, a fast and efficient AI assistant. Answer directly without any preface. Be concise but helpful.${conversationContext}${documentContext}`;
+            const instructions = `You are GPT 5.2 Mini, a fast and efficient AI assistant. Answer directly without any preface. Be concise but helpful.${conversationContext}${documentContext}`;
 
             // Add user message to conversation history
             this.conversationHistory.push({
                 role: 'user',
                 content: message,
-                model: 'Jarvis Low'
+                model: 'GPT 5.2 Mini'
             });
 
             this.showLoadingNotification();
@@ -3654,7 +3772,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         this.conversationHistory.push({
                             role: 'assistant',
                             content: content,
-                            model: 'Jarvis Low'
+                            model: 'GPT 5.2 Mini'
                         });
                         
                         this.showLoadingNotification(null, 'default');
@@ -3699,7 +3817,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             this.conversationHistory.push({
                 role: 'assistant',
                 content: content,
-                model: 'Jarvis Low'
+                model: 'GPT 5.2 Mini'
             });
 
             this.showLoadingNotification(null, 'default');
@@ -3783,7 +3901,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         console.error('🚫 OpenRouter blocked:', errorMsg);
                         // Show notification with button to add credits
                         this.showLimitExceededNotification();
-                        return `⚠️ Switched to Jarvis Low. Add credits for other models.`;
+                        return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
                     }
                     throw new Error(`OpenRouter API error: ${result.status} - ${result.data?.error || result.statusText}`);
                 }
@@ -3801,7 +3919,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 this.conversationHistory.push({ 
                     role: 'assistant', 
                     content: content,
-                    model: this.selectedModelName || 'Jarvis'
+                    model: this.selectedModelName || 'ChatGPT 5.2'
                 });
                 
                 if (this.conversationHistory.length > 30) {
@@ -3865,7 +3983,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 this.conversationHistory.push({ 
                     role: 'assistant', 
                     content: content,
-                    model: this.selectedModelName || 'Jarvis'
+                    model: this.selectedModelName || 'ChatGPT 5.2'
                 });
                 
                 if (this.conversationHistory.length > 30) {
@@ -3974,7 +4092,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         if (result.data.costLimitDollars) {
                             this.showLimitExceededNotification();
                         }
-                        return `⚠️ Switched to Jarvis Low. Add credits for other models.`;
+                        return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
                     }
                     throw new Error(`Claude API error: ${result.status} - ${result.data?.error || result.statusText}`);
                 }
@@ -4151,7 +4269,7 @@ ${currentQuestion}`;
                         if (result.data.costLimitDollars) {
                             this.showLimitExceededNotification();
                         }
-                        return `⚠️ Switched to Jarvis Low. Add credits for other models.`;
+                        return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
                     }
                     
                     this.stopLoadingAnimation();
@@ -4207,108 +4325,13 @@ ${currentQuestion}`;
 
         // Check character limit for Low model (GPT-5 Mini)
         if (this.isUsingLowModel() && message.length > this.lowModelCharLimit) {
-            this.showNotification(`⚠️ Message too long for Jarvis Low. Please limit to ${this.lowModelCharLimit} characters. (Current: ${message.length})`, false);
+            this.showNotification(`⚠️ Message too long for GPT 5.2 Mini. Please limit to ${this.lowModelCharLimit} characters. (Current: ${message.length})`, false);
             return;
         }
 
         // Check low message limit for free users using Low model
         if (this.isUsingLowModel() && !this.hasPremiumAccess() && this.hasReachedLowMessageLimit()) {
-            this.showNotification(`⚠️ You've reached your daily limit of ${this.maxFreeLowMessages} messages with Jarvis Low. Try again tomorrow or upgrade for unlimited access!`, false);
-            return;
-        }
-
-        // Check for /hide command
-        if (message.toLowerCase() === '/hide' || message.toLowerCase().startsWith('/hide ')) {
-            // Clear input
-            if (this.textInput) this.textInput.value = '';
-            // Hide Answer Screen button
-            const answerBtn = document.getElementById('answer-this-btn');
-            if (answerBtn) {
-                answerBtn.classList.add('hidden');
-            }
-            const answerBtnMoved = document.getElementById('answer-this-btn-moved');
-            if (answerBtnMoved) {
-                answerBtnMoved.classList.add('hidden');
-            }
-            return;
-        }
-
-        // Check for /unhide command
-        if (message.toLowerCase() === '/unhide' || message.toLowerCase().startsWith('/unhide ')) {
-            // Clear input
-            if (this.textInput) this.textInput.value = '';
-            // Show Answer Screen button
-            const answerBtn = document.getElementById('answer-this-btn');
-            if (answerBtn) {
-                answerBtn.classList.remove('hidden');
-            }
-            const answerBtnMoved = document.getElementById('answer-this-btn-moved');
-            if (answerBtnMoved) {
-                answerBtnMoved.classList.remove('hidden');
-            }
-            return;
-        }
-
-        // Check for /docs command
-        if (message.toLowerCase() === '/docs' || message.toLowerCase().startsWith('/docs ')) {
-            // Clear input
-            if (this.textInput) this.textInput.value = '';
-            // Check if it's paste mode
-            const isPasteMode = message.toLowerCase().startsWith('/docs paste');
-            // Trigger write to docs with paste mode flag
-            await this.writeToDocs(isPasteMode);
-            return;
-        }
-
-        // Check for /calendar command or calendar-related phrases
-        const lowerMessage = message.toLowerCase();
-        const isCalendarCommand = lowerMessage === '/calendar' || lowerMessage.startsWith('/calendar ');
-        
-        // Detect calendar VIEW phrases
-        const calendarViewPhrases = [
-            'what\'s on my calendar', 'whats on my calendar', 'what is on my calendar',
-            'show my calendar', 'show calendar', 'check my calendar', 'check calendar',
-            'my schedule', 'upcoming events', 'upcoming meetings', 
-            'what do i have today', 'what do i have this week', 'any meetings', 'any events'
-        ];
-        const isCalendarViewPhrase = calendarViewPhrases.some(phrase => lowerMessage.includes(phrase));
-        
-        if (isCalendarViewPhrase) {
-            // Clear input
-            if (this.textInput) this.textInput.value = '';
-            await this.getUpcomingEvents();
-            return;
-        }
-        
-        // Handle /calendar command - show modal for manual event creation
-        if (isCalendarCommand) {
-            // Clear input
-            if (this.textInput) this.textInput.value = '';
-                await this.createCalendarEvent();
-            return;
-        }
-
-        // Check for Gmail-related queries
-        const isGmailQuery = lowerMessage.includes('email') || lowerMessage.includes('gmail') || 
-                            lowerMessage.includes('inbox') || lowerMessage.includes('messages');
-        const isTodaysEmails = lowerMessage.includes('today') && isGmailQuery;
-        const isImportantEmails = (lowerMessage.includes('important') || lowerMessage.includes('priority')) && isGmailQuery;
-        const isUnreadEmails = (lowerMessage.includes('unread') || lowerMessage.includes('new')) && isGmailQuery;
-        
-        if (isGmailQuery) {
-            // Clear input
-            if (this.textInput) this.textInput.value = '';
-            
-            if (isTodaysEmails) {
-                await this.getTodaysEmails();
-            } else if (isImportantEmails) {
-                await this.getImportantEmails();
-            } else if (isUnreadEmails) {
-                await this.getUnreadEmails();
-            } else {
-                // General email query - show today's emails
-                await this.getTodaysEmails();
-            }
+            this.showNotification(`⚠️ You've reached your daily limit of ${this.maxFreeLowMessages} messages with GPT 5.2 Mini. Try again tomorrow or upgrade for unlimited access!`, false);
             return;
         }
 
@@ -4323,7 +4346,15 @@ ${currentQuestion}`;
         try {
             if (this.pendingAttachments && this.pendingAttachments.length > 0) {
                 const sending = this.pendingAttachments.slice();
-                await this.analyzeFilesWithChatGPT(sending, message || 'Analyze these files');
+                
+                // For OpenClaw, include file content directly in the message instead of separate processing
+                if (this.selectedModel === 'openclaw') {
+                    const messageWithFiles = this.buildMessageWithAttachments(message || 'Analyze these files', sending);
+                    await this.processMessage(messageWithFiles);
+                } else {
+                    await this.analyzeFilesWithChatGPT(sending, message || 'Analyze these files');
+                }
+                
                 // Clear attachments after send and revoke blob URLs
                 this.pendingAttachments.forEach(att => {
                     if (att && att._blobUrl) {
@@ -4338,6 +4369,34 @@ ${currentQuestion}`;
         } catch (error) {
             console.error('sendMessage failed:', error);
         }
+    }
+
+    // Build a message that includes file attachments inline (for OpenClaw and similar)
+    buildMessageWithAttachments(prompt, files) {
+        let fullMessage = prompt;
+        
+        // Add file info header
+        if (files.length === 1) {
+            fullMessage += `\n\n📎 Attached file: ${files[0].name}`;
+        } else {
+            fullMessage += `\n\n📎 Attached files (${files.length}): ${files.map(f => f.name).join(', ')}`;
+        }
+        
+        // Add file contents
+        for (const file of files) {
+            if (file.type === 'text' && file.content) {
+                fullMessage += `\n\n--- Content of ${file.name} ---\n${file.content}`;
+            } else if (file.type === 'pdf' && file.content && typeof file.content === 'string' && file.content.trim().length > 0) {
+                fullMessage += `\n\n--- Extracted text from PDF: ${file.name} ---\n${file.content}`;
+            } else if (file.type === 'image') {
+                // For images, just note that it was attached (OpenClaw may not support images directly)
+                fullMessage += `\n\n[Image attached: ${file.name}]`;
+            } else {
+                fullMessage += `\n\n[Attachment: ${file.name} (${file.mimeType || file.type || 'unknown type'})]`;
+            }
+        }
+        
+        return fullMessage;
     }
 
     showNotification(text, isHTML = false) {
@@ -5458,11 +5517,24 @@ ${currentQuestion}`;
         console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
         
         // Free users can only use the default Jarvis model (with Low/High toggle)
-        // Block selection of any other model
-        if (model !== 'default' && !this.hasPremiumAccess()) {
+        // Block selection of any other model (except OpenClaw which is local)
+        if (model !== 'default' && model !== 'openclaw' && !this.hasPremiumAccess()) {
             this.showNotification('🔒 This model requires Jarvis Premium. Upgrade to access all AI models!', false);
             this.showUpgradePrompt();
             return;
+        }
+        
+        // Show J Bot warning modal if selecting openclaw and not already accepted
+        if (model === 'openclaw' && !this.jbotAccepted) {
+            this.showJBotWarningModal(model, modelName);
+            return;
+        }
+        
+        // Initialize OpenClaw if selected
+        if (model === 'openclaw' && !this.openClawClient) {
+            this.initOpenClawClient().catch(err => {
+                console.error('[OpenClaw] Init error:', err);
+            });
         }
         
         // If selecting a non-low model, clear the forced low model mode
@@ -5522,6 +5594,140 @@ ${currentQuestion}`;
         console.log(`🤖 [MODEL SWITCHER] Successfully switched to ${modelName} (${model})`);
     }
 
+    showJBotWarningModal(model, modelName) {
+        const modal = document.getElementById('jbot-warning-modal');
+        const modalContent = modal?.querySelector('.jbot-warning-modal-content');
+        const passwordInput = document.getElementById('jbot-password-input');
+        const passwordError = document.getElementById('jbot-password-error');
+        const acceptBtn = document.getElementById('jbot-warning-accept');
+        const cancelBtn = document.getElementById('jbot-warning-cancel');
+        
+        if (!modal) {
+            console.error('[J Bot] Warning modal not found');
+            return;
+        }
+        
+        // Make sure window is interactive (not click-through)
+        const makeInteractive = () => {
+            if (this.isElectron) {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('make-interactive').catch(() => {});
+                ipcRenderer.invoke('request-focus').catch(() => {});
+            }
+        };
+        
+        makeInteractive();
+        
+        // Reset modal state
+        passwordInput.value = '';
+        passwordError.classList.add('hidden');
+        
+        // Show modal
+        modal.classList.remove('hidden');
+        
+        // Focus password input
+        setTimeout(() => {
+            makeInteractive();
+            passwordInput.focus();
+        }, 100);
+        
+        // Store pending model selection
+        this.pendingJBotModel = model;
+        this.pendingJBotModelName = modelName;
+        
+        // Keep modal interactive on any mouse interaction
+        modal.onmouseenter = () => makeInteractive();
+        modal.onmousemove = () => makeInteractive();
+        
+        // Prevent clicks on modal content from propagating
+        if (modalContent) {
+            modalContent.onmouseenter = () => makeInteractive();
+            modalContent.onmousedown = (e) => {
+                makeInteractive();
+                e.stopPropagation();
+            };
+            modalContent.onmouseup = (e) => e.stopPropagation();
+            modalContent.onclick = (e) => e.stopPropagation();
+        }
+        
+        // Close modal when clicking backdrop
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                this.hideJBotWarningModal();
+            }
+        };
+        
+        // Set up button handlers directly
+        acceptBtn.onmouseenter = () => makeInteractive();
+        acceptBtn.onmousedown = (e) => {
+            makeInteractive();
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        acceptBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.handleJBotAccept();
+        };
+        
+        cancelBtn.onmouseenter = () => makeInteractive();
+        cancelBtn.onmousedown = (e) => {
+            makeInteractive();
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        cancelBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.hideJBotWarningModal();
+        };
+        
+        // Handle Enter key in password input
+        passwordInput.onmouseenter = () => makeInteractive();
+        passwordInput.onfocus = () => makeInteractive();
+        passwordInput.onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                this.handleJBotAccept();
+            }
+        };
+    }
+
+    hideJBotWarningModal() {
+        const modal = document.getElementById('jbot-warning-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        this.pendingJBotModel = null;
+        this.pendingJBotModelName = null;
+    }
+
+    handleJBotAccept() {
+        const passwordInput = document.getElementById('jbot-password-input');
+        const passwordError = document.getElementById('jbot-password-error');
+        const password = passwordInput.value.trim();
+        
+        // Check password
+        if (password !== 'unlockalpha') {
+            passwordError.classList.remove('hidden');
+            passwordInput.value = '';
+            passwordInput.focus();
+            return;
+        }
+        
+        // Password correct - mark as accepted
+        this.jbotAccepted = true;
+        
+        // Hide modal
+        this.hideJBotWarningModal();
+        
+        // Now actually select the model
+        if (this.pendingJBotModel && this.pendingJBotModelName) {
+            this.selectModel(this.pendingJBotModel, this.pendingJBotModelName);
+        }
+        
+        this.showNotification('⚠️ J Bot unlocked. Use responsibly.', true);
+    }
+
     clearChatHistory() {
         // Clear conversation history
         this.conversationHistory = [];
@@ -5531,6 +5737,17 @@ ${currentQuestion}`;
             localStorage.removeItem('jarvis_conversation_history');
         } catch (e) {
             console.error('Failed to clear conversation history from localStorage:', e);
+        }
+        
+        // Reset OpenClaw session if connected
+        if (this.openClawClient && this.openClawConnected) {
+            // Generate a new session key to ensure fresh context
+            this.openClawSessionKey = 'jarvis-' + Date.now();
+            this.openClawClient.resetSession('jarvis-main').then(() => {
+                console.log('[OpenClaw] Session reset successfully, new session:', this.openClawSessionKey);
+            }).catch(err => {
+                console.error('[OpenClaw] Failed to reset session:', err);
+            });
         }
         
         // Clear the messages container
@@ -6208,7 +6425,7 @@ User request: ${prompt}`;
                         }
                     } catch (ipcError) {
                         if (ipcError.message === 'LIMIT_EXCEEDED') {
-                            return "⚠️ Switched to Jarvis Low. Add credits for other models.";
+                            return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                         }
                         console.error('❌ IPC file analysis failed, falling back to proxy:', ipcError);
                         response = null;
@@ -6307,7 +6524,7 @@ User request: ${prompt}`;
             this.conversationHistory.push({ 
                 role: 'assistant', 
                 content: analysis,
-                model: this.selectedModelName || 'Jarvis'
+                model: this.selectedModelName || 'ChatGPT 5.2'
             });
             if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
             this.saveConversationHistory();
@@ -7237,21 +7454,21 @@ User Question: ${question}`;
     }
 
     switchToLowModel(silent = false) {
-        console.log('🔄 Switching to Jarvis Low');
+        console.log('🔄 Switching to GPT 5.2 Mini');
         this.selectedModel = 'jarvis-low';
-        this.selectedModelName = 'Jarvis Low';
+        this.selectedModelName = 'GPT 5.2 Mini';
         this.isLowModelMode = true;
         
         // Update UI
         if (this.currentModelDisplay) {
-            this.currentModelDisplay.textContent = 'Jarvis Low';
+            this.currentModelDisplay.textContent = 'GPT 5.2 Mini';
         }
         
         // Update tier toggle UI
         this.updateTierToggleUI();
         
         if (!silent) {
-            this.showNotification('Switched to Jarvis Low', true);
+            this.showNotification('Switched to GPT 5.2 Mini', true);
         }
     }
 
@@ -7282,9 +7499,9 @@ User Question: ${question}`;
             console.log(`🔄 Tier toggle changed to: ${isHigh ? 'High' : 'Low'}`);
             
             if (isHigh) {
-                // Switch to High (default Jarvis)
+                // Switch to High (default ChatGPT 5.2)
                 this.isLowModelMode = false;
-                this.selectModel('default', 'Jarvis');
+                this.selectModel('default', 'ChatGPT 5.2');
             } else {
                 // Switch to Low (GPT-5 Mini)
                 this.switchToLowModel(true);
@@ -7310,7 +7527,7 @@ User Question: ${question}`;
             return;
         }
         
-        // Only show counter for free users
+        // Hide counter for premium users
         if (this.hasPremiumAccess()) {
             this.messageCounter.classList.add('hidden');
             this.messageCounter.classList.remove('upgrade-btn');
@@ -7321,20 +7538,19 @@ User Question: ${question}`;
         // Check and reset if 24 hours have passed
         this.checkAndResetMessageCount();
         
-        // Show counter for free users
-        this.messageCounter.classList.remove('hidden');
         const remaining = this.getRemainingMessages();
         
-        // Update styling based on remaining messages
+        // Update styling
         this.messageCounter.classList.remove('warning', 'critical', 'upgrade-btn');
         
         if (remaining === 0) {
-            // Show upgrade button when out of messages
+            // Show upgrade button only when out of messages
+            this.messageCounter.classList.remove('hidden');
             this.messageCountText.textContent = '⬆ Upgrade';
             this.messageCounter.classList.add('upgrade-btn');
             this.messageCounter.style.cursor = 'pointer';
             
-            // Add click handler for upgrade (remove old one first)
+            // Add click handler for upgrade
             this.messageCounter.onclick = async () => {
                 if (this.isElectron) {
                     try {
@@ -7352,16 +7568,11 @@ User Question: ${question}`;
             };
             console.log('Free tier - showing upgrade button (0 messages remaining)');
         } else {
-            this.messageCountText.textContent = `${remaining}/${this.maxFreeMessages}`;
+            // Hide counter when user still has messages remaining
+            this.messageCounter.classList.add('hidden');
             this.messageCounter.style.cursor = 'default';
             this.messageCounter.onclick = null;
-            console.log(`Free tier - showing ${remaining}/${this.maxFreeMessages} messages remaining`);
-        
-        if (remaining <= 2) {
-            this.messageCounter.classList.add('critical');
-        } else if (remaining <= 5) {
-            this.messageCounter.classList.add('warning');
-            }
+            console.log(`Free tier - ${remaining}/${this.maxFreeMessages} messages remaining (counter hidden)`);
         }
     }
 
@@ -8269,11 +8480,6 @@ User Question: ${question}`;
         // Cache for message heights to prevent recalculations
         let cachedMessageHeights = new Map();
         
-        // Track scroll accumulator for wheel events (shared between wheel handler and updateMessageVisibility)
-        let scrollAccumulator = 0;
-        let previousScrollAccumulator = -1; // Initialize to -1 to detect first scroll
-        let maxAccumulatorReached = 0; // Track the maximum accumulator value reached
-        let wheelRafId = null;
         
         // Function to update visibility of previous messages based on scroll position
         const updateMessageVisibility = () => {
@@ -8311,13 +8517,6 @@ User Question: ${question}`;
                     const padding = 0.5 * 16;
                     container.style.height = `${currentHeight + padding}px`;
                     container.scrollTop = container.scrollHeight;
-                    
-                    // Reset scroll accumulator when at bottom
-                    scrollAccumulator = 0;
-                    if (wheelRafId !== null) {
-                        cancelAnimationFrame(wheelRafId);
-                        wheelRafId = null;
-                    }
                 }
             } else {
                 // Scrolled up - show messages above output chat
@@ -8446,241 +8645,13 @@ User Question: ${question}`;
             subtree: true
         });
         
-        // Track user scrolling to prevent auto-scroll when they scroll up
-        let scrollTimeout;
-        let lastScrollTop = this.messagesContainer.scrollTop;
-        
-        // Track scroll wheel events to expand container instead of scrolling
-        // scrollAccumulator, targetAccumulator, wheelRafId, and isAnimating are declared above
-        
-        const updateMessagesFromAccumulator = () => {
-            // Get current messages
-            const previousMessages = Array.from(this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)'));
-            if (previousMessages.length === 0) return;
-            
-            const currentMessage = this.messagesContainer.querySelector('#drag-output');
-            if (!currentMessage) return;
-            
-            const padding = 0.5 * 16;
-            let targetHeight = currentMessage.offsetHeight + padding;
-            
-            // Three phases:
-            // Phase 1 (0 to maxScroll): Scroll DOWN → messages appear newest→oldest, output moves down
-            // Phase 2 (maxScroll to maxScroll*2): Scroll DOWN → messages scroll behind button (newest first) to reveal older ones
-            // Scrolling UP: Messages disappear oldest→newest, sliding back behind HUD
-            const maxScroll = previousMessages.length * 50;
-            const maxScrollWithHide = maxScroll * 2;
-            
-            // Detect scroll direction based on accumulator change
-            // Scroll DOWN (deltaY > 0) → accumulator increases → isScrollingUp = false
-            // Scroll UP (deltaY < 0) → accumulator decreases → isScrollingUp = true
-            const isScrollingUp = previousScrollAccumulator >= 0 && scrollAccumulator < previousScrollAccumulator;
-            // Phase 2: scrolling DOWN beyond maxScroll (accumulator > maxScroll AND increasing)
-            const isScrollingDown = previousScrollAccumulator >= 0 && scrollAccumulator > previousScrollAccumulator;
-            const isPhase2 = scrollAccumulator > maxScroll && isScrollingDown;
-            
-            // Debug logging (only log significant changes)
-            if (Math.abs(scrollAccumulator - previousScrollAccumulator) > 5) {
-                console.log('Scroll:', {
-                    acc: scrollAccumulator.toFixed(0),
-                    prev: previousScrollAccumulator.toFixed(0),
-                    maxScroll,
-                    isScrollingUp,
-                    isScrollingDown,
-                    isPhase2,
-                    msgCount: previousMessages.length
-                });
-            }
-            
-            // When scrolling up, ensure we don't go below 0
-            // But allow negative values temporarily for smooth animation
-            if (isScrollingUp && scrollAccumulator < 0) {
-                // Clamp to 0 only after all messages are hidden
-                // For now, allow negative to animate oldest message disappearing
-            }
-            
-            let accumulatedHeight = 0;
-            
-            // Messages are in DOM order: oldest (index 0) → newest (index length-1)
-            // forwardIndex: 0 = oldest (farthest from output), length-1 = newest (closest to output)
-            // reverseIndex: 0 = newest (closest to output), length-1 = oldest (farthest from output)
-            
-            for (let i = 0; i < previousMessages.length; i++) {
-                const forwardIndex = i; // 0 = oldest, length-1 = newest
-                const reverseIndex = previousMessages.length - 1 - i; // 0 = newest, length-1 = oldest
-                const msg = previousMessages[i];
-                
-                let progress;
-                
-                if (isScrollingUp) {
-                    // Scrolling UP: Messages slide up behind HUD oldest→newest (top to bottom)
-                    // This is the EXACT REVERSE of Phase 1 (scrolling DOWN)
-                    // 
-                    // In Phase 1 (scrolling DOWN), messages appear using reverseIndex:
-                    //   - reverseIndex=0 (newest) appears at accumulator 0→50
-                    //   - reverseIndex=1 appears at accumulator 50→100
-                    //   - reverseIndex=2 appears at accumulator 100→150, etc.
-                    //
-                    // When scrolling UP, we reverse this:
-                    //   - forwardIndex=0 (oldest) disappears when accumulator goes from 50→0
-                    //   - forwardIndex=1 disappears when accumulator goes from 100→50
-                    //   - forwardIndex=2 disappears when accumulator goes from 150→100, etc.
-                    //
-                    // So: message at forwardIndex should be visible when accumulator > (forwardIndex + 1) * 50
-                    //     and should disappear progressively as accumulator decreases below that
-                    const disappearStart = (forwardIndex + 1) * 50; // When accumulator < this, start disappearing
-                    const disappearEnd = forwardIndex * 50; // When accumulator < this, fully hidden
-                    
-                    if (scrollAccumulator >= disappearStart) {
-                        progress = 1; // Fully visible
-                    } else if (scrollAccumulator <= disappearEnd) {
-                        progress = 0; // Fully hidden behind HUD
-                    } else {
-                        // Transitioning from visible to hidden as accumulator decreases
-                        progress = (scrollAccumulator - disappearEnd) / 50;
-                    }
-                } else if (isPhase2) {
-                    // Phase 2 (scrolling DOWN beyond maxScroll): Messages scroll behind Answer Screen button
-                    // reverseIndex=0 (newest, closest to output) scrolls behind button first
-                    // This reveals older messages above
-                    const hideStart = maxScroll + (reverseIndex * 50);
-                    const hideEnd = hideStart + 50;
-                    
-                    if (scrollAccumulator <= hideStart) {
-                        progress = 1; // Still visible
-                    } else if (scrollAccumulator >= hideEnd) {
-                        progress = 0; // Hidden behind button
-                    } else {
-                        progress = 1 - ((scrollAccumulator - hideStart) / 50); // Transitioning 1→0
-                    }
-                } else {
-                    // Phase 1 (scrolling DOWN): Messages appear newest→oldest
-                    // reverseIndex=0 (newest) appears first when accumulator goes 0→50
-                    // reverseIndex=1 appears second when accumulator goes 50→100
-                    const appearStart = reverseIndex * 50;
-                    const appearEnd = appearStart + 50;
-                    
-                    if (scrollAccumulator <= appearStart) {
-                        progress = 0; // Hidden
-                    } else if (scrollAccumulator >= appearEnd) {
-                        progress = 1; // Fully visible
-                    } else {
-                        progress = (scrollAccumulator - appearStart) / 50; // Transitioning 0→1
-                    }
-                }
-                
-                // Always expand message for height calculation
-                msg.style.removeProperty('height');
-                msg.style.removeProperty('min-height');
-                msg.style.height = 'auto';
-                void msg.offsetHeight;
-                
-                // Get message height for smooth sliding animation
-                let msgHeight = cachedMessageHeights.get(msg);
-                if (!msgHeight) {
-                    msgHeight = msg.offsetHeight || msg.scrollHeight || msg.clientHeight || 50;
-                    cachedMessageHeights.set(msg, msgHeight);
-                }
-                
-                // Apply animation
-                // Progress: 0 = hidden above HUD/behind button, 1 = fully visible
-                let translateY = 0;
-                
-                if (isScrollingUp) {
-                    // Scrolling UP: Messages slide UP behind HUD (negative translateY)
-                    // This is the EXACT OPPOSITE of scrolling DOWN Phase 1
-                    // When scrolling DOWN: messages slide DOWN (positive translateY) as they appear
-                    // When scrolling UP: messages slide UP (negative translateY) as they disappear
-                    // Oldest messages (forwardIndex=0) slide up first, exactly like they slid down last
-                    translateY = -(1 - progress) * 30; // Slide up smoothly behind HUD (opposite of Phase 1)
-                } else if (isPhase2) {
-                    // Phase 2: Messages slide DOWN behind Answer Screen button (positive translateY)
-                    translateY = (1 - progress) * (msgHeight + 40); // Slide down smoothly behind button
-                } else {
-                    // Phase 1: Messages slide DOWN into view (positive translateY)
-                    translateY = (1 - progress) * 30; // Small slide down when appearing
-                }
-                
-                msg.style.opacity = progress > 0 ? '1' : '0';
-                msg.style.transform = `translateY(${translateY}px)`;
-                msg.style.pointerEvents = progress > 0 ? 'auto' : 'none';
-                msg.style.transition = 'none';
-                
-                // Count height for visible messages only
-                // When scrolling up, messages slide up visually but maintain layout space until fully hidden
-                // This prevents the appearance of messages "moving to the bottom"
-                if (progress > 0) {
-                    // Only count height for messages that are at least partially visible
-                    // This ensures smooth container height decrease as messages hide
-                    accumulatedHeight += msgHeight * progress;
-                }
-            }
-            
-            targetHeight += accumulatedHeight;
-            // Cap height during Phase 1
-            if (!isPhase2 && !isScrollingUp) {
-                targetHeight = Math.min(targetHeight, 400); // Cap at 400px during Phase 1
-            }
-            
-            // Update container height
-            this.messagesContainer.style.height = `${targetHeight}px`;
-        };
-        
-        // Make updateMessagesFromAccumulator globally accessible for the toggle button
-        window.updateMessagesFromAccumulator = updateMessagesFromAccumulator;
-        
         this.messagesContainer.addEventListener('wheel', (e) => {
-            // Check if scrolling inside a drag-output element
+            // Allow normal scrolling inside individual chat boxes
             const targetIsOutput = e.target.closest('.drag-output');
             if (targetIsOutput) {
-                // Allow normal scrolling inside individual chat boxes
                 return;
             }
-            
-            // Allow normal scrolling - don't prevent default
-            // e.preventDefault(); // Commented out to allow normal scrolling
-            return; // Skip custom scroll handling
-            
-            // Get current messages
-            const previousMessages = Array.from(this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)'));
-            if (previousMessages.length === 0) return;
-            
-            // Store previous accumulator BEFORE updating
-            const prevAccumulator = scrollAccumulator;
-            
-            // Update accumulator directly
-            // e.deltaY: positive = scroll DOWN, negative = scroll UP
-            // Scroll DOWN (deltaY > 0) → increase accumulator → reveal messages
-            // Scroll UP (deltaY < 0) → decrease accumulator → hide messages
-            const maxScroll = previousMessages.length * 50; // 50px per message
-            const maxScrollWithHide = maxScroll * 2; // Allow scrolling beyond max to hide messages behind button
-            const minScroll = -50; // Allow going negative to hide oldest message smoothly
-            
-            // Add deltaY directly (positive deltaY increases accumulator)
-            scrollAccumulator = scrollAccumulator + e.deltaY;
-            scrollAccumulator = Math.max(minScroll, Math.min(scrollAccumulator, maxScrollWithHide));
-            
-            // Update max accumulator reached
-            maxAccumulatorReached = Math.max(maxAccumulatorReached, scrollAccumulator);
-            
-            // Update previousScrollAccumulator BEFORE calling updateMessagesFromAccumulator
-            previousScrollAccumulator = prevAccumulator;
-            
-            // Cancel any pending animation
-            if (wheelRafId !== null) {
-                cancelAnimationFrame(wheelRafId);
-            }
-            
-            // Update messages immediately for smooth, responsive scrolling
-            wheelRafId = requestAnimationFrame(() => {
-                updateMessagesFromAccumulator();
-                wheelRafId = null;
-            });
-        }, { passive: true });
-        
-        // Allow normal scrolling
-        this.messagesContainer.addEventListener('scroll', () => {
-            // Normal scroll behavior - no custom handling
+            // Allow normal scrolling behavior
         }, { passive: true });
         
         // Initial visibility update
@@ -8706,8 +8677,8 @@ User Question: ${question}`;
         this.showLoadingNotification('Humanizing text...');
         
         try {
-            // Apply humanization transformations
-            const humanizedText = this.humanizeText(text);
+            // Use AI-powered humanization based on https://github.com/blader/humanizer
+            const humanizedText = await this.humanizeTextWithAI(text);
             
             // Display the humanized text
             this.showNotification(humanizedText, false);
@@ -8719,249 +8690,120 @@ User Question: ${question}`;
             });
         } catch (error) {
             console.error('Humanize error:', error);
-            this.showNotification('❌ Error humanizing text: ' + error.message, false);
+            this.showNotification('Error humanizing text: ' + error.message, false);
         }
     }
     
     /**
-     * Humanize text to make it sound more natural and less AI-generated
-     * Inspired by https://github.com/DadaNanjesha/AI-Text-Humanizer-App
+     * AI-powered humanizer based on https://github.com/blader/humanizer
+     * Uses Wikipedia's "Signs of AI writing" guide to remove AI patterns
      */
-    humanizeText(text) {
-        let result = text;
+    async humanizeTextWithAI(text) {
+        const humanizerPrompt = `You are a writing editor that identifies and removes signs of AI-generated text to make writing sound more natural and human. Based on Wikipedia's "Signs of AI writing" guide.
+
+## Your Task
+Rewrite the following text to remove AI patterns while:
+1. Preserving the core meaning
+2. Making it sound natural when read aloud
+3. Adding personality and voice - don't just remove bad patterns, inject actual human feeling
+
+## KEY PATTERNS TO FIX:
+
+### Content Patterns:
+- Remove significance inflation ("pivotal moment", "testament to", "vital role", "underscores importance")
+- Remove superficial -ing analyses ("highlighting...", "showcasing...", "reflecting...")
+- Remove promotional language ("groundbreaking", "nestled", "vibrant", "breathtaking")
+- Replace vague attributions ("Experts believe", "Industry observers") with specific sources or remove
+- Remove formulaic "Despite challenges... continues to thrive" patterns
+
+### Language Patterns:
+- Replace AI vocabulary: Additionally→also, crucial→important, delve→explore, landscape→(remove or be specific), testament→(remove), underscore→(remove), showcase→show, foster→(remove or simplify)
+- Fix copula avoidance: "serves as"→"is", "stands as"→"is", "boasts"→"has", "features"→"has"
+- Remove negative parallelisms ("It's not just X, it's Y")
+- Break up rule-of-three patterns (innovation, inspiration, insights)
+- Stop synonym cycling - use the same word when it's clearest
+- Remove false ranges ("from X to Y" where X and Y aren't on a meaningful scale)
+
+### Style Patterns:
+- Reduce em dash overuse — use commas or periods instead
+- Remove excessive boldface
+- Convert inline-header lists to prose
+- Use sentence case in headings, not Title Case
+- Remove emojis from professional text
+- Use straight quotes "like this" not curly quotes
+
+### Communication Patterns:
+- Remove chatbot artifacts ("I hope this helps!", "Let me know if...", "Great question!")
+- Remove knowledge-cutoff disclaimers ("While specific details are limited...")
+- Remove sycophantic tone ("You're absolutely right!", "Excellent point!")
+
+### Filler and Hedging:
+- "In order to" → "To"
+- "Due to the fact that" → "Because"
+- "At this point in time" → "Now"
+- Remove excessive hedging ("could potentially possibly")
+- Remove generic positive conclusions ("The future looks bright")
+
+## ADDING SOUL:
+- Vary sentence rhythm (mix short punchy with longer ones)
+- Have opinions when appropriate
+- Acknowledge complexity and mixed feelings
+- Use "I" when it fits
+- Be specific about feelings
+- Let some natural messiness in
+
+## OUTPUT:
+Return ONLY the rewritten text. No explanations, no "Here's the humanized version:", just the improved text.
+
+---
+TEXT TO HUMANIZE:
+${text}`;
+
+        // Use the existing API proxy infrastructure
+        if (!this.apiProxyUrl || !this.supabaseAnonKey) {
+            throw new Error('API not available. Please ensure you are logged in.');
+        }
         
-        // 1. Expand contractions (makes text more formal/academic)
-        const contractions = {
-            "don't": "do not",
-            "doesn't": "does not",
-            "didn't": "did not",
-            "won't": "will not",
-            "wouldn't": "would not",
-            "couldn't": "could not",
-            "shouldn't": "should not",
-            "can't": "cannot",
-            "isn't": "is not",
-            "aren't": "are not",
-            "wasn't": "was not",
-            "weren't": "were not",
-            "haven't": "have not",
-            "hasn't": "has not",
-            "hadn't": "had not",
-            "it's": "it is",
-            "that's": "that is",
-            "there's": "there is",
-            "here's": "here is",
-            "what's": "what is",
-            "who's": "who is",
-            "let's": "let us",
-            "I'm": "I am",
-            "you're": "you are",
-            "we're": "we are",
-            "they're": "they are",
-            "I've": "I have",
-            "you've": "you have",
-            "we've": "we have",
-            "they've": "they have",
-            "I'll": "I will",
-            "you'll": "you will",
-            "we'll": "we will",
-            "they'll": "they will",
-            "I'd": "I would",
-            "you'd": "you would",
-            "we'd": "we would",
-            "they'd": "they would"
+        const requestPayload = {
+            model: this.currentModel,
+            instructions: 'You are a writing editor specializing in making AI-generated text sound natural and human. Output only the rewritten text with no preamble or explanation.',
+            input: [{
+                role: 'user',
+                content: [
+                    { type: 'input_text', text: humanizerPrompt }
+                ]
+            }]
         };
         
-        for (const [contraction, expansion] of Object.entries(contractions)) {
-            const regex = new RegExp(contraction.replace("'", "'"), 'gi');
-            result = result.replace(regex, (match) => {
-                // Preserve case
-                if (match[0] === match[0].toUpperCase()) {
-                    return expansion.charAt(0).toUpperCase() + expansion.slice(1);
-                }
-                return expansion;
-            });
-        }
-        
-        // 2. Replace common AI-sounding words with more natural alternatives
-        const aiWordReplacements = {
-            'utilize': 'use',
-            'utilizes': 'uses',
-            'utilized': 'used',
-            'utilizing': 'using',
-            'implementation': 'setup',
-            'implement': 'set up',
-            'implements': 'sets up',
-            'implemented': 'set up',
-            'facilitate': 'help',
-            'facilitates': 'helps',
-            'facilitated': 'helped',
-            'leveraging': 'using',
-            'leverage': 'use',
-            'leveraged': 'used',
-            'subsequently': 'then',
-            'furthermore': 'also',
-            'additionally': 'also',
-            'consequently': 'so',
-            'nevertheless': 'but',
-            'nonetheless': 'still',
-            'henceforth': 'from now on',
-            'whereby': 'where',
-            'thereof': 'of it',
-            'therein': 'in it',
-            'aforementioned': 'mentioned',
-            'pertaining to': 'about',
-            'in order to': 'to',
-            'due to the fact that': 'because',
-            'in the event that': 'if',
-            'at this point in time': 'now',
-            'in close proximity to': 'near',
-            'a large number of': 'many',
-            'a significant amount of': 'much',
-            'in spite of the fact that': 'although',
-            'with regard to': 'about',
-            'in reference to': 'about',
-            'it is important to note that': '',
-            'it should be noted that': '',
-            'it is worth mentioning that': '',
-            'as a matter of fact': 'actually',
-            'in essence': 'basically',
-            'in conclusion': 'finally',
-            'to summarize': 'in short',
-            'delve': 'explore',
-            'delves': 'explores',
-            'delving': 'exploring',
-            'delved': 'explored',
-            'crucial': 'important',
-            'pivotal': 'key',
-            'paramount': 'essential',
-            'endeavor': 'try',
-            'endeavors': 'tries',
-            'endeavored': 'tried',
-            'endeavoring': 'trying',
-            'plethora': 'many',
-            'myriad': 'many',
-            'multitude': 'many',
-            'commence': 'start',
-            'commences': 'starts',
-            'commenced': 'started',
-            'terminate': 'end',
-            'terminates': 'ends',
-            'terminated': 'ended',
-            'ascertain': 'find out',
-            'elucidate': 'explain',
-            'elucidates': 'explains',
-            'elucidated': 'explained',
-            'substantiate': 'prove',
-            'substantiates': 'proves',
-            'substantiated': 'proved',
-            'delineate': 'describe',
-            'delineates': 'describes',
-            'delineated': 'described',
-            'extrapolate': 'extend',
-            'extrapolates': 'extends',
-            'extrapolated': 'extended'
-        };
-        
-        for (const [aiWord, replacement] of Object.entries(aiWordReplacements)) {
-            const regex = new RegExp('\\b' + aiWord + '\\b', 'gi');
-            result = result.replace(regex, (match) => {
-                if (match[0] === match[0].toUpperCase()) {
-                    return replacement.charAt(0).toUpperCase() + replacement.slice(1);
-                }
-                return replacement;
-            });
-        }
-        
-        // 3. Remove redundant AI phrases
-        const redundantPhrases = [
-            /\bAs an AI( language model)?,?\s*/gi,
-            /\bI('m| am) an AI( assistant)?,?\s*/gi,
-            /\bAs a language model,?\s*/gi,
-            /\bBased on my training( data)?,?\s*/gi,
-            /\bI don't have personal (opinions|experiences|feelings),? but\s*/gi,
-            /\bCertainly!\s*/gi,
-            /\bOf course!\s*/gi,
-            /\bAbsolutely!\s*/gi,
-            /\bGreat question!\s*/gi,
-            /\bThat's a great question!\s*/gi,
-            /\bI'd be happy to help( with that)?[.!]?\s*/gi,
-            /\bSure thing!\s*/gi,
-            /\bHere's (the|my|a) (answer|response|explanation)[.:]\s*/gi,
-            /\bLet me (explain|help you understand)[.:]\s*/gi
-        ];
-        
-        for (const phrase of redundantPhrases) {
-            result = result.replace(phrase, '');
-        }
-        
-        // 4. Add natural sentence starters (randomly to some sentences)
-        const sentences = result.split(/(?<=[.!?])\s+/);
-        const naturalStarters = [
-            'Actually, ',
-            'In fact, ',
-            'Well, ',
-            'You see, ',
-            'The thing is, ',
-            'Honestly, ',
-            'To be fair, ',
-            'From what I understand, ',
-            'As far as I know, '
-        ];
-        
-        // Only add starters to 20% of sentences (randomly)
-        const processedSentences = sentences.map((sentence, index) => {
-            if (index > 0 && Math.random() < 0.15 && sentence.length > 30) {
-                // Don't add if sentence already starts with a transition
-                const hasTransition = /^(However|Moreover|Furthermore|Additionally|Therefore|Thus|Hence|Consequently|Nevertheless|Also|Besides|Meanwhile|Otherwise|Nonetheless|Still|Yet|So|But|And|Or|Well|Actually|In fact|You see)/i.test(sentence);
-                if (!hasTransition) {
-                    const starter = naturalStarters[Math.floor(Math.random() * naturalStarters.length)];
-                    // Lowercase the first letter of the original sentence
-                    return starter + sentence.charAt(0).toLowerCase() + sentence.slice(1);
-                }
-            }
-            return sentence;
+        const response = await fetch(this.apiProxyUrl, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+                'apikey': this.supabaseAnonKey
+            },
+            body: JSON.stringify({
+                provider: 'openai',
+                endpoint: 'responses',
+                payload: requestPayload
+            })
         });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Humanize API error:', errorText);
+            throw new Error(`API request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
         
-        result = processedSentences.join(' ');
-        
-        // 5. Vary sentence length (split very long sentences occasionally)
-        result = result.replace(/([^.!?]{150,}?)(,\s*)(and|but|so|because|which|that|where|when)\s/gi, '$1. $3 ');
-        
-        // 6. Add occasional filler words for naturalness
-        const fillerInsertions = [
-            { pattern: /\bI think\b/gi, replacements: ['I believe', 'I feel', 'My sense is', 'It seems to me'] },
-            { pattern: /\bvery\b/gi, replacements: ['quite', 'really', 'pretty', 'fairly'] },
-            { pattern: /\bimportant\b/gi, replacements: ['key', 'significant', 'notable', 'essential'] },
-            { pattern: /\bgood\b/gi, replacements: ['solid', 'great', 'decent', 'fine'] },
-            { pattern: /\bbad\b/gi, replacements: ['poor', 'not great', 'problematic', 'rough'] }
-        ];
-        
-        for (const { pattern, replacements } of fillerInsertions) {
-            result = result.replace(pattern, (match) => {
-                // 50% chance to replace
-                if (Math.random() < 0.5) {
-                    const replacement = replacements[Math.floor(Math.random() * replacements.length)];
-                    if (match[0] === match[0].toUpperCase()) {
-                        return replacement.charAt(0).toUpperCase() + replacement.slice(1);
-                    }
-                    return replacement;
-                }
-                return match;
-            });
+        // Extract text from the responses API format
+        const extractedText = this.extractText(data);
+        if (extractedText) {
+            return extractedText.trim();
         }
         
-        // 7. Clean up any double spaces or weird punctuation
-        result = result.replace(/\s+/g, ' ').trim();
-        result = result.replace(/\s+([.,!?;:])/g, '$1');
-        result = result.replace(/([.,!?;:])\s*([.,!?;:])/g, '$1');
-        
-        // Capitalize first letter
-        if (result.length > 0) {
-            result = result.charAt(0).toUpperCase() + result.slice(1);
-        }
-        
-        return result;
+        throw new Error('Invalid response from API');
     }
 
     // ========== OUTPUT TOOLBAR FUNCTIONS ==========
@@ -9698,973 +9540,6 @@ User Question: ${question}`;
         }
     }
 
-    async createCalendarEventFromText(text) {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Calendar integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status first
-            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
-            
-            if (!authStatus.authenticated) {
-                const shouldAuthenticate = confirm(
-                    'Google Calendar authentication required.\n\n' +
-                    'Click OK to authenticate with Google Calendar.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Google Calendar...', false);
-                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            // Extract event details from text using AI
-            this.showNotification('Extracting event details...', false);
-            const eventData = await this.extractEventDetailsFromText(text);
-            
-            if (!eventData) {
-                this.showNotification('Could not extract event details. Please try the /calendar command to create an event manually.', false);
-                return;
-            }
-            
-            // Show confirmation modal with extracted details
-            const confirmedEventData = await this.promptCalendarEvent(eventData);
-            
-            if (!confirmedEventData) {
-                // User cancelled
-                return;
-            }
-            
-            // Create the event
-            this.showNotification('Creating calendar event...', false);
-            const result = await ipcRenderer.invoke('create-calendar-event', confirmedEventData);
-            
-            if (result && result.success) {
-                const eventLink = result.htmlLink || '';
-                const successMsg = eventLink 
-                    ? `✅ Event created! <a href="${eventLink}" target="_blank" style="color: #4A9EFF; text-decoration: underline;">Open in Calendar</a>`
-                    : '✅ Event created successfully!';
-                this.showNotification(successMsg, true);
-            } else {
-                const errorMsg = result?.error || 'Failed to create calendar event';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error creating calendar event from text:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async extractEventDetailsFromText(text) {
-        try {
-            const now = new Date();
-            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
-            const currentDateStr = now.toLocaleDateString('en-US', { timeZone: timezone });
-            const currentTimeStr = now.toLocaleTimeString('en-US', { timeZone: timezone, hour12: false });
-            
-            const prompt = `Extract calendar event information from this text: "${text}"
-
-Look for:
-- Event title/name
-- Date and time (relative dates like "today", "tomorrow", "tonight" should be converted to actual dates)
-- Duration or end time
-- Location (if mentioned)
-- Description/details
-
-Return ONLY a JSON object with this exact structure (use null for missing fields):
-{
-  "summary": "Event title",
-  "startDateTime": "2024-01-15T20:00:00" (ISO format in LOCAL timezone, NOT UTC),
-  "endDateTime": "2024-01-15T21:00:00" (ISO format in LOCAL timezone, default to 1 hour after start if not specified),
-  "location": "Location if found",
-  "description": "Description if found"
-}
-
-CRITICAL TIME CONVERSION RULES:
-- "8pm" or "8 pm" = 20:00 (8 PM) in 24-hour format
-- "8:30pm" = 20:30 (8:30 PM)
-- "2pm" = 14:00 (2 PM)
-- "10am" = 10:00 (10 AM)
-- "midnight" = 00:00 (12:00 AM)
-- "noon" = 12:00 (12:00 PM)
-
-DATE CONVERSION:
-- "today" = ${currentDateStr}
-- "tomorrow" = tomorrow's date
-- "tonight" = ${currentDateStr} with evening time (after 6pm)
-- If only time is given (e.g., "8pm"), use ${currentDateStr} as the date
-
-Current reference:
-- Date: ${currentDateStr}
-- Time: ${currentTimeStr}
-- Timezone: ${timezone}
-
-IMPORTANT: When creating the ISO string, use the LOCAL date and time. For example:
-- If user says "dinner 8pm" and today is ${currentDateStr}, return: "${now.toISOString().split('T')[0]}T20:00:00"
-- The time should be in 24-hour format: 8pm = 20:00, NOT 08:00
-
-If you cannot find clear event information, return null. Be precise with dates and times.`;
-
-            // Use IPC to call OpenAI API
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                
-                const requestPayload = {
-                    model: this.currentModel,
-                    instructions: 'Extract calendar event details from the text. Return ONLY valid JSON or null.',
-                    input: [{
-                        role: 'user',
-                        content: [
-                            { type: 'input_text', text: prompt }
-                        ]
-                    }]
-                };
-                
-                const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
-                
-                // Check if it's a limit exceeded error
-                if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
-                    console.error('🚫 Calendar parsing blocked - limit exceeded');
-                    this.showLimitExceededNotification();
-                    return { limitExceeded: true };
-                }
-                
-                if (result && result.ok && result.data) {
-                    const responseText = this.extractText(result.data) || '';
-                    
-                    // Try to extract JSON from the response
-                    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) {
-                        try {
-                            const eventData = JSON.parse(jsonMatch[0]);
-                            
-                            // Validate and format the event data
-                            if (eventData.summary && eventData.startDateTime) {
-                                // Ensure endDateTime exists, default to 1 hour after start
-                                if (!eventData.endDateTime && eventData.startDateTime) {
-                                    const start = new Date(eventData.startDateTime);
-                                    start.setHours(start.getHours() + 1);
-                                    eventData.endDateTime = start.toISOString();
-                                }
-                                
-                                // Validate dates
-                                const startDate = new Date(eventData.startDateTime);
-                                const endDate = new Date(eventData.endDateTime);
-                                
-                                if (isNaN(startDate.getTime())) {
-                                    console.error('Invalid start date:', eventData.startDateTime);
-                                    return null;
-                                }
-                                
-                                if (isNaN(endDate.getTime())) {
-                                    endDate.setTime(startDate.getTime() + 60 * 60 * 1000); // 1 hour default
-                                    eventData.endDateTime = endDate.toISOString();
-                                }
-                                
-                                // Add timezone
-                                eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
-                                
-                                return eventData;
-                            }
-                        } catch (parseError) {
-                            console.error('Failed to parse event JSON:', parseError);
-                            console.error('Response text:', responseText);
-                        }
-                    }
-                }
-            }
-            
-            // Fallback: try direct API call
-            // Always use Edge Function - API keys stored in Supabase Secrets
-            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
-                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
-            }
-            
-            const response = await fetch(this.apiProxyUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                    'Content-Type': 'application/json',
-                    'apikey': this.supabaseAnonKey
-                },
-                body: JSON.stringify({
-                    provider: 'openai',
-                    endpoint: 'responses',
-                    payload: {
-                        model: this.currentModel,
-                        instructions: 'Extract calendar event details from the text. Return ONLY valid JSON or null.',
-                        input: [{
-                            role: 'user',
-                            content: [
-                                { type: 'input_text', text: prompt }
-                            ]
-                        }]
-                    }
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-            }
-
-            const data = await response.json();
-            const responseText = this.extractText(data) || '';
-            
-            // Try to extract JSON from the response
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    const eventData = JSON.parse(jsonMatch[0]);
-                    
-                    if (eventData.summary && eventData.startDateTime) {
-                        if (!eventData.endDateTime && eventData.startDateTime) {
-                            const start = new Date(eventData.startDateTime);
-                            start.setHours(start.getHours() + 1);
-                            eventData.endDateTime = start.toISOString();
-                        }
-                        
-                        // Validate dates
-                        const startDate = new Date(eventData.startDateTime);
-                        const endDate = new Date(eventData.endDateTime);
-                        
-                        if (isNaN(startDate.getTime())) {
-                            return null;
-                        }
-                        
-                        if (isNaN(endDate.getTime())) {
-                            endDate.setTime(startDate.getTime() + 60 * 60 * 1000);
-                            eventData.endDateTime = endDate.toISOString();
-                        }
-                        
-                        eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
-                        
-                        return eventData;
-                    }
-                } catch (parseError) {
-                    console.error('Failed to parse event JSON:', parseError);
-                }
-            }
-            
-            return null;
-        } catch (error) {
-            console.error('Error extracting event details:', error);
-            return null;
-        }
-    }
-
-    async createCalendarEventFromScreenshot() {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Calendar integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status first
-            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
-            
-            if (!authStatus.authenticated) {
-                const shouldAuthenticate = confirm(
-                    'Google Calendar authentication required.\n\n' +
-                    'Click OK to authenticate with Google Calendar.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Google Calendar...', false);
-                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            // Take screenshot
-            this.showNotification('Taking screenshot...', false);
-            await this.captureScreen();
-            
-            if (!this.currentScreenCapture) {
-                this.showNotification('Failed to capture screenshot', false);
-                return;
-            }
-            
-            // Extract event details from screenshot using AI
-            this.showNotification('Analyzing screenshot for event details...', false);
-            const eventData = await this.extractEventDetailsFromScreenshot(this.currentScreenCapture);
-            
-            if (!eventData) {
-                this.showNotification('Could not extract event details from screenshot. Please try the /calendar command to create an event manually.', false);
-                return;
-            }
-            
-            // Show confirmation modal with extracted details
-            const confirmedEventData = await this.promptCalendarEvent(eventData);
-            
-            if (!confirmedEventData) {
-                // User cancelled
-                return;
-            }
-            
-            // Create the event
-            this.showNotification('Creating calendar event...', false);
-            const result = await ipcRenderer.invoke('create-calendar-event', confirmedEventData);
-            
-            if (result && result.success) {
-                const eventLink = result.htmlLink || '';
-                const successMsg = eventLink 
-                    ? `✅ Event created! <a href="${eventLink}" target="_blank" style="color: #4A9EFF; text-decoration: underline;">Open in Calendar</a>`
-                    : '✅ Event created successfully!';
-                this.showNotification(successMsg, true);
-            } else {
-                const errorMsg = result?.error || 'Failed to create calendar event';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error creating calendar event from screenshot:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async extractEventDetailsFromScreenshot(imageUrl) {
-        try {
-            const prompt = `Analyze this screenshot and extract calendar event information. Look for:
-- Event title/name
-- Date and time
-- Duration or end time
-- Location (if mentioned)
-- Description/details
-
-Return ONLY a JSON object with this exact structure (use null for missing fields):
-{
-  "summary": "Event title",
-  "startDateTime": "2024-01-15T10:00:00" (ISO format),
-  "endDateTime": "2024-01-15T11:00:00" (ISO format),
-  "location": "Location if found",
-  "description": "Description if found"
-}
-
-If you cannot find clear event information, return null. Be precise with dates and times.`;
-
-            // Use IPC to call OpenAI API with vision
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                
-                const requestPayload = {
-                    model: this.currentModel,
-                    instructions: 'Extract calendar event details from the screenshot. Return ONLY valid JSON or null.',
-                    input: [{
-                        role: 'user',
-                        content: [
-                            { type: 'input_text', text: prompt },
-                            { type: 'input_image', image_url: imageUrl }
-                        ]
-                    }]
-                };
-                
-                const result = await ipcRenderer.invoke('call-openai-api', requestPayload);
-                
-                // Check if it's a limit exceeded error
-                if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
-                    console.error('🚫 Image calendar parsing blocked - limit exceeded');
-                    this.showLimitExceededNotification();
-                    return { limitExceeded: true };
-                }
-                
-                if (result && result.ok && result.data) {
-                    const responseText = this.extractText(result.data) || '';
-                    
-                    // Try to extract JSON from the response
-                    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) {
-                        try {
-                            const eventData = JSON.parse(jsonMatch[0]);
-                            
-                            // Validate and format the event data
-                            if (eventData.summary && eventData.startDateTime) {
-                                // Ensure endDateTime exists, default to 1 hour after start
-                                if (!eventData.endDateTime && eventData.startDateTime) {
-                                    const start = new Date(eventData.startDateTime);
-                                    start.setHours(start.getHours() + 1);
-                                    eventData.endDateTime = start.toISOString();
-                                }
-                                
-                                // Add timezone
-                                eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
-                                
-                                return eventData;
-                            }
-                        } catch (parseError) {
-                            console.error('Failed to parse event JSON:', parseError);
-                        }
-                    }
-                }
-            }
-            
-            // Fallback: try direct API call
-            // Always use Edge Function - API keys stored in Supabase Secrets
-            if (!this.apiProxyUrl || !this.supabaseAnonKey) {
-                throw new Error('API keys must be stored in Supabase Edge Function Secrets.');
-            }
-            
-            const response = await fetch(this.apiProxyUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.supabaseAnonKey}`,
-                    'Content-Type': 'application/json',
-                    'apikey': this.supabaseAnonKey
-                },
-                body: JSON.stringify({
-                    provider: 'openai',
-                    endpoint: 'responses',
-                    payload: {
-                        model: this.currentModel,
-                        instructions: 'Extract calendar event details from the screenshot. Return ONLY valid JSON or null.',
-                        input: [{
-                            role: 'user',
-                            content: [
-                                { type: 'input_text', text: prompt },
-                                { type: 'input_image', image_url: imageUrl }
-                            ]
-                        }]
-                    }
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-            }
-
-            const data = await response.json();
-            const responseText = this.extractText(data) || '';
-            
-            // Try to extract JSON from the response
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    const eventData = JSON.parse(jsonMatch[0]);
-                    
-                    if (eventData.summary && eventData.startDateTime) {
-                        if (!eventData.endDateTime && eventData.startDateTime) {
-                            const start = new Date(eventData.startDateTime);
-                            start.setHours(start.getHours() + 1);
-                            eventData.endDateTime = start.toISOString();
-                        }
-                        
-                        eventData.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
-                        
-                        return eventData;
-                    }
-                } catch (parseError) {
-                    console.error('Failed to parse event JSON:', parseError);
-                }
-            }
-            
-            return null;
-        } catch (error) {
-            console.error('Error extracting event details:', error);
-            return null;
-        }
-    }
-
-    async createCalendarEvent() {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Calendar integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status first
-            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
-            
-            if (!authStatus.authenticated) {
-                // Not authenticated - prompt user to authenticate
-                const shouldAuthenticate = confirm(
-                    'Google Calendar authentication required.\n\n' +
-                    'Click OK to authenticate with Google Calendar.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Google Calendar...', false);
-                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            // Show calendar event modal
-            const eventData = await this.promptCalendarEvent();
-            
-            if (!eventData) {
-                // User cancelled
-                return;
-            }
-            
-            // Create the event
-            this.showNotification('Creating calendar event...', false);
-            const result = await ipcRenderer.invoke('create-calendar-event', eventData);
-            
-            if (result && result.success) {
-                const eventLink = result.htmlLink || '';
-                const successMsg = eventLink 
-                    ? `✅ Event created! <a href="${eventLink}" target="_blank" style="color: #4A9EFF; text-decoration: underline;">Open in Calendar</a>`
-                    : '✅ Event created successfully!';
-                this.showNotification(successMsg, true);
-            } else {
-                const errorMsg = result?.error || 'Failed to create calendar event';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error creating calendar event:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async promptCalendarEvent(prefilledData = null) {
-        return new Promise((resolve) => {
-            const modal = document.getElementById('calendar-event-modal');
-            const titleInput = document.getElementById('calendar-event-title');
-            const datetimeInput = document.getElementById('calendar-event-datetime');
-            const durationInput = document.getElementById('calendar-event-duration');
-            const descriptionInput = document.getElementById('calendar-event-description');
-            const locationInput = document.getElementById('calendar-event-location');
-            const confirmBtn = document.getElementById('calendar-event-confirm');
-            const cancelBtn = document.getElementById('calendar-event-cancel');
-            
-            // Fill in prefilled data if provided, otherwise use defaults
-            if (prefilledData) {
-                titleInput.value = prefilledData.summary || '';
-                if (prefilledData.startDateTime) {
-                    const startDate = new Date(prefilledData.startDateTime);
-                    // Convert to local time for datetime-local input (format: YYYY-MM-DDTHH:mm)
-                    const year = startDate.getFullYear();
-                    const month = String(startDate.getMonth() + 1).padStart(2, '0');
-                    const day = String(startDate.getDate()).padStart(2, '0');
-                    const hours = String(startDate.getHours()).padStart(2, '0');
-                    const minutes = String(startDate.getMinutes()).padStart(2, '0');
-                    datetimeInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
-                    
-                    // Calculate duration
-                    if (prefilledData.endDateTime) {
-                        const endDate = new Date(prefilledData.endDateTime);
-                        const durationHours = (endDate - startDate) / (1000 * 60 * 60);
-                        durationInput.value = durationHours.toFixed(1);
-                    } else {
-                        durationInput.value = '1';
-                    }
-                } else {
-                    // Set default datetime to next hour
-                    const now = new Date();
-                    now.setHours(now.getHours() + 1);
-                    now.setMinutes(0);
-                    datetimeInput.value = now.toISOString().slice(0, 16);
-                    durationInput.value = '1';
-                }
-                descriptionInput.value = prefilledData.description || '';
-                locationInput.value = prefilledData.location || '';
-            } else {
-                // Set default datetime to next hour
-                const now = new Date();
-                now.setHours(now.getHours() + 1);
-                now.setMinutes(0);
-                datetimeInput.value = now.toISOString().slice(0, 16);
-                
-                // Clear inputs
-                titleInput.value = '';
-                durationInput.value = '1';
-                descriptionInput.value = '';
-                locationInput.value = '';
-            }
-            
-            // Show modal
-            modal.classList.remove('hidden');
-            
-            // Focus title input
-            setTimeout(() => titleInput.focus(), 100);
-            
-            const handleConfirm = () => {
-                const title = titleInput.value.trim();
-                const datetime = datetimeInput.value;
-                const duration = parseFloat(durationInput.value) || 1;
-                const description = descriptionInput.value.trim();
-                const location = locationInput.value.trim();
-                
-                if (!title) {
-                    alert('Please enter an event title');
-                    return;
-                }
-                
-                if (!datetime) {
-                    alert('Please select a date and time');
-                    return;
-                }
-                
-                // Convert datetime to ISO format
-                const startDateTime = new Date(datetime).toISOString();
-                const endDateTime = new Date(new Date(datetime).getTime() + duration * 60 * 60 * 1000).toISOString();
-                
-                // Clean up listeners
-                confirmBtn.removeEventListener('click', handleConfirm);
-                cancelBtn.removeEventListener('click', handleCancel);
-                
-                modal.classList.add('hidden');
-                
-                resolve({
-                    summary: title,
-                    description: description,
-                    startDateTime: startDateTime,
-                    endDateTime: endDateTime,
-                    location: location,
-                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'
-                });
-            };
-            
-            const handleCancel = () => {
-                // Clean up listeners
-                confirmBtn.removeEventListener('click', handleConfirm);
-                cancelBtn.removeEventListener('click', handleCancel);
-                
-                modal.classList.add('hidden');
-                resolve(null);
-            };
-            
-            // Handle Enter key on title input
-            const handleTitleKeyPress = (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleConfirm();
-                }
-            };
-            
-            titleInput.addEventListener('keypress', handleTitleKeyPress);
-            confirmBtn.addEventListener('click', handleConfirm);
-            cancelBtn.addEventListener('click', handleCancel);
-        });
-    }
-
-    async getTodaysEmails() {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Gmail integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status
-            const authStatus = await ipcRenderer.invoke('gmail-auth-status');
-            
-            if (!authStatus.authenticated) {
-                const shouldAuthenticate = confirm(
-                    'Gmail authentication required.\n\n' +
-                    'Click OK to authenticate with Gmail.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Gmail...', false);
-                const authResult = await ipcRenderer.invoke('gmail-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            this.showNotification('Fetching today\'s emails...', false);
-            const result = await ipcRenderer.invoke('gmail-todays-emails', 20);
-            
-            if (result && result.success) {
-                await this.displayEmails(result.emails, 'Today\'s Emails');
-            } else {
-                const errorMsg = result?.error || 'Failed to fetch emails';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error getting today\'s emails:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async getImportantEmails() {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Gmail integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status
-            const authStatus = await ipcRenderer.invoke('gmail-auth-status');
-            
-            if (!authStatus.authenticated) {
-                const shouldAuthenticate = confirm(
-                    'Gmail authentication required.\n\n' +
-                    'Click OK to authenticate with Gmail.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Gmail...', false);
-                const authResult = await ipcRenderer.invoke('gmail-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            this.showNotification('Fetching important emails...', false);
-            const result = await ipcRenderer.invoke('gmail-important-emails', 10);
-            
-            if (result && result.success) {
-                await this.displayEmails(result.emails, 'Important Emails');
-            } else {
-                const errorMsg = result?.error || 'Failed to fetch emails';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error getting important emails:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async getUnreadEmails() {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Gmail integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status
-            const authStatus = await ipcRenderer.invoke('gmail-auth-status');
-            
-            if (!authStatus.authenticated) {
-                const shouldAuthenticate = confirm(
-                    'Gmail authentication required.\n\n' +
-                    'Click OK to authenticate with Gmail.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Gmail...', false);
-                const authResult = await ipcRenderer.invoke('gmail-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            this.showNotification('Fetching unread emails...', false);
-            const result = await ipcRenderer.invoke('gmail-unread-emails', 20);
-            
-            if (result && result.success) {
-                await this.displayEmails(result.emails, 'Unread Emails');
-            } else {
-                const errorMsg = result?.error || 'Failed to fetch emails';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error getting unread emails:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async displayEmails(emails, title) {
-        if (!emails || emails.length === 0) {
-            this.showNotification(`No emails found.`, false);
-            return;
-        }
-
-        let emailHtml = `<h3 style="margin-bottom: 15px; color: #fff;">${title} (${emails.length})</h3>`;
-        
-        emails.forEach((email, index) => {
-            const fromName = email.from.split('<')[0].trim() || email.from;
-            const fromEmail = email.from.match(/<(.+)>/)?.[1] || email.from;
-            const date = new Date(email.date).toLocaleString();
-            const isUnread = email.isUnread ? 'font-weight: bold;' : '';
-            const importantBadge = email.isImportant ? '<span style="color: #ff6b6b; margin-left: 8px;">⭐ Important</span>' : '';
-            
-            emailHtml += `
-                <div style="margin-bottom: 20px; padding: 12px; background: rgba(255, 255, 255, 0.05); border-radius: 8px; border-left: 3px solid ${email.isUnread ? '#4A9EFF' : 'transparent'};">
-                    <div style="${isUnread} color: #fff; margin-bottom: 6px;">
-                        <strong>${this.escapeHtml(email.subject || '(No Subject)')}</strong>${importantBadge}
-                    </div>
-                    <div style="color: rgba(255, 255, 255, 0.7); font-size: 13px; margin-bottom: 4px;">
-                        From: ${this.escapeHtml(fromName)} ${fromEmail !== fromName ? `<span style="color: rgba(255, 255, 255, 0.5);">(${this.escapeHtml(fromEmail)})</span>` : ''}
-                    </div>
-                    <div style="color: rgba(255, 255, 255, 0.6); font-size: 12px; margin-bottom: 6px;">
-                        ${date}
-                    </div>
-                    <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px; line-height: 1.4;">
-                        ${this.escapeHtml(email.snippet || 'No preview available')}
-                    </div>
-                </div>
-            `;
-        });
-        
-        this.showNotification(emailHtml, true);
-    }
-
-    escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    async getUpcomingEvents() {
-        if (!this.isElectron || !window.require) {
-            this.showNotification('Calendar integration requires Electron', false);
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Check authentication status
-            const authStatus = await ipcRenderer.invoke('google-calendar-auth-status');
-            
-            if (!authStatus.authenticated) {
-                const shouldAuthenticate = confirm(
-                    'Google Calendar authentication required.\n\n' +
-                    'Click OK to authenticate with Google Calendar.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Google Calendar...', false);
-                const authResult = await ipcRenderer.invoke('google-calendar-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            this.showNotification('Fetching upcoming events...', false);
-            const result = await ipcRenderer.invoke('list-calendar-events', 10);
-            
-            if (result && result.success) {
-                await this.displayCalendarEvents(result.events);
-            } else {
-                const errorMsg = result?.error || 'Failed to fetch calendar events';
-                this.showNotification(`❌ ${errorMsg}`, false);
-            }
-        } catch (error) {
-            console.error('Error getting calendar events:', error);
-            this.showNotification(`❌ Error: ${error.message}`, false);
-        }
-    }
-
-    async displayCalendarEvents(events) {
-        if (!events || events.length === 0) {
-            this.showNotification('📅 No upcoming events found.', false);
-            return;
-        }
-
-        let eventsHtml = `<h3 style="margin-bottom: 15px; color: #fff;">📅 Upcoming Events (${events.length})</h3>`;
-        
-        events.forEach((event, index) => {
-            const startTime = event.start?.dateTime || event.start?.date;
-            const endTime = event.end?.dateTime || event.end?.date;
-            
-            let dateStr = '';
-            if (startTime) {
-                const start = new Date(startTime);
-                const end = endTime ? new Date(endTime) : null;
-                
-                const isAllDay = !event.start?.dateTime;
-                
-                if (isAllDay) {
-                    dateStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                } else {
-                    const today = new Date();
-                    const tomorrow = new Date(today);
-                    tomorrow.setDate(tomorrow.getDate() + 1);
-                    
-                    let dayStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                    if (start.toDateString() === today.toDateString()) {
-                        dayStr = 'Today';
-                    } else if (start.toDateString() === tomorrow.toDateString()) {
-                        dayStr = 'Tomorrow';
-                    }
-                    
-                    const timeStr = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                    dateStr = `${dayStr} at ${timeStr}`;
-                    
-                    if (end) {
-                        const endTimeStr = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                        dateStr += ` - ${endTimeStr}`;
-                    }
-                }
-            }
-            
-            const location = event.location ? `<div style="color: rgba(255, 255, 255, 0.6); font-size: 12px; margin-top: 4px;">📍 ${this.escapeHtml(event.location)}</div>` : '';
-            
-            eventsHtml += `
-                <div style="margin-bottom: 16px; padding: 12px; background: rgba(99, 102, 241, 0.1); border-radius: 10px; border-left: 3px solid #6366f1;">
-                    <div style="color: #fff; font-weight: 600; margin-bottom: 4px;">
-                        ${this.escapeHtml(event.summary || '(No Title)')}
-                    </div>
-                    <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px;">
-                        🕐 ${dateStr}
-                    </div>
-                    ${location}
-                </div>
-            `;
-        });
-        
-        this.showNotification(eventsHtml, true);
-    }
-
     positionFloatingClose() {
         try {
             if (!this.closeOutputFloating) return;
@@ -10703,6 +9578,9 @@ If you cannot find clear event information, return null. Be precise with dates a
     }
 
     hideOutput() {
+        // Cancel any running OpenClaw command
+        this.cancelRunningCommand();
+        
         if (this.messagesContainer) {
             this.messagesContainer.classList.add('hidden');
         }
@@ -10727,6 +9605,36 @@ If you cannot find clear event information, return null. Be precise with dates a
         }
         // Hide output toolbar when output is hidden
         this.hideOutputToolbar();
+    }
+
+    // Cancel any running command (OpenClaw, OpenAI streaming, etc.)
+    cancelRunningCommand() {
+        let cancelled = false;
+        
+        // Cancel OpenClaw command if running
+        if (this.openClawClient && this.openClawClient.isRunning()) {
+            const abortedId = this.openClawClient.abortCurrentRun();
+            if (abortedId) {
+                console.log('🛑 Cancelled OpenClaw command:', abortedId);
+                cancelled = true;
+            }
+        }
+        
+        // Cancel any streaming response (for OpenAI/OpenRouter)
+        if (this.currentAbortController) {
+            this.currentAbortController.abort();
+            this.currentAbortController = null;
+            console.log('🛑 Cancelled streaming response');
+            cancelled = true;
+        }
+        
+        // Stop loading animation if running
+        if (cancelled) {
+            this.stopLoadingAnimation();
+            this.showNotification('⏹️ Command cancelled', true);
+        }
+        
+        return cancelled;
     }
 
     handleDragStart(e) {

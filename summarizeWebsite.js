@@ -1,14 +1,9 @@
-const { getActiveUrl } = require('./getActiveUrl');
-
 async function summarizeWebsite(providedUrl = null, fullMessage = null, apiProxyUrl = null, supabaseAnonKey = null) {
     try {
-        let url = providedUrl;
-        if (!url) {
-            url = await getActiveUrl();
+        if (!providedUrl) {
+            return 'Unknown (no URL provided)';
         }
-        if (!url) {
-            return 'Unknown (no URL provided and no active browser URL found)';
-        }
+        const url = providedUrl;
 
         const systemPrompt = 'You are a concise summarizer. By default, provide brief summaries unless asked for more detail. Use HTML formatting: <b>text</b> for bold, <ul><li>item</li></ul> for lists. Keep responses short and to the point.';
 

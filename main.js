@@ -46,6 +46,18 @@ function getAutoUpdater() {
 const { POLAR_CONFIG, PolarClient, LicenseManager } = require('./polar-config');
 const VoiceRecorder = require('./voice-recorder');
 const SupabaseIntegration = require('./supabase-integration');
+
+// Global key hook for push-to-talk (loaded lazily to handle missing module gracefully)
+let uIOhook = null;
+let UiohookKey = null;
+try {
+    const uiohookModule = require('uiohook-napi');
+    uIOhook = uiohookModule.uIOhook;
+    UiohookKey = uiohookModule.UiohookKey;
+    console.log('✅ uiohook-napi loaded for global push-to-talk');
+} catch (e) {
+    console.log('⚠️ uiohook-napi not available - global push-to-talk disabled. Run: npm install uiohook-napi');
+}
 // Legacy Polar support (deprecated - kept for backward compatibility)
 const PolarIntegration = require('./polar-integration');
 const PolarSuccessHandler = require('./polar-success-handler');
@@ -247,6 +259,7 @@ class JarvisApp {
             this.setupAuthHandlers();
             this.loadVoiceShortcut(); // Load custom voice shortcut before setting up defaults
             this.setupVoiceRecording();
+            this.setupGlobalPushToTalk(); // Enable global push-to-talk (hold Control to speak)
             this.setupAutoUpdater(); // Setup auto-updater after app is ready
             this.loadCurrentUserEmail(); // Load user email for token tracking
             
@@ -435,11 +448,122 @@ class JarvisApp {
         }
     }
 
+    // Setup global push-to-talk using uiohook for system-wide key detection
+    setupGlobalPushToTalk() {
+        if (!uIOhook || !UiohookKey) {
+            console.log('⚠️ Global push-to-talk not available - uiohook-napi not loaded');
+            return;
+        }
+
+        // Track Control key state
+        this.globalControlKeyDown = false;
+        this.globalPushToTalkActive = false;
+        this.globalOtherKeyPressed = false;
+        this.globalPushToTalkTimeout = null;
+
+        // Key codes for Control keys (left and right)
+        const CONTROL_LEFT = UiohookKey.Ctrl;  // 29
+        const CONTROL_RIGHT = UiohookKey.CtrlRight;  // 3613
+
+        // Listen for key down events
+        uIOhook.on('keydown', (e) => {
+            const isControlKey = e.keycode === CONTROL_LEFT || e.keycode === CONTROL_RIGHT;
+            
+            // Track if any other key is pressed while Control is held
+            if (this.globalControlKeyDown && !isControlKey) {
+                this.globalOtherKeyPressed = true;
+                // Cancel pending push-to-talk
+                if (this.globalPushToTalkTimeout) {
+                    clearTimeout(this.globalPushToTalkTimeout);
+                    this.globalPushToTalkTimeout = null;
+                }
+                // Stop recording if it was started
+                if (this.globalPushToTalkActive && this.isVoiceRecording) {
+                    this.globalPushToTalkActive = false;
+                    console.log('🎤 Global push-to-talk: Cancelled (Ctrl+key combo)');
+                    this.stopVoiceRecording();
+                }
+                return;
+            }
+            
+            // Handle Control key press
+            if (isControlKey && !this.globalControlKeyDown && !this.globalPushToTalkActive) {
+                this.globalControlKeyDown = true;
+                this.globalOtherKeyPressed = false;
+                
+                // Small delay to catch Ctrl+key combos
+                this.globalPushToTalkTimeout = setTimeout(() => {
+                    if (!this.globalOtherKeyPressed && this.globalControlKeyDown && !this.globalPushToTalkActive) {
+                        this.globalPushToTalkActive = true;
+                        console.log('🎤 Global push-to-talk: Starting recording (Control held)');
+                        this.startVoiceRecording();
+                        
+                        // Notify renderer that push-to-talk started
+                        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                            this.mainWindow.webContents.send('global-push-to-talk-started');
+                        }
+                    }
+                }, 80); // 80ms delay to catch combos
+            }
+        });
+
+        // Listen for key up events
+        uIOhook.on('keyup', (e) => {
+            const isControlKey = e.keycode === CONTROL_LEFT || e.keycode === CONTROL_RIGHT;
+            
+            if (isControlKey) {
+                this.globalControlKeyDown = false;
+                
+                // Clear pending timeout
+                if (this.globalPushToTalkTimeout) {
+                    clearTimeout(this.globalPushToTalkTimeout);
+                    this.globalPushToTalkTimeout = null;
+                }
+                
+                // Stop recording if push-to-talk was active
+                if (this.globalPushToTalkActive) {
+                    this.globalPushToTalkActive = false;
+                    console.log('🎤 Global push-to-talk: Stopping recording (Control released)');
+                    this.stopVoiceRecording();
+                    
+                    // Notify renderer that push-to-talk stopped
+                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                        this.mainWindow.webContents.send('global-push-to-talk-stopped');
+                    }
+                }
+                
+                this.globalOtherKeyPressed = false;
+            }
+        });
+
+        // Start the hook
+        try {
+            uIOhook.start();
+            console.log('✅ Global push-to-talk enabled - hold Control to speak anywhere');
+        } catch (e) {
+            console.error('❌ Failed to start global key hook:', e);
+        }
+    }
+
+    // Stop global push-to-talk hook
+    stopGlobalPushToTalk() {
+        if (uIOhook) {
+            try {
+                uIOhook.stop();
+                console.log('🛑 Global push-to-talk stopped');
+            } catch (e) {
+                console.error('Failed to stop global key hook:', e);
+            }
+        }
+    }
+
     setupAppCleanup() {
         // Cleanup shortcuts on quit
         app.on('will-quit', () => {
             const { globalShortcut } = require('electron');
             globalShortcut.unregisterAll();
+            // Stop global push-to-talk hook
+            this.stopGlobalPushToTalk();
         });
     }
 
@@ -1242,13 +1366,6 @@ class JarvisApp {
             }
         });
 
-        ipcMain.handle('get-current-document', () => {
-            return this.getCurrentDocument();
-        });
-
-        ipcMain.handle('clear-current-document', () => {
-            this.clearCurrentDocument();
-        });
     }
 
 
@@ -1517,10 +1634,12 @@ class JarvisApp {
             
             if (this.mainWindow) {
                 try {
+                    console.log('🔵 [MAIN] make-interactive called (focus-safe mode)');
                     
                     // CRITICAL: Only enable mouse events - DO NOT call focus()
                     // This allows interaction without triggering browser blur events
                     this.mainWindow.setIgnoreMouseEvents(false);
+                    console.log('🔵 [MAIN] setIgnoreMouseEvents(false) called');
                     
                     // Make window focusable but don't actually focus it
                     // The user clicking on the input will naturally give it focus
@@ -1607,14 +1726,6 @@ class JarvisApp {
             }
         });
         
-        // Handle enabling drag-through mode (click-through with event forwarding for drag operations)
-        ipcMain.handle('enable-drag-through', () => {
-            if (this.mainWindow) {
-                // Set to ignore mouse events but forward them, allowing drag to pass through
-                this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-            }
-        });
-
         // Handle overlay hide
         ipcMain.handle('hide-overlay', () => {
             this.hideOverlay();
@@ -1736,41 +1847,6 @@ class JarvisApp {
         });
 
 
-
-        // Handle adding content to Notes app (macOS only)
-        ipcMain.handle('add-to-notes', async (event, content) => {
-            if (process.platform !== 'darwin') {
-                return Promise.reject(new Error('Notes app integration is only available on macOS'));
-            }
-            
-            try {
-                const timestamp = new Date().toLocaleString();
-                const noteContent = `Jarvis AI Response - ${timestamp}\n\n${content}`;
-                
-                const script = `
-                    tell application "Notes"
-                        activate
-                        tell account "iCloud"
-                            make new note with properties {body:"${noteContent.replace(/"/g, '\\"')}"}
-                        end tell
-                    end tell
-                `;
-                
-                return new Promise((resolve, reject) => {
-                    exec(`osascript -e '${script}'`, (error, stdout, stderr) => {
-                        if (error) {
-                            console.error('Error opening Notes:', error);
-                            reject(error);
-                        } else {
-                            resolve('Added to Notes app successfully!');
-                        }
-                    });
-                });
-            } catch (error) {
-                console.error('Error adding to Notes:', error);
-                throw error;
-            }
-        });
 
         // Handle website summarization
         ipcMain.handle('summarize-website', async (event, url, fullMessage) => {
@@ -2468,13 +2544,6 @@ class JarvisApp {
             return app.getVersion();
         });
 
-        // Restart the app (used after granting permissions)
-        ipcMain.handle('restart-app', () => {
-            console.log('🔄 Restarting app...');
-            app.relaunch();
-            app.exit(0);
-        });
-
         // Google Calendar IPC handlers
         // Authenticate with Google Calendar
         ipcMain.handle('google-calendar-authenticate', async (_event) => {
@@ -2552,17 +2621,6 @@ class JarvisApp {
             }
         });
 
-        // Search emails
-        ipcMain.handle('gmail-search', async (_event, query, maxResults = 10) => {
-            try {
-                const result = await this.gmailIntegration.searchEmails(query, maxResults);
-                return result;
-            } catch (error) {
-                console.error('❌ Error searching emails:', error);
-                return { success: false, error: error.message };
-            }
-        });
-
         // Get today's emails
         ipcMain.handle('gmail-todays-emails', async (_event, maxResults = 20) => {
             try {
@@ -2592,17 +2650,6 @@ class JarvisApp {
                 return result;
             } catch (error) {
                 console.error('❌ Error getting unread emails:', error);
-                return { success: false, error: error.message };
-            }
-        });
-
-        // Get recent emails
-        ipcMain.handle('gmail-recent-emails', async (_event, maxResults = 10) => {
-            try {
-                const result = await this.gmailIntegration.getRecentEmails(maxResults);
-                return result;
-            } catch (error) {
-                console.error('❌ Error getting recent emails:', error);
                 return { success: false, error: error.message };
             }
         });
@@ -2732,14 +2779,17 @@ class JarvisApp {
                                     
                                     // Track token usage if we have email and usage data
                                     // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
+                                    console.log(`📊 OpenAI tracking check - Email: ${email || 'NOT SET'}, Supabase: ${this.supabaseIntegration ? 'YES' : 'NO'}, Usage in response: ${responseData.usage ? 'YES' : 'NO'}, isLowModel: ${isLowModel}`);
                                     
                                     if (isLowModel) {
                                         console.log('🆓 Low model - skipping cost tracking');
                                     } else if (email && this.supabaseIntegration && responseData.usage) {
+                                        console.log(`📊 OpenAI FULL usage object:`, JSON.stringify(responseData.usage, null, 2));
                                         const tokensInput = responseData.usage.input_tokens || responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.output_tokens || responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'gpt-4';
                                         
+                                        console.log(`📊 OpenAI usage - Input: ${tokensInput}, Output: ${tokensOutput}, Model: ${model}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         this.supabaseIntegration.recordTokenUsage(
@@ -2859,16 +2909,19 @@ class JarvisApp {
                                     
                                     // Track token usage if we have email and usage data
                                     // Skip tracking for Low model (GPT-5 Mini) - it's free/unlimited
+                                    console.log(`📊 OpenRouter tracking check - Email: ${email || 'NOT SET'}, Usage in response: ${responseData.usage ? 'YES' : 'NO'}, isLowModel: ${isLowModel}`);
                                     
                                     if (isLowModel) {
                                         console.log('🆓 Low model - skipping cost tracking');
                                     } else if (email && this.supabaseIntegration && responseData.usage) {
+                                        console.log(`📊 OpenRouter FULL usage object:`, JSON.stringify(responseData.usage, null, 2));
                                         const tokensInput = responseData.usage.prompt_tokens || 0;
                                         const tokensOutput = responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'openrouter';
                                         // OpenRouter may return cost directly - check for it
                                         const apiCost = responseData.usage.total_cost || responseData.usage.cost || null;
                                         
+                                        console.log(`📊 OpenRouter usage - Input: ${tokensInput}, Output: ${tokensOutput}, Model: ${model}, API Cost: ${apiCost || 'not provided'}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         // Pass API-provided cost if available
@@ -2994,6 +3047,7 @@ class JarvisApp {
                                         const tokensOutput = responseData.usage.completion_tokens || 0;
                                         const model = requestPayload.model || 'perplexity';
                                         
+                                        console.log(`📊 Perplexity usage - Input: ${tokensInput}, Output: ${tokensOutput}`);
                                         
                                         // Record usage asynchronously (don't wait)
                                         this.supabaseIntegration.recordTokenUsage(
@@ -3142,6 +3196,7 @@ class JarvisApp {
                                             const tokensOutput = responseData.usage.output_tokens || 0;
                                             const model = requestPayload.model || 'claude';
                                             
+                                            console.log(`📊 Claude (proxy) usage - Input: ${tokensInput}, Output: ${tokensOutput}`);
                                             
                                             this.supabaseIntegration.recordTokenUsage(
                                                 email, 
@@ -3434,7 +3489,7 @@ class JarvisApp {
                     };
                 }
 
-                const axios = require('axios');
+                const axios = require('axios/dist/node/axios.cjs');
                 const response = await axios.post('https://api.resend.com/emails', {
                     from: resendConfig.fromEmail,
                     to: email,
@@ -3597,53 +3652,6 @@ class JarvisApp {
                 return { success: false, error: error.message };
             }
         });
-
-        // Handle manual subscription validation trigger
-        ipcMain.handle('trigger-subscription-validation', async () => {
-            try {
-                const fs = require('fs');
-                const path = require('path');
-                
-                const userDataPath = app.getPath('userData');
-                const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
-                
-                if (!fs.existsSync(subscriptionFile)) {
-                    return { success: false, message: 'No subscription file found' };
-                }
-                
-                const localData = JSON.parse(fs.readFileSync(subscriptionFile, 'utf8'));
-                
-                const isValid = await this.validateSubscriptionWithPolar(localData);
-                
-                if (!isValid) {
-                    // Remove local subscription data
-                    fs.unlinkSync(subscriptionFile);
-                    
-                    // Notify the main window if it's open
-                    if (this.mainWindow) {
-                        this.mainWindow.webContents.send('subscription-cancelled');
-                    }
-                    
-                    // If the main window is visible, show the paywall
-                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                        this.mainWindow.webContents.send('show-paywall');
-                    }
-                    
-                    // Also notify any open settings windows
-                    if (this.accountWindow && !this.accountWindow.isDestroyed()) {
-                        this.accountWindow.webContents.send('subscription-status-changed', { status: 'free' });
-                    }
-                    
-                    return { success: true, message: 'Subscription cancelled and access removed' };
-                } else {
-                    return { success: true, message: 'Subscription is still active' };
-                }
-            } catch (error) {
-                console.error('Error in manual subscription validation:', error);
-                return { success: false, error: error.message };
-            }
-        });
-
 
         // Handle immediate subscription check for premium features
         ipcMain.handle('check-subscription-before-premium-action', async () => {
@@ -4135,18 +4143,16 @@ class JarvisApp {
             }
         }
         
-        // Start with click-through mode - let renderer handle making it interactive on hover
-        // This allows clicking through to other windows when not interacting with the overlay
+        // Start INTERACTIVE so user can immediately click/drag after toggle
+        // The renderer's mouseleave handler will set click-through mode when mouse leaves
         try {
-            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
+            this.mainWindow.setIgnoreMouseEvents(false);
         } catch (_) {}
         
-        // On Windows, ensure window is focusable when showing overlay
-        if (process.platform === 'win32') {
-            try {
-                this.mainWindow.setFocusable(true);
-            } catch (_) {}
-        }
+        // Ensure window is focusable
+        try {
+            this.mainWindow.setFocusable(true);
+        } catch (_) {}
         
         // macOS-only: Reinforce content protection when showing (use stealth mode preference)
         const stealthEnabled = this.getStealthModePreference();
@@ -4361,14 +4367,6 @@ class JarvisApp {
         });
     }
 
-    getCurrentDocument() {
-        return this.currentDocument;
-    }
-
-    clearCurrentDocument() {
-        this.currentDocument = null;
-    }
-
     getUserEmail() {
         try {
             const fs = require('fs');
@@ -4419,6 +4417,7 @@ class JarvisApp {
         }
         
         try {
+            console.log(`🔒 Setting COMPREHENSIVE STEALTH MODE to ${enable ? 'ENABLED' : 'DISABLED'} for window`);
             
             // Use native module if available (applies ALL 11+ stealth methods)
             if (this.nativeContentProtection && this.nativeContentProtection.isAvailable()) {

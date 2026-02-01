@@ -369,14 +369,6 @@ class GmailIntegration {
         return this.searchEmails('is:unread', maxResults);
     }
 
-    /**
-     * Get recent emails
-     * @param {number} maxResults - Maximum number of results (default: 10)
-     * @returns {Promise<Object>} Recent emails
-     */
-    async getRecentEmails(maxResults = 10) {
-        return this.searchEmails('', maxResults);
-    }
 }
 
 module.exports = GmailIntegration;

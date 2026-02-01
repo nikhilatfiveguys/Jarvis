@@ -107,7 +107,8 @@
   "node_modules/ieee754/**/*",
   "node_modules/buffer/**/*",
   "node_modules/ecdsa-sig-formatter/**/*",
-  "node_modules/safe-buffer/**/*"
+  "node_modules/safe-buffer/**/*",
+  "node_modules/uiohook-napi/**/*"
  ],
  "asarUnpack": [
   "node_modules/electron-updater/**/*",
@@ -206,7 +207,8 @@
   "node_modules/ieee754/**/*",
   "node_modules/buffer/**/*",
   "node_modules/ecdsa-sig-formatter/**/*",
-  "node_modules/safe-buffer/**/*"
+  "node_modules/safe-buffer/**/*",
+  "node_modules/uiohook-napi/**/*"
  ],
   "mac": {
     "category": "public.app-category.productivity",

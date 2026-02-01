@@ -37,18 +37,6 @@ class PolarClient {
         }
     }
 
-    async getProducts() {
-        return this.makeRequest(`/organizations/${this.config.organizationId}/products`);
-    }
-
-    async getFirstProduct() {
-        const products = await this.getProducts();
-        if (products && products.length > 0) {
-            return products[0];
-        }
-        throw new Error('No products found');
-    }
-
     async createCheckoutSession(productId, customerEmail, successUrl, cancelUrl) {
         return this.makeRequest('/checkout/sessions', {
             method: 'POST',
@@ -83,21 +71,6 @@ class PolarClient {
                 product_id: 'your-product-id'
             }
         };
-    }
-
-    async validateLicense(licenseKey) {
-        try {
-            // In a real implementation, you'd validate the license key with Polar
-            // For now, we'll simulate a successful validation
-            return {
-                customerEmail: 'user@example.com',
-                expiryDate: '2025-12-31',
-                features: ['unlimited_messages', 'screenshot_analysis', 'voice_activation'],
-                status: 'active'
-            };
-        } catch (error) {
-            throw new Error('Invalid license key');
-        }
     }
 }
 
@@ -166,15 +139,8 @@ class LicenseManager {
             cloudSync: true
         };
     }
-
-    startTrial() {
-        this.trialStartDate = new Date().toISOString();
-    }
 }
 
-const polarClient = new PolarClient(POLAR_CONFIG);
-const licenseManager = new LicenseManager(polarClient);
-
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { POLAR_CONFIG, PolarClient, LicenseManager, polarClient, licenseManager };
+    module.exports = { POLAR_CONFIG, PolarClient, LicenseManager };
 }

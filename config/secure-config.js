@@ -48,11 +48,6 @@ class SecureConfig {
     }
 
 
-    loadFromEnvironment() {
-        // Hardcoded API keys - always return production config
-        return this.loadProductionConfig();
-    }
-
     loadProductionConfig() {
         try {
             const productionConfig = require('./production-config');
@@ -73,7 +68,19 @@ class SecureConfig {
             };
         } catch (error) {
             console.error('Failed to load production configuration:', error);
-            return this.loadFromEnvironment();
+            // Return minimal config from environment variables
+            return {
+                supabase: { url: process.env.SUPABASE_URL || '', anonKey: process.env.SUPABASE_ANON_KEY || '' },
+                polar: { accessToken: process.env.POLAR_ACCESS_TOKEN || '', productId: process.env.POLAR_PRODUCT_ID || '' },
+                openai: { apiKey: process.env.OPENAI_API_KEY || '' },
+                exa: { apiKey: process.env.EXA_API_KEY || '' },
+                claude: { apiKey: process.env.CLAUDE_API_KEY || '' },
+                perplexity: { apiKey: process.env.PPLX_API_KEY || '' },
+                openrouter: { apiKey: process.env.OPENROUTER_API_KEY || '' },
+                google: { clientId: process.env.GOOGLE_CLIENT_ID || '', clientSecret: process.env.GOOGLE_CLIENT_SECRET || '' },
+                resend: { apiKey: process.env.RESEND_API_KEY || '', fromEmail: 'onboarding@resend.dev' },
+                app: { environment: 'development', isProduction: false }
+            };
         }
     }
 

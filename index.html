@@ -116,16 +116,21 @@
         <!-- Settings menu -->
         <div id="settings-menu" class="settings-menu hidden">
             <div class="settings-item settings-item-submenu" id="model-switcher-btn">
-                <span class="settings-text">Model: <span id="current-model-display">Jarvis</span></span>
+                <span class="settings-text">Model: <span id="current-model-display">ChatGPT 5.2</span></span>
                 <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg" class="submenu-arrow">
                     <path d="M9 1L5 5L1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
             </div>
             <div id="model-submenu" class="model-submenu hidden">
+                <!-- J bot Gateway (local AI) -->
+                <div class="model-item" data-model="openclaw" data-tier="high">
+                    <span class="model-name">J bot</span>
+                    <span class="model-desc">🤖 Local AI Gateway</span>
+                </div>
                 <!-- Main models (always visible) -->
                 <div class="model-item" data-model="default" data-tier="high">
-                    <span class="model-name">Jarvis</span>
-                    <span class="model-desc">uses ChatGPT-5.2</span>
+                    <span class="model-name">ChatGPT 5.2</span>
+                    <span class="model-desc">OpenAI's flagship model</span>
                     <div class="tier-toggle" id="jarvis-tier-toggle">
                         <label class="tier-switch">
                             <input type="checkbox" id="tier-toggle-checkbox" checked>
@@ -393,37 +398,6 @@
         </div>
     </div>
 
-    <!-- Calendar Event Modal -->
-    <div id="calendar-event-modal" class="document-name-modal hidden">
-        <div class="document-name-modal-content" style="max-width: 500px;">
-            <h3>Create Calendar Event</h3>
-            <div style="margin: 20px 0;">
-                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Event Title:</label>
-                <input type="text" id="calendar-event-title" placeholder="Enter event title..." style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
-            </div>
-            <div style="margin: 20px 0;">
-                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Date & Time:</label>
-                <input type="datetime-local" id="calendar-event-datetime" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
-            </div>
-            <div style="margin: 20px 0;">
-                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Duration (hours):</label>
-                <input type="number" id="calendar-event-duration" value="1" min="0.5" step="0.5" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
-            </div>
-            <div style="margin: 20px 0;">
-                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Description (optional):</label>
-                <textarea id="calendar-event-description" placeholder="Enter event description..." rows="3" style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px; resize: vertical;"></textarea>
-            </div>
-            <div style="margin: 20px 0;">
-                <label style="display: block; margin-bottom: 8px; color: rgba(255, 255, 255, 0.8);">Location (optional):</label>
-                <input type="text" id="calendar-event-location" placeholder="Enter location..." style="width: 100%; padding: 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; font-size: 14px;" />
-            </div>
-            <div class="document-name-modal-buttons">
-                <button id="calendar-event-cancel" class="document-name-btn-cancel">Cancel</button>
-                <button id="calendar-event-confirm" class="document-name-btn-confirm">Create Event</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Account Info Modal -->
     <div id="account-modal" class="account-modal hidden">
         <div class="account-modal-content">
@@ -503,6 +477,33 @@
         </div>
     </div>
 
+    <!-- J Bot Warning Modal -->
+    <div id="jbot-warning-modal" class="jbot-warning-modal hidden">
+        <div class="jbot-warning-modal-content">
+            <div class="jbot-warning-header">
+                <span class="jbot-warning-icon">⚠️</span>
+                <h3>J Bot - Warning</h3>
+            </div>
+            <div class="jbot-warning-body">
+                <p class="jbot-warning-text">
+                    This product is an <strong>opensource AGI</strong> that can be dangerous if used incorrectly. 
+                    <span class="jbot-warning-highlight">Use with caution.</span>
+                </p>
+                <p class="jbot-warning-liability">
+                    You are liable for anything you decide to use it for.
+                </p>
+                <div class="jbot-password-section">
+                    <label for="jbot-password-input">Enter Password:</label>
+                    <input type="password" id="jbot-password-input" placeholder="Enter password to unlock..." />
+                    <div id="jbot-password-error" class="jbot-password-error hidden">Incorrect password</div>
+                </div>
+            </div>
+            <div class="jbot-warning-footer">
+                <button id="jbot-warning-cancel" class="jbot-warning-btn-cancel">Cancel</button>
+                <button id="jbot-warning-accept" class="jbot-warning-btn-accept">Accept Conditions</button>
+            </div>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>

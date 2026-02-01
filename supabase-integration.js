@@ -134,33 +134,6 @@ class SupabaseIntegration {
     }
 
     /**
-     * Get subscription status by customer ID (for validation)
-     */
-    async getSubscriptionStatusByCustomerId(customerId) {
-        try {
-            console.log(`Checking subscription status for customer ID: ${customerId}`);
-            
-            const { data, error } = await this.supabase
-                .from('subscriptions')
-                .select('status')
-                .eq('id', customerId)
-                .in('status', ['active', 'trialing'])
-                .single();
-
-            if (error && error.code !== 'PGRST116') {
-                throw error;
-            }
-
-            const hasActiveSubscription = !!data && (data.status === 'active' || data.status === 'trialing');
-            console.log(`Customer has active subscription: ${hasActiveSubscription}`);
-            return hasActiveSubscription;
-        } catch (error) {
-            console.error('Error checking subscription status by customer ID:', error);
-            throw error;
-        }
-    }
-
-    /**
      * Check subscription by email
      */
     async checkSubscriptionByEmail(email) {

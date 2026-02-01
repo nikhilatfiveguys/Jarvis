@@ -64,11 +64,6 @@ class PaywallManager {
         }
     }
 
-    showTrialActive() {
-        document.querySelector('.subtitle').textContent = 'Your free trial is active!';
-        document.getElementById('upgrade-btn').textContent = 'Upgrade Now';
-    }
-
     showAlreadySubscribed() {
         document.querySelector('.subtitle').textContent = 'You have an active subscription!';
         document.getElementById('upgrade-btn').textContent = 'Manage Subscription';
