@@ -715,11 +715,8 @@ class JarvisOverlay {
     }
 
     showVoiceProcessingState() {
-        // Show transcribing indicator
-        if (this.dragOutput) {
-            this.dragOutput.classList.remove('hidden');
-            this.dragOutput.innerHTML = '<div style="color: rgba(255,255,255,0.7); font-style: italic;">transcribing...</div>';
-        }
+        // Show the loading notification with analyzing animation
+        this.showLoadingNotification(null, 'default');
     }
 
     hideVoiceProcessingState() {
