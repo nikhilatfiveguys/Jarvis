@@ -1183,6 +1183,28 @@ class JarvisApp {
         }
     }
 
+    async cancelVoiceRecording() {
+        if (!this.isVoiceRecording || !this.voiceRecorder) return;
+
+        console.log('🎤 Voice recording cancelled by user');
+        this.isVoiceRecording = false;
+        
+        // Reset global push-to-talk state
+        this.globalPushToTalkActive = false;
+        this.globalControlKeyDown = false;
+
+        try {
+            // Stop recording without transcribing
+            await this.voiceRecorder.stopRecording();
+        } catch (error) {
+            console.error('Error stopping cancelled recording:', error);
+        } finally {
+            if (this.mainWindow) {
+                this.mainWindow.webContents.send('voice-recording-stopped');
+            }
+        }
+    }
+
 
     setupAuthHandlers() {
 
@@ -2394,6 +2416,13 @@ class JarvisApp {
             // Only stop if currently recording
             if (this.isVoiceRecording) {
                 await this.stopVoiceRecording();
+            }
+        });
+
+        ipcMain.handle('cancel-voice-recording', async () => {
+            // Cancel recording without processing
+            if (this.isVoiceRecording) {
+                await this.cancelVoiceRecording();
             }
         });
 

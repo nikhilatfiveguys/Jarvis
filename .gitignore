@@ -17,8 +17,10 @@ logs/
 
 # Build outputs
 dist/
-build/
 out/
+
+# Native module build artifacts (but keep build/ scripts)
+native/*/build/
 
 # Dependencies
 node_modules/

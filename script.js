@@ -636,10 +636,40 @@ class JarvisOverlay {
             indicator = document.createElement('div');
             indicator.id = 'voice-recording-indicator';
             indicator.className = 'voice-recording-indicator';
-            indicator.innerHTML = '● recording';
+            indicator.innerHTML = `
+                <span class="recording-dot">●</span>
+                <span class="recording-text">recording</span>
+                <span class="recording-cancel" title="Cancel recording">×</span>
+            `;
             document.body.appendChild(indicator);
+            
+            // Add click handler for cancel button
+            const cancelBtn = indicator.querySelector('.recording-cancel');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.cancelVoiceRecording();
+                });
+            }
         }
-        indicator.style.display = 'block';
+        indicator.style.display = 'flex';
+    }
+    
+    cancelVoiceRecording() {
+        console.log('🎤 Voice recording cancelled by user');
+        this.hideVoiceRecordingIndicator();
+        this.hideVoiceShortcutHint();
+        
+        // Stop the recording via IPC
+        if (this.isElectron) {
+            const { ipcRenderer } = window.require('electron');
+            ipcRenderer.invoke('stop-push-to-talk');
+            ipcRenderer.invoke('cancel-voice-recording');
+        }
+        
+        // Reset push-to-talk state
+        this.isPushToTalkActive = false;
+        this.pushToTalkKeyDown = false;
     }
 
     hideVoiceRecordingIndicator() {
