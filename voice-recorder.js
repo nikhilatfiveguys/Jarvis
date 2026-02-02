@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -12,6 +12,18 @@ class VoiceRecorder {
         this.tempDir = os.tmpdir();
         this.audioFile = null;
         this.apiKey = apiKey;
+        this.useNativeRecording = false;
+        this.audioChunks = [];
+    }
+
+    // Check if a command exists
+    commandExists(cmd) {
+        try {
+            execSync(`which ${cmd}`, { stdio: 'pipe' });
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     async startRecording() {
@@ -21,65 +33,127 @@ class VoiceRecorder {
         this.audioFile = path.join(this.tempDir, `jarvis-recording-${Date.now()}.wav`);
         
         try {
-            // Use macOS's built-in recording with sox (try different approaches)
+            // Try external recording commands first
             const recordingCommands = [
-                ['/opt/homebrew/bin/rec', '-r', '16000', '-c', '1', '-t', 'wav', this.audioFile],
-                ['/opt/homebrew/bin/sox', '-t', 'coreaudio', '-r', '16000', '-c', '1', this.audioFile],
-                ['/usr/local/bin/rec', '-r', '16000', '-c', '1', '-t', 'wav', this.audioFile],
-                ['/usr/local/bin/sox', '-t', 'coreaudio', '-r', '16000', '-c', '1', this.audioFile],
-                ['rec', '-r', '16000', '-c', '1', '-t', 'wav', this.audioFile],
-                ['sox', '-t', 'coreaudio', '-r', '16000', '-c', '1', this.audioFile],
-                ['ffmpeg', '-f', 'avfoundation', '-i', ':0', '-ar', '16000', '-ac', '1', this.audioFile]
+                { cmd: '/opt/homebrew/bin/rec', args: ['-r', '16000', '-c', '1', '-t', 'wav', this.audioFile] },
+                { cmd: '/opt/homebrew/bin/sox', args: ['-d', '-r', '16000', '-c', '1', this.audioFile] },
+                { cmd: '/usr/local/bin/rec', args: ['-r', '16000', '-c', '1', '-t', 'wav', this.audioFile] },
+                { cmd: '/usr/local/bin/sox', args: ['-d', '-r', '16000', '-c', '1', this.audioFile] },
+                { cmd: 'rec', args: ['-r', '16000', '-c', '1', '-t', 'wav', this.audioFile] },
+                { cmd: 'sox', args: ['-d', '-r', '16000', '-c', '1', this.audioFile] },
+                { cmd: 'ffmpeg', args: ['-f', 'avfoundation', '-i', ':0', '-ar', '16000', '-ac', '1', '-y', this.audioFile] }
             ];
 
             let commandFound = false;
-            for (const cmd of recordingCommands) {
+            
+            for (const { cmd, args } of recordingCommands) {
+                // Check if command exists before trying
+                const cmdName = path.basename(cmd);
+                const fullPath = cmd.startsWith('/') ? cmd : null;
+                
+                if (fullPath && !fs.existsSync(fullPath)) {
+                    continue;
+                }
+                
+                if (!fullPath && !this.commandExists(cmdName)) {
+                    continue;
+                }
+
                 try {
-                    this.recordingProcess = spawn(cmd[0], cmd.slice(1), {
-                        stdio: 'pipe'
+                    console.log(`Trying recording command: ${cmd}`);
+                    this.recordingProcess = spawn(cmd, args, {
+                        stdio: ['pipe', 'pipe', 'pipe']
                     });
 
-                    this.recordingProcess.on('error', (error) => {
-                        console.log(`Recording command ${cmd[0]} failed:`, error.message);
-                        if (!commandFound) {
-                            this.isRecording = false;
-                        }
-                    });
-
-                    // Test if command works
-                    await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => {
-                            if (this.recordingProcess && !this.recordingProcess.killed) {
-                                commandFound = true;
-                                resolve();
-                            } else {
-                                reject(new Error('Command failed to start'));
+                    // Wait briefly to see if it starts successfully
+                    const started = await new Promise((resolve) => {
+                        let resolved = false;
+                        
+                        this.recordingProcess.on('error', (error) => {
+                            console.log(`Recording command ${cmd} error:`, error.message);
+                            if (!resolved) {
+                                resolved = true;
+                                resolve(false);
                             }
-                        }, 1000);
+                        });
+
+                        // If process is still running after 500ms, it's working
+                        setTimeout(() => {
+                            if (!resolved && this.recordingProcess && !this.recordingProcess.killed) {
+                                resolved = true;
+                                resolve(true);
+                            }
+                        }, 500);
 
                         this.recordingProcess.on('close', (code) => {
-                            clearTimeout(timeout);
-                            if (code === 0 || code === null) {
-                                commandFound = true;
-                                resolve();
-                            } else {
-                                reject(new Error(`Command exited with code ${code}`));
+                            if (!resolved) {
+                                resolved = true;
+                                resolve(code === 0 || code === null);
                             }
                         });
                     });
 
-                    if (commandFound) {
-                        console.log(`Using recording command: ${cmd[0]}`);
+                    if (started) {
+                        console.log(`✅ Using recording command: ${cmd}`);
+                        commandFound = true;
                         break;
+                    } else {
+                        // Kill the failed process
+                        if (this.recordingProcess) {
+                            try { this.recordingProcess.kill(); } catch {}
+                        }
                     }
                 } catch (error) {
-                    console.log(`Recording command ${cmd[0]} not available:`, error.message);
+                    console.log(`Recording command ${cmd} failed:`, error.message);
                     continue;
                 }
             }
 
             if (!commandFound) {
-                throw new Error('No working recording command found. Please install sox: brew install sox\n\nTried paths:\n- /opt/homebrew/bin/rec\n- /opt/homebrew/bin/sox\n- /usr/local/bin/rec\n- /usr/local/bin/sox\n- rec (from PATH)\n- sox (from PATH)\n- ffmpeg (from PATH)');
+                // Fallback: Use macOS screencapture for audio (available on all Macs)
+                // Note: This requires user permission but no external tools
+                console.log('⚠️ No sox/ffmpeg found, trying macOS native recording...');
+                
+                // Try using afrecord (built into macOS)
+                const afrecordPath = '/usr/bin/afrecord';
+                if (fs.existsSync(afrecordPath)) {
+                    try {
+                        this.recordingProcess = spawn(afrecordPath, [
+                            '-f', 'WAVE',
+                            '-c', '1',
+                            '-r', '16000',
+                            '-d', '300', // Max 5 minutes
+                            this.audioFile
+                        ], { stdio: ['pipe', 'pipe', 'pipe'] });
+                        
+                        const started = await new Promise((resolve) => {
+                            setTimeout(() => resolve(this.recordingProcess && !this.recordingProcess.killed), 500);
+                            this.recordingProcess.on('error', () => resolve(false));
+                        });
+                        
+                        if (started) {
+                            console.log('✅ Using macOS afrecord');
+                            commandFound = true;
+                        }
+                    } catch (e) {
+                        console.log('afrecord failed:', e.message);
+                    }
+                }
+            }
+
+            if (!commandFound) {
+                // Final message with clear instructions
+                const errorMsg = `Voice recording requires sox to be installed.
+
+To install sox, open Terminal and run:
+    brew install sox
+
+If you don't have Homebrew, first install it from https://brew.sh
+
+After installing sox, restart Jarvis.`;
+                
+                this.isRecording = false;
+                throw new Error(errorMsg);
             }
 
             return this.audioFile;
@@ -91,21 +165,32 @@ class VoiceRecorder {
     }
 
     async stopRecording() {
-        if (!this.isRecording || !this.recordingProcess) return null;
-
+        if (!this.isRecording) return null;
+        
         this.isRecording = false;
         
+        if (!this.recordingProcess) return null;
+
         return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                // Force kill if it doesn't stop gracefully
+                try { this.recordingProcess.kill('SIGKILL'); } catch {}
+                resolve(this.audioFile);
+            }, 3000);
+
             this.recordingProcess.on('close', (code) => {
-                if (code === 0) {
-                    resolve(this.audioFile);
-                } else {
-                    reject(new Error(`Recording process exited with code ${code}`));
-                }
+                clearTimeout(timeout);
+                // Accept any exit code since we're forcefully stopping
+                resolve(this.audioFile);
             });
 
-            // Send SIGTERM to stop recording
-            this.recordingProcess.kill('SIGTERM');
+            // Send SIGTERM to stop recording gracefully
+            try {
+                this.recordingProcess.kill('SIGTERM');
+            } catch (e) {
+                clearTimeout(timeout);
+                resolve(this.audioFile);
+            }
         });
     }
 
