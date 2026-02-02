@@ -146,9 +146,9 @@
                     <span class="model-name">Perplexity Pro</span>
                     <span class="model-desc">🔍 Live web search</span>
                 </div>
-                <div class="model-item" data-model="anthropic/claude-opus-4.5" data-tier="high">
-                    <span class="model-name">Claude Opus 4.5</span>
-                    <span class="model-desc">Anthropic's most capable</span>
+                <div class="model-item" data-model="anthropic/claude-sonnet-4.5" data-tier="high">
+                    <span class="model-name">Claude Sonnet 4.5</span>
+                    <span class="model-desc">Best for reasoning</span>
                 </div>
                 <div class="model-item" data-model="x-ai/grok-4.1-fast" data-tier="high">
                     <span class="model-name">Grok 4.1 Fast</span>
@@ -171,52 +171,15 @@
                     </svg>
                 </div>
                 
-                <!-- Hidden models (shown when "More" is clicked) -->
+                <!-- More models: populated from main (defaults Opus/DeepSeek/Llama/Kimi + any added from "Browse more models") -->
                 <div id="more-models-section" class="more-models-section hidden">
-                    <div class="model-item" data-model="openai/gpt-5-nano" data-tier="high">
-                        <span class="model-name">GPT 5 Nano</span>
-                        <span class="model-desc">OpenAI fastest model</span>
-                    </div>
-                    <div class="model-item" data-model="anthropic/claude-sonnet-4.5" data-tier="high">
-                        <span class="model-name">Claude Sonnet 4.5</span>
-                        <span class="model-desc">Best for reasoning</span>
-                    </div>
-                    <div class="model-item" data-model="google/gemini-2.5-pro" data-tier="high">
-                        <span class="model-name">Gemini 2.5 Pro</span>
-                        <span class="model-desc">Google's flagship</span>
-                    </div>
-                    <div class="model-item" data-model="deepseek/deepseek-chat" data-tier="high">
-                        <span class="model-name">DeepSeek V3</span>
-                        <span class="model-desc">Best for coding</span>
-                    </div>
-                    <div class="model-item" data-model="meta-llama/llama-4-maverick" data-tier="high">
-                        <span class="model-name">Llama 4 Maverick</span>
-                        <span class="model-desc">Meta's latest</span>
-                    </div>
-                    <div class="model-item" data-model="perplexity/sonar-reasoning-pro" data-tier="high">
-                        <span class="model-name">Sonar Reasoning Pro</span>
-                        <span class="model-desc">🔍 Deep research</span>
-                    </div>
-                    <div class="model-item" data-model="allenai/olmo-3-32b-think" data-tier="high">
-                        <span class="model-name">OLMO 3 32B Think</span>
-                        <span class="model-desc">AllenAI's reasoning</span>
-                    </div>
-                    <div class="model-item" data-model="moonshotai/kimi-k2-thinking" data-tier="high">
-                        <span class="model-name">Kimi K2 Thinking</span>
-                        <span class="model-desc">Moonshot AI</span>
-                    </div>
-                    <div class="model-item" data-model="amazon/nova-2-lite-v1" data-tier="high">
-                        <span class="model-name">Amazon Nova 2 Lite</span>
-                        <span class="model-desc">Amazon's efficient</span>
-                    </div>
-                    <div class="model-item" data-model="thedrummer/cydonia-24b-v4.1" data-tier="high">
-                        <span class="model-name">Cydonia 24B v4.1</span>
-                        <span class="model-desc">Creative roleplay</span>
-                    </div>
-                    <div class="model-item" data-model="prime-intellect/intellect-3" data-tier="high">
-                        <span class="model-name">Intellect 3</span>
-                        <span class="model-desc">Prime Intellect</span>
-                    </div>
+                </div>
+                <!-- Browse more models from OpenRouter (bottom of list) -->
+                <div class="browse-more-models-btn" id="browse-more-models-btn">
+                    <span>Browse more models</span>
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
                 </div>
             </div>
             <div class="settings-item settings-item-submenu" id="settings-submenu-btn">

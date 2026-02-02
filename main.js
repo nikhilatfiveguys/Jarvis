@@ -1,6 +1,17 @@
 const { app, BrowserWindow, ipcMain, screen, desktopCapturer, shell, globalShortcut, systemPreferences, clipboard } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { exec } = require('child_process');
+
+const OPENROUTER_ADDED_MODELS_FILE = 'jarvis_openrouter_added_models.json';
+
+// Default "More models" in overlay (same as original index.html); user can remove these in OpenRouter window
+const DEFAULT_MORE_MODELS = [
+    { id: 'anthropic/claude-opus-4.5', name: 'Claude Opus 4.5', description: "Anthropic's most capable" },
+    { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', description: 'Best for coding' },
+    { id: 'meta-llama/llama-4-maverick', name: 'Llama 4 Maverick', description: "Meta's latest" },
+    { id: 'moonshotai/kimi-k2-thinking', name: 'Kimi K2 Thinking', description: 'Moonshot AI' }
+];
 
 // Handle Squirrel events for macOS auto-updates
 // This MUST be at the very top before anything else
@@ -86,6 +97,9 @@ class JarvisApp {
         this.onboardingWindow = null;
         this.accountWindow = null;
         this.passwordResetWindow = null;
+        this.openrouterModelsWindow = null;
+        this.openrouterAddedModels = [];
+        this.openrouterRemovedDefaults = [];
         this.hotkeysWindow = null;
         this.isOverlayVisible = true;
         this.fullscreenMaintenanceInterval = null;
@@ -918,6 +932,99 @@ class JarvisApp {
 
         this.accountWindow = accountWindow;
         return accountWindow;
+    }
+
+    getOpenRouterAddedModelsPath() {
+        return path.join(app.getPath('userData'), OPENROUTER_ADDED_MODELS_FILE);
+    }
+
+    loadOpenRouterAddedModels() {
+        try {
+            const filePath = this.getOpenRouterAddedModelsPath();
+            if (fs.existsSync(filePath)) {
+                const raw = fs.readFileSync(filePath, 'utf8');
+                const data = JSON.parse(raw);
+                if (Array.isArray(data)) {
+                    this.openrouterAddedModels = [...data];
+                    this.openrouterRemovedDefaults = [];
+                } else {
+                    this.openrouterAddedModels = Array.isArray(data.added) ? [...data.added] : [];
+                    this.openrouterRemovedDefaults = Array.isArray(data.removedDefaults) ? [...data.removedDefaults] : [];
+                }
+            } else {
+                this.openrouterAddedModels = [];
+                this.openrouterRemovedDefaults = [];
+            }
+        } catch (_) {
+            this.openrouterAddedModels = [];
+            this.openrouterRemovedDefaults = [];
+        }
+    }
+
+    saveOpenRouterAddedModels() {
+        try {
+            const filePath = this.getOpenRouterAddedModelsPath();
+            const data = {
+                added: this.openrouterAddedModels || [],
+                removedDefaults: this.openrouterRemovedDefaults || []
+            };
+            fs.writeFileSync(filePath, JSON.stringify(data), 'utf8');
+        } catch (_) {}
+    }
+
+    /** Effective "More models" list: defaults (minus removed) + user-added; used in overlay and OpenRouter window */
+    getEffectiveMoreModelsList() {
+        this.loadOpenRouterAddedModels();
+        const removedSet = new Set(this.openrouterRemovedDefaults || []);
+        const defaults = (DEFAULT_MORE_MODELS || []).filter(m => m.id && !removedSet.has(m.id));
+        const added = this.openrouterAddedModels || [];
+        return [...defaults, ...added];
+    }
+
+    createOpenRouterModelsWindow() {
+        if (this.openrouterModelsWindow && !this.openrouterModelsWindow.isDestroyed()) {
+            this.openrouterModelsWindow.show();
+            this.openrouterModelsWindow.focus();
+            if (process.platform === 'darwin') app.focus({ steal: true });
+            return this.openrouterModelsWindow;
+        }
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        const winOpts = {
+            width: 520,
+            height: 640,
+            x: Math.max(0, screenWidth - 540),
+            y: 50,
+            resizable: true,
+            frame: true,
+            title: 'Add models from OpenRouter',
+            alwaysOnTop: false,
+            modal: false,
+            show: false,
+            skipTaskbar: false,
+            focusable: true,
+            webPreferences: { nodeIntegration: true, contextIsolation: false }
+        };
+        if (process.platform === 'darwin') winOpts.contentProtection = true;
+        const w = new BrowserWindow(winOpts);
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(w, stealthEnabled);
+        w.loadFile('openrouter-models-window.html');
+        w.once('ready-to-show', () => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) this.mainWindow.setAlwaysOnTop(true, 'floating', 0);
+            w.show();
+            w.focus();
+            if (process.platform === 'darwin') app.focus({ steal: true });
+        });
+        w.on('closed', () => {
+            this.openrouterModelsWindow = null;
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                try { this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1); } catch (_) { this.mainWindow.setAlwaysOnTop(true, 'floating', 1); }
+            }
+        });
+        this.openrouterModelsWindow = w;
+        return w;
     }
 
     createPasswordResetWindow(email = '') {
@@ -1895,6 +2002,84 @@ class JarvisApp {
                 return;
             }
             this.createAccountWindow();
+        });
+
+        // OpenRouter models window (like Account window)
+        ipcMain.handle('open-openrouter-models-window', () => {
+            if (this.openrouterModelsWindow && !this.openrouterModelsWindow.isDestroyed()) {
+                this.openrouterModelsWindow.show();
+                this.openrouterModelsWindow.focus();
+                return;
+            }
+            this.createOpenRouterModelsWindow();
+        });
+        ipcMain.handle('close-openrouter-models-window', () => {
+            if (this.openrouterModelsWindow && !this.openrouterModelsWindow.isDestroyed()) {
+                this.openrouterModelsWindow.close();
+            }
+        });
+        // Always read from disk so overlay gets latest (single source of truth). Returns effective list: defaults (minus removed) + user-added.
+        ipcMain.handle('get-openrouter-added-models', () => {
+            return this.getEffectiveMoreModelsList();
+        });
+        ipcMain.handle('add-openrouter-model-to-overlay', (_e, model) => {
+            if (model && model.id) {
+                this.loadOpenRouterAddedModels(); // ensure we have latest from disk
+                const existing = this.openrouterAddedModels || [];
+                const alreadyAdded = existing.some(m => m.id === model.id);
+                if (!alreadyAdded) {
+                    // Append to a new array so we never overwrite or mutate shared refs
+                    this.openrouterAddedModels = [...existing, { id: model.id, name: model.name || model.id, description: model.description || '' }];
+                    this.saveOpenRouterAddedModels(); // persist to disk immediately
+                }
+                const effectiveList = this.getEffectiveMoreModelsList();
+                // Tell overlay to add the model (IPC) and inject full effective list so "More models" stays in sync
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('openrouter-model-added', model);
+                    this.mainWindow.webContents.send('openrouter-added-models-sync', effectiveList);
+                    const listJson = JSON.stringify(effectiveList);
+                    this.mainWindow.webContents.executeJavaScript(
+                        `(function(){ try { var list = ${listJson}; if (window.jarvisOverlay && typeof window.jarvisOverlay.injectAddedOpenRouterModelsFromList === 'function') { window.jarvisOverlay.injectAddedOpenRouterModelsFromList(list); } } catch(e) {} })()`
+                    ).catch(() => {});
+                }
+                if (this.openrouterModelsWindow && !this.openrouterModelsWindow.isDestroyed()) {
+                    this.openrouterModelsWindow.webContents.send('openrouter-added-models-sync', effectiveList);
+                }
+            }
+        });
+
+        ipcMain.handle('remove-openrouter-model-from-overlay', (_e, modelId) => {
+            if (!modelId || typeof modelId !== 'string') return;
+            this.loadOpenRouterAddedModels();
+            const isDefault = (DEFAULT_MORE_MODELS || []).some(m => m.id === modelId);
+            if (isDefault) {
+                if (!(this.openrouterRemovedDefaults || []).includes(modelId)) {
+                    this.openrouterRemovedDefaults = [...(this.openrouterRemovedDefaults || []), modelId];
+                }
+            } else {
+                this.openrouterAddedModels = (this.openrouterAddedModels || []).filter(m => m.id !== modelId);
+            }
+            this.saveOpenRouterAddedModels();
+            const effectiveList = this.getEffectiveMoreModelsList();
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('openrouter-added-models-sync', effectiveList);
+                const listJson = JSON.stringify(effectiveList);
+                this.mainWindow.webContents.executeJavaScript(
+                    `(function(){ try { var list = ${listJson}; if (window.jarvisOverlay && typeof window.jarvisOverlay.injectAddedOpenRouterModelsFromList === 'function') { window.jarvisOverlay.injectAddedOpenRouterModelsFromList(list); } } catch(e) {} })()`
+                ).catch(() => {});
+            }
+            if (this.openrouterModelsWindow && !this.openrouterModelsWindow.isDestroyed()) {
+                this.openrouterModelsWindow.webContents.send('openrouter-added-models-sync', effectiveList);
+            }
+        });
+
+        // Sync overlay's added OpenRouter models to main (so OpenRouter window can show "Added" state)
+        ipcMain.on('sync-openrouter-added-models', (_e, list) => {
+            this.openrouterAddedModels = Array.isArray(list) ? list : [];
+            this.saveOpenRouterAddedModels();
+            if (this.openrouterModelsWindow && !this.openrouterModelsWindow.isDestroyed()) {
+                this.openrouterModelsWindow.webContents.send('openrouter-added-models-sync', this.openrouterAddedModels);
+            }
         });
 
         // When account window shows premium (sign-in/sign-up success), tell overlay to refresh so 5/5 goes away
@@ -2919,6 +3104,63 @@ class JarvisApp {
             }
         });
 
+        // Fetch OpenRouter models list (for Browse more models window)
+        // Tries without auth first (public list); if 401, retries with OPENROUTER_API_KEY if set
+        ipcMain.handle('fetch-openrouter-models', () => {
+            return new Promise((resolve) => {
+                const doRequest = (authHeader) => {
+                    const options = {
+                        hostname: 'openrouter.ai',
+                        path: '/api/v1/models',
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            ...(authHeader ? { 'Authorization': authHeader } : {})
+                        }
+                    };
+                    const req = https.request(options, (res) => {
+                        let data = '';
+                        res.on('data', (chunk) => { data += chunk; });
+                        res.on('end', () => {
+                            if (res.statusCode >= 200 && res.statusCode < 300) {
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    resolve({ data: parsed.data || [] });
+                                } catch (e) {
+                                    resolve({ error: 'Failed to parse models response', data: [] });
+                                }
+                                return;
+                            }
+                            if (res.statusCode === 401 && !authHeader) {
+                                const openrouterConfig = this.secureConfig.getOpenRouterConfig();
+                                const apiKey = openrouterConfig?.apiKey?.trim?.();
+                                if (apiKey) {
+                                    doRequest(`Bearer ${apiKey}`);
+                                    return;
+                                }
+                            }
+                            if (res.statusCode === 401) {
+                                resolve({ error: 'OpenRouter requires an API key to list models. Set OPENROUTER_API_KEY in your .env or Supabase Edge Function Secrets. You can also view all models at openrouter.ai/models.', data: [] });
+                            } else {
+                                resolve({ error: `OpenRouter returned ${res.statusCode}. Try openrouter.ai/models in your browser.`, data: [] });
+                            }
+                        });
+                    });
+                    req.on('error', (err) => resolve({ error: err.message, data: [] }));
+                    req.setTimeout(15000, () => {
+                        req.destroy();
+                        resolve({ error: 'Request timed out', data: [] });
+                    });
+                    req.end();
+                };
+                try {
+                    doRequest(null); // try without auth first
+                } catch (err) {
+                    resolve({ error: err.message, data: [] });
+                }
+            });
+        });
+
         // Handle OpenRouter API call via main process (for token tracking and limit enforcement)
         ipcMain.handle('call-openrouter-api', async (_event, requestPayload, isLowModel = false) => {
             try {
@@ -3249,6 +3491,7 @@ class JarvisApp {
                         const parsedUrl = new URL(PROXY_URL);
                         const postData = JSON.stringify({
                             provider: 'claude',
+                            endpoint: 'messages',
                             payload: requestPayload
                         });
                         

@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add models from OpenRouter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000000;
+            color: #fff;
+            padding: 24px;
+            overflow-y: auto;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 520px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .header p {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .header a {
+            color: #6B9EFF;
+            text-decoration: none;
+        }
+        .header a:hover { text-decoration: underline; }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .filter-free {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .filter-free input { cursor: pointer; }
+        .search {
+            flex: 1;
+            min-width: 0;
+            padding: 10px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            background: #111;
+            color: white;
+            font-size: 13px;
+            outline: none;
+        }
+        .search::placeholder { color: rgba(255, 255, 255, 0.4); }
+        .list {
+            max-height: 420px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 16px;
+            background: #111;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .row:hover { background: #1a1a1a; border-color: rgba(255, 255, 255, 0.12); }
+        .row-info { flex: 1; min-width: 0; }
+        .row-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .free-badge {
+            font-size: 10px;
+            font-weight: 600;
+            color: #22c55e;
+            background: rgba(34, 197, 94, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .row-id {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            font-family: monospace;
+            margin-top: 2px;
+        }
+        .row-desc {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.55);
+            margin-top: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .add-btn {
+            flex-shrink: 0;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+        .add-btn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .add-btn:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+        .footer {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .footer a {
+            color: #6B9EFF;
+            font-size: 13px;
+            text-decoration: none;
+        }
+        .footer a:hover { text-decoration: underline; }
+        .done-btn {
+            padding: 10px 24px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+        .done-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+        }
+        .loading, .error, .empty {
+            text-align: center;
+            padding: 32px 16px;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+        }
+        .error { color: #f87171; }
+        .more-note {
+            text-align: center;
+            padding: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+        }
+        .added-section {
+            margin-bottom: 20px;
+        }
+        .added-section h2 {
+            font-size: 14px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 10px;
+        }
+        .added-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+        .added-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            background: #0d1117;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .added-row-info { flex: 1; min-width: 0; }
+        .added-row-name { font-size: 13px; font-weight: 500; color: white; }
+        .added-row-id { font-size: 11px; color: rgba(255, 255, 255, 0.5); font-family: monospace; margin-top: 2px; }
+        .remove-btn {
+            flex-shrink: 0;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid rgba(248, 113, 113, 0.5);
+            background: rgba(248, 113, 113, 0.15);
+            color: #f87171;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+        .remove-btn:hover {
+            background: rgba(248, 113, 113, 0.25);
+        }
+        .added-empty {
+            padding: 12px;
+            color: rgba(255, 255, 255, 0.45);
+            font-size: 13px;
+            background: #0d1117;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Add models from OpenRouter</h1>
+            <p>Free and paid models from <a href="https://openrouter.ai/models?fmt=table" target="_blank" rel="noopener">openrouter.ai/models</a>. Click Add to add a model to your overlay list.</p>
+        </div>
+        <div class="added-section">
+            <h2>Your added models</h2>
+            <div id="added-list" class="added-list">
+                <div class="added-empty">No models added yet. Add models below to see them here.</div>
+            </div>
+        </div>
+        <div class="toolbar">
+            <label class="filter-free">
+                <input type="checkbox" id="filter-free" checked> Free models only
+            </label>
+            <input type="text" id="search" class="search" placeholder="Search models…">
+        </div>
+        <div id="list" class="list">
+            <div class="loading">Loading models…</div>
+        </div>
+        <div class="footer">
+            <a href="https://openrouter.ai/models?fmt=table" target="_blank" rel="noopener">View all on OpenRouter</a>
+            <button type="button" id="done-btn" class="done-btn">Done</button>
+        </div>
+    </div>
+    <script>
+        (function() {
+            const { ipcRenderer } = require('electron');
+            let models = [];
+            let addedIds = new Set();
+            let addedList = [];
+
+            function escapeHtml(s) {
+                if (typeof s !== 'string') return '';
+                const div = document.createElement('div');
+                div.textContent = s;
+                return div.innerHTML;
+            }
+
+            function isFree(model) {
+                const p = model?.pricing;
+                if (!p) return false;
+                return (parseFloat(p.prompt) || 0) === 0 && (parseFloat(p.completion) || 0) === 0;
+            }
+
+            function renderAddedSection() {
+                const container = document.getElementById('added-list');
+                if (!container) return;
+                container.innerHTML = '';
+                if (addedList.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'added-empty';
+                    empty.textContent = 'No models added yet. Add models below to see them here.';
+                    container.appendChild(empty);
+                    return;
+                }
+                addedList.forEach(m => {
+                    const id = m.id || '';
+                    const name = m.name || id;
+                    const row = document.createElement('div');
+                    row.className = 'added-row';
+                    row.innerHTML = `
+                        <div class="added-row-info">
+                            <div class="added-row-name">${escapeHtml(name)}</div>
+                            <div class="added-row-id">${escapeHtml(id)}</div>
+                        </div>
+                        <button type="button" class="remove-btn" data-id="${escapeHtml(id)}">Remove</button>
+                    `;
+                    const btn = row.querySelector('.remove-btn');
+                    if (btn) {
+                        btn.addEventListener('click', () => {
+                            ipcRenderer.invoke('remove-openrouter-model-from-overlay', btn.dataset.id).then(() => {
+                                // Sync will update addedList/addedIds and re-render
+                            });
+                        });
+                    }
+                    container.appendChild(row);
+                });
+            }
+
+            function render() {
+                renderAddedSection();
+                const listEl = document.getElementById('list');
+                const freeOnly = document.getElementById('filter-free').checked;
+                const q = (document.getElementById('search').value || '').trim().toLowerCase();
+                let filtered = models;
+                if (freeOnly) filtered = filtered.filter(isFree);
+                if (q) {
+                    filtered = filtered.filter(m => {
+                        const name = (m.name || '').toLowerCase();
+                        const id = (m.id || '').toLowerCase();
+                        const desc = (m.description || '').toLowerCase();
+                        return name.includes(q) || id.includes(q) || desc.includes(q);
+                    });
+                }
+                listEl.innerHTML = '';
+                if (filtered.length === 0) {
+                    listEl.innerHTML = '<div class="empty">No models match. Try turning off "Free models only" or changing the search.</div>';
+                    return;
+                }
+                filtered.slice(0, 200).forEach(model => {
+                    const id = model.id || '';
+                    const name = model.name || id;
+                    const desc = (model.description || '').substring(0, 80) + (model.description && model.description.length > 80 ? '…' : '');
+                    const isAdded = addedIds.has(id);
+                    const freeBadge = isFree(model) ? '<span class="free-badge">Free</span>' : '';
+                    const row = document.createElement('div');
+                    row.className = 'row';
+                    row.innerHTML = `
+                        <div class="row-info">
+                            <div class="row-name">${escapeHtml(name)} ${freeBadge}</div>
+                            <div class="row-id">${escapeHtml(id)}</div>
+                            ${desc ? `<div class="row-desc">${escapeHtml(desc)}</div>` : ''}
+                        </div>
+                        <button type="button" class="add-btn" data-id="${escapeHtml(id)}" data-name="${escapeHtml(name)}" data-desc="${escapeHtml(desc)}" ${isAdded ? 'disabled' : ''}>${isAdded ? 'Added' : 'Add'}</button>
+                    `;
+                    const btn = row.querySelector('.add-btn');
+                    if (btn && !isAdded) {
+                        btn.addEventListener('click', () => {
+                            ipcRenderer.invoke('add-openrouter-model-to-overlay', {
+                                id: btn.dataset.id,
+                                name: btn.dataset.name,
+                                description: btn.dataset.desc || ''
+                            }).then(() => {
+                                addedIds.add(btn.dataset.id);
+                                btn.textContent = 'Added';
+                                btn.disabled = true;
+                            });
+                        });
+                    }
+                    listEl.appendChild(row);
+                });
+                if (filtered.length > 200) {
+                    const more = document.createElement('div');
+                    more.className = 'more-note';
+                    more.textContent = `Showing 200 of ${filtered.length}. Use search to narrow.`;
+                    listEl.appendChild(more);
+                }
+            }
+
+            function loadAdded() {
+                ipcRenderer.invoke('get-openrouter-added-models').then((list) => {
+                    addedList = Array.isArray(list) ? list : [];
+                    addedIds = new Set(addedList.map(m => m.id));
+                    if (models.length >= 0) render();
+                });
+            }
+
+            document.getElementById('filter-free').addEventListener('change', render);
+            document.getElementById('search').addEventListener('input', render);
+            document.getElementById('done-btn').addEventListener('click', () => {
+                ipcRenderer.invoke('close-openrouter-models-window');
+            });
+
+            ipcRenderer.invoke('fetch-openrouter-models').then(({ data, error }) => {
+                const listEl = document.getElementById('list');
+                if (error) {
+                    listEl.innerHTML = '<div class="error">' + escapeHtml(error) + '</div>';
+                    return;
+                }
+                models = data || [];
+                loadAdded();
+            }).catch(() => {
+                document.getElementById('list').innerHTML = '<div class="error">Failed to load models.</div>';
+            });
+
+            ipcRenderer.on('openrouter-added-models-sync', (_e, list) => {
+                addedList = Array.isArray(list) ? list : [];
+                addedIds = new Set(addedList.map(m => m.id));
+                render();
+            });
+        })();
+    </script>
+</body>
+</html>

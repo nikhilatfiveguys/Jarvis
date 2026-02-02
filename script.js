@@ -72,6 +72,7 @@ class JarvisOverlay {
         
         this.initializeElements();
         this.setupEventListeners();
+        this.injectAddedOpenRouterModels();
         this.setupHotkeys();
         this.setupElectronIntegration();
         this.setupDragFunctionality();
@@ -1487,6 +1488,17 @@ class JarvisOverlay {
                     this.toggleMoreModels();
                 });
             }
+            // "Browse more models" button (opens separate window like Account)
+            const browseMoreModelsBtn = document.getElementById('browse-more-models-btn');
+            if (browseMoreModelsBtn) {
+                browseMoreModelsBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (this.isElectron && window.require) {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('open-openrouter-models-window');
+                    }
+                });
+            }
         }
         
         // Grok voice mode toggle
@@ -2018,7 +2030,28 @@ class JarvisOverlay {
             // Don't show other update errors - they're not critical
             this.hideUpdateNotification();
         });
-        
+
+        // OpenRouter models window: when user adds a model in the window, overlay adds it and injects
+        ipcRenderer.on('openrouter-model-added', (_e, model) => {
+            if (model && model.id) this.addOpenRouterModelToUserList(model.id, model.name, model.description);
+        });
+        // Full list sync from main (when Add is pressed in OpenRouter window) - inject list directly
+        ipcRenderer.on('openrouter-added-models-sync', (_e, list) => {
+            if (!Array.isArray(list)) return;
+            try {
+                localStorage.setItem(JarvisApp.OPENROUTER_ADDED_KEY, JSON.stringify(list));
+            } catch (_) {}
+            this.injectAddedOpenRouterModelsFromList(list);
+        });
+        // On load, pull effective "More models" list from main (defaults + user-added) and populate dropdown
+        ipcRenderer.invoke('get-openrouter-added-models').then((list) => {
+            if (!Array.isArray(list)) return;
+            try {
+                localStorage.setItem(JarvisApp.OPENROUTER_ADDED_KEY, JSON.stringify(list));
+            } catch (_) {}
+            this.injectAddedOpenRouterModelsFromList(list);
+        }).catch(() => {});
+
         ipcRenderer.on('update-not-available', (event) => {
             console.log('✅ App is up to date');
             this.showUpdateNotification("You're up to date! ✅", 'success', true);
@@ -4062,11 +4095,8 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
     async callOpenRouter(message, model) {
         try {
-            // Check if this is a Claude model - route to Claude API directly
-            if (model.startsWith('anthropic/claude-')) {
-                console.log(`🤖 Detected Claude model: ${model}, routing to Claude API`);
-                return await this.callClaudeDirect(message, model);
-            }
+            // Claude Sonnet 4.5 and other anthropic/* models in "More models" use OpenRouter API key
+            // (no separate Claude API key needed for the dropdown)
 
             // Build conversation context
             let conversationContext = '';
@@ -4133,6 +4163,11 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         // Show notification with button to add credits
                         this.showLimitExceededNotification();
                         return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
+                    }
+                    // 402 = Payment Required — OpenRouter needs credits or payment method
+                    if (result.status === 402) {
+                        const detail = result.data?.error?.message || result.data?.error || result.data?.message || '';
+                        throw new Error(`OpenRouter needs credits or a payment method (402). Add credits at openrouter.ai. ${detail ? detail : ''}`.trim());
                     }
                     throw new Error(`OpenRouter API error: ${result.status} - ${result.data?.error || result.statusText}`);
                 }
@@ -5356,8 +5391,37 @@ ${currentQuestion}`;
             const isHidden = this.modelSubmenu.classList.contains('hidden');
             if (isHidden) {
                 this.modelSubmenu.classList.remove('hidden');
+                // Sync added models from main (so models added in OpenRouter window always show up)
+                if (this.isElectron) {
+                    try {
+                        const getIpc = () => (typeof window !== 'undefined' && window.require) ? window.require('electron') : (typeof require !== 'undefined' ? require('electron') : null);
+                        const electron = getIpc();
+                        if (electron && electron.ipcRenderer) {
+                            electron.ipcRenderer.invoke('get-openrouter-added-models').then((list) => {
+                                if (!Array.isArray(list)) return;
+                                try {
+                                    localStorage.setItem(JarvisApp.OPENROUTER_ADDED_KEY, JSON.stringify(list));
+                                } catch (_) {}
+                                this.injectAddedOpenRouterModelsFromList(list);
+                            }).catch(() => {});
+                        }
+                    } catch (_) {}
+                }
                 // Update locked state for models based on premium status
                 this.updateModelLockedState();
+                // If "More models" has items (defaults + added), expand so they're visible
+                const moreSection = document.getElementById('more-models-section');
+                const hasItems = moreSection && moreSection.querySelectorAll('.model-item[data-model]').length > 0;
+                if (hasItems) {
+                    const moreBtn = document.getElementById('model-more-btn');
+                    const moreSection = document.getElementById('more-models-section');
+                    if (moreBtn && moreSection && moreSection.classList.contains('hidden')) {
+                        moreSection.classList.remove('hidden');
+                        moreBtn.classList.add('expanded');
+                        const span = moreBtn.querySelector('span');
+                        if (span) span.textContent = 'Less models';
+                    }
+                }
             } else {
                 this.modelSubmenu.classList.add('hidden');
             }
@@ -6457,67 +6521,7 @@ ${currentQuestion}`;
             
             // If using OpenRouter model, send to OpenRouter with file attachments
             if (this.selectedModel && this.selectedModel !== 'default') {
-                // Check if this is a Claude model - route to Claude API directly
-                if (this.selectedModel.startsWith('anthropic/claude-')) {
-                    console.log(`🤖 Detected Claude model for file analysis: ${this.selectedModel}`);
-                    
-                    // Check if this is a quiz request
-                    const lowerPrompt = prompt.toLowerCase();
-                    const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
-                                         lowerPrompt.includes('question') || lowerPrompt.includes('practice');
-                    
-                    // Combine all file content into a single message
-                    let combinedMessage = prompt;
-                    if (isQuizRequest) {
-                        combinedMessage = `IMPORTANT: You MUST respond with ONLY a JSON object for this quiz request. No other text before or after.
-
-The user wants a QUIZ based on this content. Respond with ONLY this JSON format:
-{"quiz": true, "topic": "Topic Name", "questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "Why"}]}
-
-Generate 5 questions (or the number they specified) based on the following content:
-
-User request: ${prompt}`;
-                    }
-                    
-                    for (const item of content) {
-                        if (item.type === 'input_text') {
-                            combinedMessage += '\n\n' + item.text;
-                        }
-                        // Note: Claude API image support would need base64 encoding
-                    }
-                    
-                    const claudeResponse = await this.callClaudeDirect(combinedMessage, this.selectedModel);
-                    
-                    // Check if Claude response contains quiz JSON
-                    if (isQuizRequest) {
-                        try {
-                            const quizMatch = claudeResponse.match(/\{[\s\S]*"quiz"\s*:\s*true[\s\S]*\}/);
-                            if (quizMatch) {
-                                const quizData = JSON.parse(quizMatch[0]);
-                                if (quizData.quiz && quizData.questions && quizData.questions.length > 0) {
-                                    console.log('📝 Quiz detected in Claude response!');
-                                    this.stopLoadingAnimation();
-                                    if (this.dragOutput) {
-                                        this.dragOutput.classList.remove('loading-notification');
-                                    }
-                                    this.showQuiz(quizData.topic || 'Document Quiz', quizData.questions);
-                                    const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
-                                    this.conversationHistory.push({ role: 'user', content: userMessage });
-                                    this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${quizData.topic} with ${quizData.questions.length} questions`, model: this.selectedModelName || 'Claude' });
-                                    if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
-                                    this.saveConversationHistory();
-                                    if (!this.hasPremiumAccess()) this.incrementMessageCount();
-                                    return; // Exit early - quiz is displayed
-                                }
-                            }
-                        } catch (parseError) {
-                            console.log('No quiz JSON found in Claude response, treating as regular analysis');
-                        }
-                    }
-                    
-                    analysis = claudeResponse;
-                } else {
-                    // Check if this is a quiz request
+                    // All "More models" (including Claude Sonnet 4.5) use OpenRouter API key
                     const lowerPrompt = prompt.toLowerCase();
                     const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
                                          lowerPrompt.includes('question') || lowerPrompt.includes('practice');
@@ -6612,7 +6616,6 @@ User request: ${prompt}`;
                     }
                     
                     analysis = responseContent;
-                }
             } else {
                 // Use default Jarvis model (GPT-5 Mini via IPC or proxy)
                 // Check if this is a quiz request
@@ -7109,6 +7112,88 @@ User request: ${prompt}`;
             
             // Update button text
             moreBtn.querySelector('span').textContent = isExpanded ? 'Less models' : 'More models';
+        }
+    }
+
+    static OPENROUTER_ADDED_KEY = 'jarvis_added_openrouter_models';
+
+    escapeHtml(s) {
+        if (typeof s !== 'string') return '';
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    getAddedOpenRouterModels() {
+        try {
+            const raw = localStorage.getItem(JarvisApp.OPENROUTER_ADDED_KEY);
+            return raw ? JSON.parse(raw) : [];
+        } catch {
+            return [];
+        }
+    }
+
+    addOpenRouterModelToUserList(id, name, description) {
+        if (!id) return;
+        const added = this.getAddedOpenRouterModels();
+        if (added.some(m => m.id === id)) return;
+        added.push({ id, name: name || id, description: description || '' });
+        try {
+            localStorage.setItem(JarvisApp.OPENROUTER_ADDED_KEY, JSON.stringify(added));
+        } catch (_) {}
+        this.injectAddedOpenRouterModels();
+        // Expand "More models" so the new model is visible in the dropdown
+        const moreBtn = document.getElementById('model-more-btn');
+        const moreSection = document.getElementById('more-models-section');
+        if (moreBtn && moreSection) {
+            moreSection.classList.remove('hidden');
+            moreBtn.classList.add('expanded');
+            const span = moreBtn.querySelector('span');
+            if (span) span.textContent = 'Less models';
+        }
+        // Main is source of truth; overlay receives openrouter-added-models-sync from main when models change
+    }
+
+    injectAddedOpenRouterModels() {
+        this.injectAddedOpenRouterModelsFromList(this.getAddedOpenRouterModels());
+    }
+
+    /** Called by main process via executeJavaScript or with list from IPC - injects list directly; removes items no longer in list */
+    injectAddedOpenRouterModelsFromList(list) {
+        const section = document.getElementById('more-models-section');
+        if (!section) return;
+        const keepIds = new Set(Array.isArray(list) ? list.map(m => m && m.id).filter(Boolean) : []);
+        section.querySelectorAll('.model-item[data-model]').forEach(el => {
+            const id = el.getAttribute('data-model');
+            if (id && !keepIds.has(id)) el.remove();
+        });
+        if (!Array.isArray(list) || list.length === 0) return;
+        const existingIds = new Set();
+        section.querySelectorAll('.model-item[data-model]').forEach(el => existingIds.add(el.getAttribute('data-model')));
+        list.forEach(m => {
+            const id = m && m.id;
+            if (!id || existingIds.has(id)) return;
+            const name = (m.name || id).toString();
+            const desc = (m.description || '').toString();
+            const item = document.createElement('div');
+            item.className = 'model-item';
+            item.setAttribute('data-model', id);
+            item.setAttribute('data-tier', 'high');
+            item.innerHTML = `<span class="model-name">${this.escapeHtml(name)}</span><span class="model-desc">${this.escapeHtml(desc)}</span>`;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.selectModel(id, name);
+                this.hideModelSubmenu();
+            });
+            section.appendChild(item);
+            existingIds.add(id);
+        });
+        const moreBtn = document.getElementById('model-more-btn');
+        if (moreBtn) {
+            document.getElementById('more-models-section')?.classList.remove('hidden');
+            moreBtn.classList.add('expanded');
+            const span = moreBtn.querySelector('span');
+            if (span) span.textContent = 'Less models';
         }
     }
 
