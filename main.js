@@ -256,26 +256,14 @@ class JarvisApp {
     async setupApp() {
         // Handle app ready
         app.whenReady().then(async () => {
-            this.setupAuthHandlers();
-            this.loadVoiceShortcut(); // Load custom voice shortcut before setting up defaults
-            this.setupVoiceRecording();
-            this.setupGlobalPushToTalk(); // Enable global push-to-talk (hold Control to speak)
-            this.setupAutoUpdater(); // Setup auto-updater after app is ready
-            this.loadCurrentUserEmail(); // Load user email for token tracking
-            
-            // Trigger screen recording permission request early
-            // This makes macOS add the app to Screen Recording permissions list
-            this.requestScreenRecordingPermission();
-            
-            // Setup IPC handlers (needed for all flows)
+            // CRITICAL: Setup IPC handlers FIRST (needed for window communication)
             this.setupIpcHandlers();
             
-            // PAYWALL DISABLED - Go directly to main window
-            // Always create window - interactive tutorial happens in overlay now
-                    this.createWindow();
-                    if (process.platform === 'darwin' && app.dock) {
-                        app.dock.hide();
-                    }
+            // Create and show window IMMEDIATELY for fast perceived startup
+            this.createWindow();
+            if (process.platform === 'darwin' && app.dock) {
+                app.dock.hide();
+            }
             
             // If onboarding not complete, show the overlay with tutorial
             if (!this.isOnboardingComplete()) {
@@ -283,19 +271,31 @@ class JarvisApp {
                 // Show overlay immediately for new users
                 setTimeout(() => {
                     this.showOverlay();
-                }, 500);
+                }, 100); // Reduced from 500ms
             }
             
-            // Start Polar success handler
-            this.polarSuccessHandler.start();
+            // DEFERRED INITIALIZATION: Run these in background after window is shown
+            // This prevents blocking the initial window display
+            setImmediate(() => {
+                this.setupAuthHandlers();
+                this.loadVoiceShortcut();
+                this.loadCurrentUserEmail();
+            });
             
-            // Start Polar webhook handler
-            this.polarWebhookHandler.start();
+            // Delay heavier initialization slightly
+            setTimeout(() => {
+                this.setupVoiceRecording();
+                this.setupGlobalPushToTalk();
+            }, 100);
             
-            // Start periodic subscription validation
-            this.startSubscriptionValidation();
-            
-            // Don't validate on startup - rely on webhooks for cancellation updates
+            // Delay network-dependent initialization more
+            setTimeout(() => {
+                this.setupAutoUpdater();
+                this.requestScreenRecordingPermission();
+                this.polarSuccessHandler.start();
+                this.polarWebhookHandler.start();
+                this.startSubscriptionValidation();
+            }, 500);
         });
 
         // Handle window closed
