@@ -179,6 +179,9 @@ class JarvisApp {
     setupAutoUpdater() {
         // Configure auto-updater (only call after app is ready)
         const updater = getAutoUpdater();
+        // Use explicit GitHub releases URL so we never hit wrong repo (e.g. .../Jar/mac.yml)
+        // Generic provider: base URL where latest-mac.yml is served
+        updater.setFeedURL('https://github.com/nikhilatfiveguys/Jarvis/releases/latest/download/');
         updater.autoDownload = true; // Auto-download updates when available
         updater.autoInstallOnAppQuit = true; // Auto-install on quit after download
         
