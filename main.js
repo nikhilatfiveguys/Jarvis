@@ -4228,10 +4228,10 @@ class JarvisApp {
             }
         }
         
-        // Start INTERACTIVE so user can immediately click/drag after toggle
-        // The renderer's mouseleave handler will set click-through mode when mouse leaves
+        // Start in CLICK-THROUGH mode so user can interact with windows behind
+        // The renderer's mouseenter handler will make it interactive when mouse enters the overlay
         try {
-            this.mainWindow.setIgnoreMouseEvents(false);
+            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
         } catch (_) {}
         
         // Ensure window is focusable
