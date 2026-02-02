@@ -94,12 +94,24 @@ jobs:
           name: jarvis-5.0-windows
           path: dist-windows
 
+      - name: Prepare release notes
+        id: notes
+        run: |
+          NOTES_FILE=".github/release_notes/${{ github.ref_name }}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "body_path=$NOTES_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "## Release ${{ github.ref_name }}" > release_body.md
+            echo "body_path=release_body.md" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             dist-macos/*
             dist-windows/*
+          body_path: ${{ steps.notes.outputs.body_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
