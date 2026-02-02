@@ -821,16 +821,37 @@ class JarvisOverlay {
             `;
             document.body.appendChild(indicator);
             
-            // Add click handler for cancel button
+            // Add click handler for cancel button with interactive handling
             const cancelBtn = indicator.querySelector('.recording-cancel');
             if (cancelBtn) {
+                // Make window interactive when hovering/clicking cancel button
+                const makeInteractive = () => {
+                    if (this.isElectron && window.require) {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('make-interactive');
+                    }
+                };
+                
+                cancelBtn.addEventListener('mouseenter', makeInteractive);
+                cancelBtn.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    makeInteractive();
+                });
                 cancelBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    e.preventDefault();
                     this.cancelVoiceRecording();
                 });
             }
         }
         indicator.style.display = 'flex';
+        
+        // Ensure window is interactive when recording indicator is shown
+        if (this.isElectron && window.require) {
+            const { ipcRenderer } = window.require('electron');
+            ipcRenderer.invoke('make-interactive');
+        }
     }
     
     cancelVoiceRecording() {
@@ -838,8 +859,13 @@ class JarvisOverlay {
         this.hideVoiceRecordingIndicator();
         this.hideVoiceShortcutHint();
         
-        // Stop the recording via IPC
-        if (this.isElectron) {
+        // Stop browser recording if active
+        if (this.useBrowserRecording && this.mediaRecorder) {
+            this.stopBrowserRecording(true); // Cancel without transcribing
+        }
+        
+        // Stop the recording via IPC (for sox-based recording)
+        if (this.isElectron && !this.useBrowserRecording) {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.invoke('stop-push-to-talk');
             ipcRenderer.invoke('cancel-voice-recording');

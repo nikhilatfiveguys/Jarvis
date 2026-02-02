@@ -1157,6 +1157,9 @@ body {
     justify-content: center;
     width: 18px;
     height: 18px;
+    pointer-events: auto !important;
+    -webkit-app-region: no-drag;
+    cursor: pointer !important;
     background: rgba(255, 255, 255, 0.2);
     border-radius: 50%;
     font-size: 14px;
