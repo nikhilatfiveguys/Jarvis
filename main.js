@@ -2426,6 +2426,62 @@ class JarvisApp {
             }
         });
 
+        // Browser-based audio transcription (no external dependencies required)
+        ipcMain.handle('transcribe-audio-buffer', async (_event, audioData) => {
+            try {
+                if (!this.voiceRecorder) {
+                    throw new Error('Voice recorder not initialized - OpenAI API key may not be configured');
+                }
+
+                const { buffer, mimeType } = audioData;
+                
+                // Convert the array back to Buffer
+                const audioBuffer = Buffer.from(buffer);
+                
+                console.log(`🎤 Received audio buffer for transcription: ${audioBuffer.length} bytes, type: ${mimeType}`);
+                
+                // Transcribe the audio
+                const transcribedText = await this.voiceRecorder.transcribeAudioBuffer(audioBuffer, mimeType);
+                
+                return { success: true, text: transcribedText };
+            } catch (error) {
+                console.error('Browser audio transcription error:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // Check if sox is available for native recording
+        ipcMain.handle('check-sox-available', async () => {
+            const { execSync } = require('child_process');
+            const fs = require('fs');
+            
+            const paths = [
+                '/opt/homebrew/bin/sox',
+                '/opt/homebrew/bin/rec',
+                '/usr/local/bin/sox',
+                '/usr/local/bin/rec'
+            ];
+            
+            for (const p of paths) {
+                if (fs.existsSync(p)) {
+                    return { available: true, path: p };
+                }
+            }
+            
+            // Check PATH
+            try {
+                execSync('which sox', { stdio: 'pipe' });
+                return { available: true, path: 'sox' };
+            } catch {}
+            
+            try {
+                execSync('which rec', { stdio: 'pipe' });
+                return { available: true, path: 'rec' };
+            } catch {}
+            
+            return { available: false };
+        });
+
         // Token usage tracking IPC handlers
         ipcMain.handle('get-user-usage', async (_event, email) => {
             if (!this.supabaseIntegration) {

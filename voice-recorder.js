@@ -208,56 +208,104 @@ After installing sox, restart Jarvis.`;
 
             console.log(`Transcribing audio file: ${audioFilePath} (${stats.size} bytes)`);
 
-            // Use form-data with https for multipart form handling
-            const form = new FormData();
-            form.append('file', fs.createReadStream(audioFilePath), {
-                filename: 'recording.wav',
-                contentType: 'audio/wav'
-            });
-            form.append('model', 'whisper-1');
-            form.append('language', 'en');
-            form.append('response_format', 'json');
-
-            // Validate API key
-            if (!this.apiKey || this.apiKey.trim() === '') {
-                throw new Error('OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables or .env file.');
-            }
-
-            const apiKey = this.apiKey.trim();
-            // Log partial key for debugging
-            const keyPreview = apiKey.length > 7 ? `${apiKey.substring(0, 7)}...` : '***';
-            console.log(`🔊 Transcribing audio with API key: ${keyPreview}`);
-
-            const response = await new Promise((resolve, reject) => {
-                const req = https.request({
-                    hostname: 'api.openai.com',
-                    path: '/v1/audio/transcriptions',
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        ...form.getHeaders()
-                    }
-                }, (res) => {
-                    let data = '';
-                    res.on('data', chunk => data += chunk);
-                    res.on('end', () => {
-                        try {
-                            resolve({ data: JSON.parse(data) });
-                        } catch (e) {
-                            reject(new Error(`Failed to parse response: ${data}`));
-                        }
-                    });
-                });
-                req.on('error', reject);
-                form.pipe(req);
-            });
-
-            console.log('Transcription result:', response.data);
-            return response.data.text || response.data.transcript || '';
+            return this._transcribeWithForm(fs.createReadStream(audioFilePath), 'recording.wav', 'audio/wav');
         } catch (error) {
             console.error('Transcription error:', error.response?.data || error.message);
             throw error;
         }
+    }
+
+    // Transcribe audio from a Buffer (used by browser-based recording)
+    async transcribeAudioBuffer(audioBuffer, mimeType = 'audio/webm') {
+        try {
+            if (!audioBuffer || audioBuffer.length === 0) {
+                throw new Error('Audio buffer is empty');
+            }
+
+            console.log(`Transcribing audio buffer: ${audioBuffer.length} bytes, type: ${mimeType}`);
+
+            // Determine file extension from mime type
+            let extension = 'webm';
+            let contentType = mimeType;
+            if (mimeType.includes('wav')) {
+                extension = 'wav';
+                contentType = 'audio/wav';
+            } else if (mimeType.includes('mp4') || mimeType.includes('m4a')) {
+                extension = 'm4a';
+                contentType = 'audio/mp4';
+            } else if (mimeType.includes('ogg')) {
+                extension = 'ogg';
+                contentType = 'audio/ogg';
+            } else if (mimeType.includes('webm')) {
+                extension = 'webm';
+                contentType = 'audio/webm';
+            }
+
+            // Create a readable stream from the buffer
+            const { Readable } = require('stream');
+            const audioStream = new Readable();
+            audioStream.push(audioBuffer);
+            audioStream.push(null);
+
+            return this._transcribeWithForm(audioStream, `recording.${extension}`, contentType);
+        } catch (error) {
+            console.error('Buffer transcription error:', error.message);
+            throw error;
+        }
+    }
+
+    // Internal method to handle transcription with FormData
+    async _transcribeWithForm(audioSource, filename, contentType) {
+        // Validate API key
+        if (!this.apiKey || this.apiKey.trim() === '') {
+            throw new Error('OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables or .env file.');
+        }
+
+        const apiKey = this.apiKey.trim();
+        const keyPreview = apiKey.length > 7 ? `${apiKey.substring(0, 7)}...` : '***';
+        console.log(`🔊 Transcribing audio with API key: ${keyPreview}`);
+
+        // Use form-data with https for multipart form handling
+        const form = new FormData();
+        form.append('file', audioSource, {
+            filename: filename,
+            contentType: contentType
+        });
+        form.append('model', 'whisper-1');
+        form.append('language', 'en');
+        form.append('response_format', 'json');
+
+        const response = await new Promise((resolve, reject) => {
+            const req = https.request({
+                hostname: 'api.openai.com',
+                path: '/v1/audio/transcriptions',
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    ...form.getHeaders()
+                }
+            }, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.error) {
+                            reject(new Error(parsed.error.message || 'Transcription failed'));
+                        } else {
+                            resolve({ data: parsed });
+                        }
+                    } catch (e) {
+                        reject(new Error(`Failed to parse response: ${data}`));
+                    }
+                });
+            });
+            req.on('error', reject);
+            form.pipe(req);
+        });
+
+        console.log('Transcription result:', response.data);
+        return response.data.text || response.data.transcript || '';
     }
 
     async processVoiceInput() {

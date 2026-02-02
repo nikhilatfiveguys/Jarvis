@@ -519,6 +519,15 @@ class JarvisOverlay {
         this.otherKeyPressed = false; // Track if another key was pressed during Control hold
         this.globalPushToTalkEnabled = false; // Track if global push-to-talk is handling things
         
+        // Browser-based recording state
+        this.useBrowserRecording = false;
+        this.mediaRecorder = null;
+        this.audioChunks = [];
+        this.audioStream = null;
+        
+        // Check if sox is available, if not use browser recording
+        this.checkSoxAndSetupRecording();
+        
         // Listen for global push-to-talk events from main process
         if (this.isElectron && window.require) {
             const { ipcRenderer } = window.require('electron');
@@ -535,6 +544,14 @@ class JarvisOverlay {
                 this.globalPushToTalkEnabled = false;
                 this.isPushToTalkActive = false;
                 this.hideVoiceRecordingIndicator();
+            });
+            
+            // Handle voice recording errors - fallback to browser recording
+            ipcRenderer.on('voice-recording-error', (event, error) => {
+                if (error && error.includes('sox')) {
+                    console.log('🎤 Sox not available, switching to browser recording');
+                    this.useBrowserRecording = true;
+                }
             });
         }
         
@@ -556,8 +573,12 @@ class JarvisOverlay {
                 if (this.isPushToTalkActive) {
                     this.isPushToTalkActive = false;
                     console.log('🎤 Push-to-talk: Cancelled (Ctrl+key combo detected)');
-                    const { ipcRenderer } = window.require('electron');
-                    ipcRenderer.invoke('stop-push-to-talk');
+                    if (this.useBrowserRecording) {
+                        this.stopBrowserRecording(true); // Cancel without transcribing
+                    } else {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('stop-push-to-talk');
+                    }
                 }
                 return;
             }
@@ -573,8 +594,13 @@ class JarvisOverlay {
                     if (!this.otherKeyPressed && !this.isPushToTalkActive && this.pushToTalkKeyDown && !this.globalPushToTalkEnabled) {
                         this.isPushToTalkActive = true;
                         console.log('🎤 Push-to-talk: Starting recording (Control held - local fallback)');
-                        const { ipcRenderer } = window.require('electron');
-                        ipcRenderer.invoke('start-push-to-talk');
+                        
+                        if (this.useBrowserRecording) {
+                            this.startBrowserRecording();
+                        } else {
+                            const { ipcRenderer } = window.require('electron');
+                            ipcRenderer.invoke('start-push-to-talk');
+                        }
                     }
                 }, 50); // Reduced to 50ms for faster response
             }
@@ -597,8 +623,13 @@ class JarvisOverlay {
                 if (this.isPushToTalkActive) {
                     this.isPushToTalkActive = false;
                     console.log('🎤 Push-to-talk: Stopping recording (Control released - local fallback)');
-                    const { ipcRenderer } = window.require('electron');
-                    ipcRenderer.invoke('stop-push-to-talk');
+                    
+                    if (this.useBrowserRecording) {
+                        this.stopBrowserRecording(false); // Stop and transcribe
+                    } else {
+                        const { ipcRenderer } = window.require('electron');
+                        ipcRenderer.invoke('stop-push-to-talk');
+                    }
                 }
                 
                 // Reset other key flag
@@ -613,8 +644,155 @@ class JarvisOverlay {
                 this.isPushToTalkActive = false;
                 this.pushToTalkKeyDown = false;
                 console.log('🎤 Push-to-talk: Stopped (window lost focus)');
-                const { ipcRenderer } = window.require('electron');
-                ipcRenderer.invoke('stop-push-to-talk');
+                
+                if (this.useBrowserRecording) {
+                    this.stopBrowserRecording(true); // Cancel on blur
+                } else {
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.invoke('stop-push-to-talk');
+                }
+            }
+        });
+    }
+
+    async checkSoxAndSetupRecording() {
+        if (!this.isElectron || !window.require) return;
+        
+        const { ipcRenderer } = window.require('electron');
+        try {
+            const result = await ipcRenderer.invoke('check-sox-available');
+            if (!result.available) {
+                console.log('🎤 Sox not found, using browser-based recording');
+                this.useBrowserRecording = true;
+            } else {
+                console.log('🎤 Sox available at:', result.path);
+                this.useBrowserRecording = false;
+            }
+        } catch (e) {
+            console.log('🎤 Could not check sox availability, using browser recording as fallback');
+            this.useBrowserRecording = true;
+        }
+    }
+
+    async startBrowserRecording() {
+        try {
+            console.log('🎤 Starting browser-based recording...');
+            
+            // Request microphone access
+            this.audioStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    channelCount: 1,
+                    sampleRate: 16000,
+                    echoCancellation: true,
+                    noiseSuppression: true
+                } 
+            });
+            
+            // Determine supported mime type
+            let mimeType = 'audio/webm;codecs=opus';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'audio/webm';
+                if (!MediaRecorder.isTypeSupported(mimeType)) {
+                    mimeType = 'audio/mp4';
+                    if (!MediaRecorder.isTypeSupported(mimeType)) {
+                        mimeType = ''; // Let browser choose
+                    }
+                }
+            }
+            
+            this.audioChunks = [];
+            this.mediaRecorder = new MediaRecorder(this.audioStream, mimeType ? { mimeType } : {});
+            
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    this.audioChunks.push(event.data);
+                }
+            };
+            
+            this.mediaRecorder.onerror = (event) => {
+                console.error('MediaRecorder error:', event.error);
+                this.showVoiceError('Recording error: ' + event.error.message);
+            };
+            
+            this.mediaRecorder.start(100); // Collect data every 100ms
+            this.showVoiceRecordingIndicator();
+            
+            console.log('🎤 Browser recording started with mime type:', this.mediaRecorder.mimeType);
+        } catch (error) {
+            console.error('Failed to start browser recording:', error);
+            this.showVoiceError('Microphone access denied. Please allow microphone access in System Preferences > Security & Privacy > Privacy > Microphone.');
+        }
+    }
+
+    async stopBrowserRecording(cancel = false) {
+        if (!this.mediaRecorder) {
+            this.hideVoiceRecordingIndicator();
+            return;
+        }
+        
+        console.log('🎤 Stopping browser recording, cancel:', cancel);
+        
+        return new Promise((resolve) => {
+            this.mediaRecorder.onstop = async () => {
+                // Stop all tracks
+                if (this.audioStream) {
+                    this.audioStream.getTracks().forEach(track => track.stop());
+                    this.audioStream = null;
+                }
+                
+                this.hideVoiceRecordingIndicator();
+                
+                if (cancel || this.audioChunks.length === 0) {
+                    console.log('🎤 Recording cancelled or empty');
+                    resolve();
+                    return;
+                }
+                
+                // Show processing state
+                this.showVoiceProcessingState();
+                
+                try {
+                    // Combine audio chunks into a blob
+                    const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
+                    const audioBlob = new Blob(this.audioChunks, { type: mimeType });
+                    
+                    console.log('🎤 Audio blob created:', audioBlob.size, 'bytes, type:', mimeType);
+                    
+                    // Convert blob to array buffer
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    
+                    // Send to main process for transcription
+                    const { ipcRenderer } = window.require('electron');
+                    const result = await ipcRenderer.invoke('transcribe-audio-buffer', {
+                        buffer: Array.from(uint8Array),
+                        mimeType: mimeType
+                    });
+                    
+                    this.hideVoiceProcessingState();
+                    
+                    if (result.success && result.text) {
+                        console.log('🎤 Transcription result:', result.text);
+                        this.handleVoiceTranscription(result.text);
+                    } else if (result.error) {
+                        console.error('Transcription failed:', result.error);
+                        this.showVoiceError('Transcription failed: ' + result.error);
+                    }
+                } catch (error) {
+                    console.error('Error processing recording:', error);
+                    this.hideVoiceProcessingState();
+                    this.showVoiceError('Error processing recording: ' + error.message);
+                }
+                
+                resolve();
+            };
+            
+            // Stop the recorder
+            if (this.mediaRecorder.state !== 'inactive') {
+                this.mediaRecorder.stop();
+            } else {
+                this.hideVoiceRecordingIndicator();
+                resolve();
             }
         });
     }
