@@ -51,6 +51,8 @@ let autoUpdater = null;
 function getAutoUpdater() {
     if (!autoUpdater) {
         autoUpdater = require('electron-updater').autoUpdater;
+        // Set feed URL immediately so no code path can use wrong config (e.g. .../Jar/mac.yml)
+        autoUpdater.setFeedURL('https://github.com/nikhilatfiveguys/Jarvis/releases/latest/download/');
     }
     return autoUpdater;
 }
@@ -178,10 +180,7 @@ class JarvisApp {
 
     setupAutoUpdater() {
         // Configure auto-updater (only call after app is ready)
-        const updater = getAutoUpdater();
-        // Use explicit GitHub releases URL so we never hit wrong repo (e.g. .../Jar/mac.yml)
-        // Generic provider: base URL where latest-mac.yml is served
-        updater.setFeedURL('https://github.com/nikhilatfiveguys/Jarvis/releases/latest/download/');
+        const updater = getAutoUpdater(); // already set feed URL in getAutoUpdater()
         updater.autoDownload = true; // Auto-download updates when available
         updater.autoInstallOnAppQuit = true; // Auto-install on quit after download
         
