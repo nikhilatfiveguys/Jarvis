@@ -80,7 +80,7 @@ jobs:
           path: dist/*.exe
 
   create-release:
-    needs: [build-macos, build-windows]
+    needs: [build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
@@ -96,6 +96,7 @@ jobs:
         with:
           name: jarvis-5.0-windows
           path: dist-windows
+        continue-on-error: true
 
       - name: Prepare release notes
         id: notes
@@ -111,9 +112,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            dist-macos/*
-            dist-windows/*
+          files: dist-macos/*
           body_path: ${{ steps.notes.outputs.body_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
