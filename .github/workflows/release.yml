@@ -31,7 +31,7 @@ jobs:
         run: npm install
 
       - name: Build Electron app (macOS)
-        run: npx electron-builder --mac --publish never
+        run: npm run build-unsigned
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -40,15 +40,7 @@ jobs:
         with:
           name: jarvis-5.0-macos
           path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*.yml
-            dist/mac-arm64/*.dmg
-            dist/mac-arm64/*.zip
-            dist/mac-arm64/*.yml
-            dist/mac/*.dmg
-            dist/mac/*.zip
-            dist/mac/*.yml
+            dist/
 
   build-windows:
     runs-on: windows-latest
@@ -85,11 +77,39 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
           name: jarvis-5.0-macos
           path: dist-macos
+
+      # Flatten: built files live in dist/mac-arm64/ or dist/; put all in one dir for release
+      - name: Flatten and rename macOS assets
+        run: |
+          mkdir -p release-assets
+          # Artifact may be dist-macos/... or dist-macos/dist/...
+          for base in dist-macos dist-macos/dist; do
+            [ -f "$base/latest-mac.yml" ] && cp "$base/latest-mac.yml" release-assets/ && break
+          done
+          for base in dist-macos dist-macos/dist; do
+            [ -d "$base/mac-arm64" ] && cp "$base/mac-arm64"/* release-assets/ 2>/dev/null && break
+          done
+          for base in dist-macos dist-macos/dist; do
+            [ -d "$base/mac" ] && cp "$base/mac"/* release-assets/ 2>/dev/null && break
+          done
+          cd release-assets
+          for f in "Jarvis 6.0-"*; do
+            [ -e "$f" ] || continue
+            new="${f//Jarvis 6.0-/Jarvis.6.0-}"
+            [ "$f" != "$new" ] && mv -v "$f" "$new"
+          done
+          [ -f latest-mac.yml ] && sed -i.bak 's/Jarvis 6.0-/Jarvis.6.0-/g' latest-mac.yml && rm -f latest-mac.yml.bak
+          ls -la
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
@@ -112,7 +132,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist-macos/*
+          files: release-assets/*
           body_path: ${{ steps.notes.outputs.body_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
