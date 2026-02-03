@@ -74,7 +74,8 @@ jobs:
   create-release:
     needs: [build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: always() && startsWith(github.ref, 'refs/tags/') && (needs.build-macos.result == 'success' || needs.build-macos.result == 'failure')
+    # Run after build-macos finishes (success or failure) so release is always created
 
     steps:
       - name: Check out repository
@@ -87,21 +88,19 @@ jobs:
         with:
           name: jarvis-5.0-macos
           path: dist-macos
+        continue-on-error: true
 
-      # Flatten: built files live in dist/mac-arm64/ or dist/; put all in one dir for release
+      # Debug: show artifact structure
+      - name: List downloaded artifact
+        run: find dist-macos -type f | head -30
+
+      # Flatten: collect all .dmg, .zip, .yml from anywhere under dist-macos
       - name: Flatten and rename macOS assets
         run: |
           mkdir -p release-assets
-          # Artifact may be dist-macos/... or dist-macos/dist/...
-          for base in dist-macos dist-macos/dist; do
-            [ -f "$base/latest-mac.yml" ] && cp "$base/latest-mac.yml" release-assets/ && break
-          done
-          for base in dist-macos dist-macos/dist; do
-            [ -d "$base/mac-arm64" ] && cp "$base/mac-arm64"/* release-assets/ 2>/dev/null && break
-          done
-          for base in dist-macos dist-macos/dist; do
-            [ -d "$base/mac" ] && cp "$base/mac"/* release-assets/ 2>/dev/null && break
-          done
+          find dist-macos -name '*.yml' -exec cp {} release-assets/ \;
+          find dist-macos -name '*.dmg' -exec cp {} release-assets/ \;
+          find dist-macos -name '*.zip' -exec cp {} release-assets/ \;
           cd release-assets
           for f in "Jarvis 6.0-"*; do
             [ -e "$f" ] || continue
@@ -110,30 +109,29 @@ jobs:
           done
           [ -f latest-mac.yml ] && sed -i.bak 's/Jarvis 6.0-/Jarvis.6.0-/g' latest-mac.yml && rm -f latest-mac.yml.bak
           ls -la
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: jarvis-5.0-windows
-          path: dist-windows
-        continue-on-error: true
+          echo "Asset count: $(ls -1 | wc -l)"
 
       - name: Prepare release notes
         id: notes
         run: |
           NOTES_FILE=".github/release_notes/${{ github.ref_name }}.md"
           if [ -f "$NOTES_FILE" ]; then
-            echo "body_path=$NOTES_FILE" >> $GITHUB_OUTPUT
+            cp "$NOTES_FILE" release_notes.md
           else
-            echo "## Release ${{ github.ref_name }}" > release_body.md
-            echo "body_path=release_body.md" >> $GITHUB_OUTPUT
+            echo "## Release ${{ github.ref_name }}" > release_notes.md
           fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: release-assets/*
-          body_path: ${{ steps.notes.outputs.body_path }}
+        run: |
+          cd release-assets
+          ASSETS=(*)
+          if [ "${#ASSETS[@]}" -eq 0 ] || [ ! -e "${ASSETS[0]}" ]; then
+            echo "No assets to upload, creating release with notes only"
+            gh release create "${{ github.ref_name }}" --notes-file ../release_notes.md --title "${{ github.ref_name }}"
+          else
+            echo "Uploading ${#ASSETS[@]} asset(s)"
+            gh release create "${{ github.ref_name }}" --notes-file ../release_notes.md --title "${{ github.ref_name }}" "${ASSETS[@]}"
+          fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
