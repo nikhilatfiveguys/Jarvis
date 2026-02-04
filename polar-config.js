@@ -1,15 +1,13 @@
-// Load secure configuration
-const SecureConfig = require('./config/secure-config');
+// Do NOT load SecureConfig here - it blocks startup. Config is passed in when creating clients.
 
-// Get Polar configuration from secure config
-const config = new SecureConfig();
-const polarConfig = config.getPolarConfig();
-
-const POLAR_CONFIG = {
-    organizationId: polarConfig.organizationId,
-    accessToken: polarConfig.accessToken,
-    baseUrl: polarConfig.baseUrl
-};
+function getPOLAR_CONFIG(secureConfig) {
+    const p = secureConfig.getPolarConfig();
+    return {
+        organizationId: p.organizationId,
+        accessToken: p.accessToken,
+        baseUrl: p.baseUrl || 'https://api.polar.sh'
+    };
+}
 
 class PolarClient {
     constructor(config) {
@@ -142,5 +140,5 @@ class LicenseManager {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { POLAR_CONFIG, PolarClient, LicenseManager };
+    module.exports = { getPOLAR_CONFIG, PolarClient, LicenseManager };
 }

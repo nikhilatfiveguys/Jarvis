@@ -1,4 +1,4 @@
-const { Polar } = require('@polar-sh/sdk');
+const { Polar } = require('@polar-sh/sdk/dist/commonjs');
 
 class PolarIntegration {
     constructor(secureConfig) {

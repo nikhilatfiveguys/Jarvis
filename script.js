@@ -2006,12 +2006,11 @@ class JarvisOverlay {
             this.pendingUpdate = info;
             this.updateReadyToInstall = true;
             this.showUpdateInMenu(info.version, 'ready');
-            // Automatically install when download completes (one-click update)
-            this.showUpdateNotification(`✅ Update v${info.version} downloaded. Installing and restarting...`, 'downloading');
-            // Small delay to show the message, then install
+            // Brief pause so Squirrel.Mac can start pulling from our proxy, then trigger install.
+            this.showUpdateNotification(`✅ Update v${info.version} downloaded. Preparing install… (about 1 min, then restart)`, 'downloading');
             setTimeout(() => {
                 this.installUpdate();
-            }, 1000);
+            }, 15000);
         });
         
         ipcRenderer.on('update-error', (event, error) => {
@@ -2055,6 +2054,16 @@ class JarvisOverlay {
         ipcRenderer.on('update-not-available', (event) => {
             console.log('✅ App is up to date');
             this.showUpdateNotification("You're up to date! ✅", 'success', true);
+        });
+
+        ipcRenderer.on('update-check-error', (event, errorMessage) => {
+            console.error('Update check error (from updater):', errorMessage);
+            this.showUpdateNotification(
+                "Update check failed: " + (errorMessage || 'Unknown error').slice(0, 120),
+                'info',
+                false,
+                { url: 'https://github.com/nikhilatfiveguys/Jarvis/releases/latest' }
+            );
         });
     }
 
@@ -2102,6 +2111,14 @@ class JarvisOverlay {
         } else if (type === 'ready') {
             // No buttons needed - auto-installing
             html += `<div class="update-notification-text" style="margin-top: 4px; font-size: 11px; opacity: 0.8;">Installing and restarting...</div>`;
+        } else if (type === 'info' && updateInfo?.url) {
+            // Fallback: install stuck – show manual download link
+            html += `
+                <div class="update-notification-actions">
+                    <button class="update-notification-btn primary" data-open-url="${(updateInfo.url || '').replace(/"/g, '&quot;')}">Download manually</button>
+                    <button class="update-notification-btn dismiss" onclick="window.jarvisApp.hideUpdateNotification()">Dismiss</button>
+                </div>
+            `;
         } else if (type === 'downloading') {
             // No buttons during download, just show progress
             // Optionally add a cancel button if needed in the future
@@ -2142,6 +2159,11 @@ class JarvisOverlay {
                     this.downloadUpdate();
                 } else if (button.textContent === 'Install & Restart') {
                     this.installUpdate();
+                } else if (button.textContent === 'Download manually' && button.dataset.openUrl) {
+                    try {
+                        require('electron').shell.openExternal(button.dataset.openUrl);
+                    } catch (e) {}
+                    this.hideUpdateNotification();
                 }
             });
             
@@ -2156,8 +2178,8 @@ class JarvisOverlay {
             });
         });
 
-        // Auto-hide success notifications after 5 seconds (unless they have important actions)
-        if (type === 'success' || type === 'info') {
+        // Auto-hide success notifications after 5 seconds (unless manual-download fallback)
+        if (type === 'success' || (type === 'info' && !updateInfo?.url)) {
             setTimeout(() => this.hideUpdateNotification(), 5000);
         }
     }
@@ -2354,27 +2376,35 @@ class JarvisOverlay {
 
     async installUpdate() {
         try {
-            this.showUpdateNotification('🔄 Installing update and restarting...', 'downloading');
-            const { ipcRenderer } = require('electron');
-            // Don't await - let it quit immediately
-            ipcRenderer.invoke('install-update').catch((error) => {
+            const version = this.pendingUpdate?.version || 'latest';
+            this.showUpdateNotification('🔄 Installing… (about 1 min, then app will restart)', 'downloading');
+            const { ipcRenderer, shell } = require('electron');
+            const installStuckTimer = setTimeout(() => {
+                this.showUpdateNotification(
+                    `Taking too long? Quit the app, then download the v${version} DMG from the link below. Your data is preserved.`,
+                    'info',
+                    false,
+                    { url: 'https://github.com/nikhilatfiveguys/Jarvis/releases/latest' }
+                );
+            }, 30000);
+            ipcRenderer.invoke('install-update').then(() => {
+                clearTimeout(installStuckTimer);
+            }).catch((error) => {
+                clearTimeout(installStuckTimer);
                 console.error('Install error:', error);
-                // Check for code signature error
                 if (error.message && error.message.includes('code signature')) {
                     this.showUpdateNotification('Opening download page...', 'info');
-                    const { shell } = require('electron');
                     shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
                 } else {
-                    this.showUpdateNotification('❌ Install failed: ' + error.message, 'error');
+                    this.showUpdateNotification('❌ Install failed. Download manually: releases/latest', 'error');
+                    shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
                 }
             });
         } catch (error) {
             console.error('Install error:', error);
-            // Check for code signature error
             if (error.message && error.message.includes('code signature')) {
                 this.showUpdateNotification('Opening download page...', 'info');
-                const { shell } = require('electron');
-                shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
+                require('electron').shell.openExternal('https://github.com/nikhilatfiveguys/Jarvis/releases/latest');
             } else {
                 this.showUpdateNotification('❌ Install failed: ' + error.message, 'error');
             }
@@ -2393,15 +2423,49 @@ class JarvisOverlay {
     }
     
     async checkForUpdates() {
+        const RELEASES_URL = 'https://github.com/nikhilatfiveguys/Jarvis/releases/latest';
         try {
-            const { ipcRenderer } = require('electron');
+            const { ipcRenderer, shell } = require('electron');
             const result = await ipcRenderer.invoke('check-for-updates');
+            if (result.success && result.updateAvailable && result.version) {
+                this.pendingUpdate = { version: result.version };
+                this.updateReadyToInstall = false;
+                this.showUpdateInMenu(result.version, 'available');
+                this.showUpdateNotification(`Update v${result.version} available. Click Update to download and install.`, 'update', false, { version: result.version });
+                return;
+            }
             if (!result.success) {
-                this.showUpdateNotification('❌ Update check failed: ' + result.error, 'error');
+                const err = (result.error || '').toString();
+                console.error('Update check failed:', err);
+                if (err.includes('Cannot find latest artifacts') || err.includes('404') || err.includes('Jarvis-5.0')) {
+                    this.showUpdateNotification('Opening latest release…', 'info');
+                    shell.openExternal(RELEASES_URL);
+                    return;
+                }
+                this.showUpdateNotification(
+                    'Update check failed: ' + err.slice(0, 100) + (err.length > 100 ? '…' : ''),
+                    'info',
+                    false,
+                    { url: RELEASES_URL }
+                );
             }
         } catch (error) {
             console.error('Update check error:', error);
-            this.showUpdateNotification('❌ Update check failed: ' + error.message, 'error');
+            const msg = (error && error.message) || '';
+            if (msg.includes('Cannot find latest artifacts') || msg.includes('404') || msg.includes('Jarvis-5.0')) {
+                try {
+                    const { shell } = require('electron');
+                    this.showUpdateNotification('Opening latest release…', 'info');
+                    shell.openExternal(RELEASES_URL);
+                } catch (_) {}
+                return;
+            }
+            this.showUpdateNotification(
+                'Update check failed: ' + msg.slice(0, 100),
+                'info',
+                false,
+                { url: RELEASES_URL }
+            );
         }
     }
     
@@ -2421,24 +2485,33 @@ class JarvisOverlay {
     }
 
     setupDragFunctionality() {
-        if (!this.dragHandle) return;
+        if (!this.overlay) return;
         
         let isDragging = false;
         let startX, startY, initialLeft, initialTop;
         
-        this.dragHandle.addEventListener('mousedown', (e) => {
+        // Elements that should not start a window drag (clicks go to the element)
+        const noDragSelector = 'button, input, textarea, a, select, [contenteditable], .drag-output, #drag-output, .messages-container, .messages-inner, .settings-menu, .model-submenu, .more-models-section, .model-item, .model-more-btn, .browse-more-models-btn, .settings-item, .tier-toggle, .freaky-toggle, .tier-switch, .freaky-switch, .permission-banner, .set-password-notification, .onboarding-tutorial, .update-notification, .docs-writing-indicator, .docs-done-indicator, [role="button"]';
+        
+        const startDrag = (e) => {
+            if (e.target.closest(noDragSelector)) return;
             isDragging = true;
             startX = e.clientX;
             startY = e.clientY;
-            
-            // Get current position
             const rect = this.overlay.getBoundingClientRect();
             initialLeft = rect.left;
             initialTop = rect.top;
-            
             this.overlay.style.cursor = 'grabbing';
             e.preventDefault();
-        });
+        };
+        
+        this.overlay.addEventListener('mousedown', startDrag);
+        if (this.dragHandle) {
+            this.dragHandle.addEventListener('mousedown', (e) => {
+                startDrag(e);
+                e.stopPropagation();
+            });
+        }
         
         document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
@@ -5409,19 +5482,7 @@ ${currentQuestion}`;
                 }
                 // Update locked state for models based on premium status
                 this.updateModelLockedState();
-                // If "More models" has items (defaults + added), expand so they're visible
-                const moreSection = document.getElementById('more-models-section');
-                const hasItems = moreSection && moreSection.querySelectorAll('.model-item[data-model]').length > 0;
-                if (hasItems) {
-                    const moreBtn = document.getElementById('model-more-btn');
-                    const moreSection = document.getElementById('more-models-section');
-                    if (moreBtn && moreSection && moreSection.classList.contains('hidden')) {
-                        moreSection.classList.remove('hidden');
-                        moreBtn.classList.add('expanded');
-                        const span = moreBtn.querySelector('span');
-                        if (span) span.textContent = 'Less models';
-                    }
-                }
+                // "More models" stays closed by default; user can expand it with the toggle
             } else {
                 this.modelSubmenu.classList.add('hidden');
             }
@@ -7188,13 +7249,6 @@ ${currentQuestion}`;
             section.appendChild(item);
             existingIds.add(id);
         });
-        const moreBtn = document.getElementById('model-more-btn');
-        if (moreBtn) {
-            document.getElementById('more-models-section')?.classList.remove('hidden');
-            moreBtn.classList.add('expanded');
-            const span = moreBtn.querySelector('span');
-            if (span) span.textContent = 'Less models';
-        }
     }
 
     toggleGrokFreakyMode(isFreaky = null) {

@@ -84,8 +84,6 @@ class SecureConfig {
         }
     }
 
-    // Google OAuth removed - using simple payment system
-
     getSupabaseConfig() {
         return this.config.supabase;
     }

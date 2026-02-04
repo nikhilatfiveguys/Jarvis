@@ -6,6 +6,9 @@
 #import <AVFoundation/AVFoundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 
+// Window level above Lockdown Browser / exam fullscreen (NSScreenSaverWindowLevel = 1000)
+#define STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN 2000
+
 // ULTIMATE STEALTH MODE IMPLEMENTATION
 // Implements ALL 15+ methods to bypass screen sharing/recording
 // Uses the SAME techniques as:
@@ -86,9 +89,8 @@ void SetAllElectronWindowsContentProtection(bool enable) {
                     }
                 }
                 
-                // ✅ Method 9: Prevent overlay capture by marking as system-level overlay
-                // Use highest window level (screen saver level)
-                [window setLevel:NSScreenSaverWindowLevel + 1]; // Above screen saver
+                // ✅ Method 9: Prevent overlay capture; use level above Lockdown Browser test window
+                [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                 
                 // ✅ Method 8: Sandbox/containerized behavior
                 // Make window appear as a system utility (non-capturable)
@@ -192,8 +194,8 @@ void SetWindowContentProtection(unsigned long windowId, bool enable) {
                         }
                     }
                     
-                    // ✅ Method 9: System-level overlay
-                    [window setLevel:NSScreenSaverWindowLevel + 1];
+                    // ✅ Method 9: Above Lockdown / exam fullscreen
+                    [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                     
                     // ✅ Method 8: Sandbox behavior
                     window.styleMask |= NSWindowStyleMaskUtilityWindow;
@@ -271,7 +273,7 @@ void SetWindowContentProtectionFromPointer(void* bufferPointer, bool enable) {
                     }
                 }
                 
-                [window setLevel:NSScreenSaverWindowLevel + 1];
+                [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                 window.styleMask |= NSWindowStyleMaskUtilityWindow;
                 window.hasShadow = NO;
                 window.opaque = NO;
@@ -349,7 +351,7 @@ void SetContentProtectionForView(void* viewHandle, bool enable) {
                     }
                 }
                 
-                [window setLevel:NSScreenSaverWindowLevel + 1];
+                [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                 window.styleMask |= NSWindowStyleMaskUtilityWindow;
                 window.hasShadow = NO;
                 window.opaque = NO;
@@ -457,8 +459,8 @@ void SetFullscreenExclusiveMode(unsigned long windowId, bool enable) {
                                                  NSWindowCollectionBehaviorFullScreenAuxiliary |
                                                  NSWindowCollectionBehaviorCanJoinAllSpaces;
                     
-                    // Set highest window level (above everything)
-                    [window setLevel:NSScreenSaverWindowLevel + 2];
+                    // Set level above Lockdown / exam fullscreen
+                    [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                     
                     // Remove window chrome
                     window.hasShadow = NO;
@@ -834,8 +836,7 @@ void EnableProtectedOverlay(unsigned long windowId, bool enable) {
         for (NSWindow *window in windows) {
             if ((unsigned long)window.windowNumber == windowId) {
                 if (enable) {
-                    // Use highest possible window level (above everything)
-                    [window setLevel:NSScreenSaverWindowLevel + 1000];
+                    [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                     
                     // Mark as accessibility/system overlay
                     window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |

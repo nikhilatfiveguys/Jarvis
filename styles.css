@@ -340,6 +340,7 @@ body {
     background: transparent;
     z-index: 9999;
     pointer-events: auto;
+    cursor: move;
     --overlay-bg-color: #ffffff;
     --text-color: #000000;
     opacity: 1;

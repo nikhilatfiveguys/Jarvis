@@ -1,6 +1,6 @@
 {
   "name": "jarvis-6.0",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "AI-powered overlay assistant with voice activation and screen analysis",
   "main": "main.js",
   "scripts": {
@@ -10,6 +10,8 @@
     "build": "node scripts/rebuild-native-if-darwin.js && electron-builder",
     "build-signed": "node scripts/rebuild-native-if-darwin.js && ./build-signed.sh",
     "build-unsigned": "node scripts/rebuild-native-if-darwin.js && electron-builder --config electron-builder-unsigned.json",
+    "release": "./publish-release.sh",
+    "release:signed": "./publish-release-signed.sh",
     "build:win:unsigned": "electron-builder --config electron-builder-unsigned.json --win",
     "rebuild-native": "cd native/mac-content-protection && electron-rebuild -f -w mac_content_protection",
     "install-native": "cd native/mac-content-protection && npm install",
@@ -57,10 +59,10 @@
     "debug": "^4.4.3",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.6.2",
-    "lazy-val": "^1.0.5",
-    "form-data": "^4.0.4",
+    "form-data": "^4.0.5",
     "fs-extra": "^11.3.2",
     "googleapis": "^166.0.0",
+    "lazy-val": "^1.0.5",
     "node-record-lpcm16": "^1.0.1",
     "pdfjs-dist": "^5.4.296",
     "sax": "^1.4.3",
@@ -319,8 +321,8 @@
       "notarize": false,
       "identity": "Aaron Soni (DMH3RU9FQQ)",
       "extendInfo": {
-        "CFBundleShortVersionString": "1.4.4",
-        "CFBundleVersion": "1.4.4"
+        "CFBundleShortVersionString": "1.4.5",
+        "CFBundleVersion": "1.4.5"
       },
       "icon": "icon.icns",
       "target": [

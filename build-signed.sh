@@ -172,12 +172,15 @@ DMG_TEMP="$PWD/dmg-staging"
 rm -rf "$DMG_TEMP"
 mkdir -p "$DMG_TEMP"
 
-# Copy signed app to staging directory
-echo "  Copying app to staging directory..."
-cp -R "$APP_PATH" "$DMG_TEMP/"
+# Copy signed app to staging directory (ditto = no resource forks or xattrs in DMG)
+echo "  Copying app to staging directory (clean copy for notarization)..."
+ditto --norsrc --noextattr --noacl "$APP_PATH" "$DMG_TEMP/$(basename "$APP_PATH")"
 
 # Create Applications symlink
 ln -s /Applications "$DMG_TEMP/Applications"
+
+# Ensure no xattrs on anything in staging (e.g. background image)
+xattr -cr "$DMG_TEMP" 2>/dev/null || true
 
 echo "  Creating styled DMG with drag-to-Applications layout..."
 
@@ -322,6 +325,8 @@ if [ ! -f "$DMG_PATH" ]; then
 fi
 
 if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
+    # Strip extended attributes from DMG file so signing/notarization see a clean file
+    xattr -c "$DMG_PATH" 2>/dev/null || true
     echo "🔐 Signing DMG..."
     codesign --sign "$IDENTITY" --timestamp "$DMG_PATH" 2>&1 | grep -v "resource fork" || echo "  ⚠️ DMG signing had warnings, but DMG exists"
 else
@@ -330,10 +335,26 @@ else
 fi
 
 echo ""
+if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
+  echo "🍎 Notarizing DMG (required for Gatekeeper; prevents 'disk is damaged')..."
+  NOTARY_OUTPUT=$(mktemp)
+  if xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_ID_PASSWORD" --wait 2>&1 | tee "$NOTARY_OUTPUT"; then
+    echo "  Stapling notarization ticket to DMG..."
+    xcrun stapler staple "$DMG_PATH"
+    if xcrun stapler validate "$DMG_PATH" 2>/dev/null; then
+      echo "  ✅ DMG notarized and stapled. Users can open it without 'disk is damaged'."
+    fi
+    rm -f "$NOTARY_OUTPUT"
+  else
+    echo "  ⚠️ Notarization failed. Fetching Apple's rejection reason..."
+    SUBMIT_ID=$(grep -oE 'id: [a-fA-F0-9-]+' "$NOTARY_OUTPUT" | head -1 | sed 's/id: *//')
+    if [ -n "$SUBMIT_ID" ]; then
+      echo "  Notary submission ID: $SUBMIT_ID"
+      xcrun notarytool log "$SUBMIT_ID" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_ID_PASSWORD" 2>&1 || true
+    fi
+    rm -f "$NOTARY_OUTPUT"
+    echo "  DMG is signed but NOT notarized; users will see 'disk is damaged'. Fix the issues above and rebuild."
+  fi
+fi
 echo "✅ Build and signing complete!"
 echo "📁 Signed DMG: $DMG_PATH"
-echo ""
-echo "📋 Next steps:"
-echo "  1. Notarize: xcrun notarytool submit \"$DMG_PATH\" --apple-id \"$APPLE_ID\" --team-id \"$APPLE_TEAM_ID\" --password \"$APPLE_ID_PASSWORD\" --wait"
-echo "  2. After notarization: xcrun stapler staple \"$DMG_PATH\""
-echo "  3. Validate: xcrun stapler validate \"$DMG_PATH\""

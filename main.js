@@ -25,15 +25,12 @@ if (process.platform === 'darwin') {
         switch (squirrelEvent) {
             case '--squirrel-install':
             case '--squirrel-updated':
-                // App was installed or updated, quit immediately
                 app.quit();
                 return true;
             case '--squirrel-uninstall':
-                // App is being uninstalled
                 app.quit();
                 return true;
             case '--squirrel-obsolete':
-                // App is being replaced by a newer version
                 app.quit();
                 return true;
         }
@@ -41,22 +38,33 @@ if (process.platform === 'darwin') {
     };
 
     if (handleSquirrelEvent()) {
-        // Squirrel event handled, app will quit
         process.exit(0);
     }
 }
 
-// Delay loading electron-updater until app is ready
+// Delay loading electron-updater until app is ready (fail gracefully so app still opens)
 let autoUpdater = null;
+let autoUpdaterLoadError = null;
 function getAutoUpdater() {
+    if (autoUpdaterLoadError) return null;
     if (!autoUpdater) {
-        autoUpdater = require('electron-updater').autoUpdater;
-        // Set feed URL immediately so no code path can use wrong config (e.g. .../Jar/mac.yml)
-        autoUpdater.setFeedURL('https://github.com/nikhilatfiveguys/Jarvis/releases/latest/download/');
+        try {
+            autoUpdater = require('electron-updater').autoUpdater;
+            autoUpdater.setFeedURL({
+                provider: 'github',
+                owner: 'nikhilatfiveguys',
+                repo: 'Jarvis',
+                releaseType: 'release'
+            });
+        } catch (e) {
+            autoUpdaterLoadError = e;
+            console.warn('[updater] Could not load electron-updater:', e.message);
+            return null;
+        }
     }
     return autoUpdater;
 }
-const { POLAR_CONFIG, PolarClient, LicenseManager } = require('./polar-config');
+const { getPOLAR_CONFIG, PolarClient, LicenseManager } = require('./polar-config');
 const VoiceRecorder = require('./voice-recorder');
 const SupabaseIntegration = require('./supabase-integration');
 
@@ -112,53 +120,21 @@ class JarvisApp {
         this.wasVisibleBeforeRecording = false; // Track if window was visible before recording
         this.screenshotDetectionSetup = false; // Track screenshot detection setup
         this.nativeContentProtection = nativeContentProtection; // Store reference to native module
-        this.licenseManager = new LicenseManager(new PolarClient(POLAR_CONFIG));
-        // Load secure configuration first
-        const SecureConfig = require('./config/secure-config');
-        this.secureConfig = new SecureConfig();
-        
-        // Now create Polar integration with proper config
-        // Use Supabase for subscription management
-        this.supabaseIntegration = new SupabaseIntegration(this.secureConfig);
-        this.supabaseIntegration.setMainAppInstance(this); // Allow webhooks to notify main app
-        
-        // Legacy Polar support (deprecated - kept for backward compatibility)
-        this.polarIntegration = new PolarIntegration(this.secureConfig);
-        this.polarIntegration.setMainAppInstance(this);
-        this.polarSuccessHandler = new PolarSuccessHandler(this.polarIntegration, this);
-        this.polarWebhookHandler = new PolarWebhookHandler(this.secureConfig, this.polarIntegration, this);
-        
-        // Google Docs integration (pass secureConfig so it can read from .env)
-        this.googleDocsIntegration = new GoogleDocsIntegration(this.secureConfig);
-        
-        // Google Calendar integration (pass secureConfig so it can read from .env)
-        this.googleCalendarIntegration = new GoogleCalendarIntegration(this.secureConfig);
-        
-        // Gmail integration (pass secureConfig so it can read from .env)
-        this.gmailIntegration = new GmailIntegration(this.secureConfig);
-        
-        // Get API keys from secure configuration
-        const exaConfig = this.secureConfig.getExaConfig();
-        const openaiConfig = this.secureConfig.getOpenAIConfig();
-        
-        this.exaApiKey = exaConfig.apiKey;
+        this.licenseManager = null;
+        this.secureConfig = null;
+        this.supabaseIntegration = null;
+        this.polarIntegration = null;
+        this.polarSuccessHandler = null;
+        this.polarWebhookHandler = null;
+        this.googleDocsIntegration = null;
+        this.googleCalendarIntegration = null;
+        this.gmailIntegration = null;
+        this.exaApiKey = '';
         this.currentDocument = null;
-        this.openaiApiKey = openaiConfig.apiKey;
-        
-        // Initialize voice recorder only if API key is available
-        if (this.openaiApiKey && this.openaiApiKey.trim() !== '') {
-            // Log partial key for debugging (first 7 chars + ...)
-            const keyPreview = this.openaiApiKey.length > 7 
-                ? `${this.openaiApiKey.substring(0, 7)}...` 
-                : '***';
-            console.log(`✅ Initializing voice recorder with OpenAI API key: ${keyPreview}`);
-            this.voiceRecorder = new VoiceRecorder(this.openaiApiKey);
-        } else {
-            console.warn('⚠️ OpenAI API key not configured. Voice recording will be disabled.');
-            console.warn('   Please set OPENAI_API_KEY in your .env file or environment variables.');
-            this.voiceRecorder = null;
-        }
+        this.openaiApiKey = '';
+        this.voiceRecorder = null;
         this.isVoiceRecording = false;
+        this._integrationsInitialized = false;
         const gotLock = app.requestSingleInstanceLock();
         if (!gotLock) {
             app.quit();
@@ -178,9 +154,39 @@ class JarvisApp {
         // Auto-updater will be set up after app is ready
     }
 
+    initializeIntegrations() {
+        if (this._integrationsInitialized) return;
+        this._integrationsInitialized = true;
+        const SecureConfig = require('./config/secure-config');
+        this.secureConfig = new SecureConfig();
+        this.supabaseIntegration = new SupabaseIntegration(this.secureConfig);
+        this.supabaseIntegration.setMainAppInstance(this);
+        this.polarIntegration = new PolarIntegration(this.secureConfig);
+        this.polarIntegration.setMainAppInstance(this);
+        this.polarSuccessHandler = new PolarSuccessHandler(this.polarIntegration, this);
+        this.polarWebhookHandler = new PolarWebhookHandler(this.secureConfig, this.polarIntegration, this);
+        this.googleDocsIntegration = new GoogleDocsIntegration(this.secureConfig);
+        this.googleCalendarIntegration = new GoogleCalendarIntegration(this.secureConfig);
+        this.gmailIntegration = new GmailIntegration(this.secureConfig);
+        const exaConfig = this.secureConfig.getExaConfig();
+        const openaiConfig = this.secureConfig.getOpenAIConfig();
+        this.exaApiKey = exaConfig.apiKey;
+        this.openaiApiKey = openaiConfig.apiKey;
+        if (this.openaiApiKey && this.openaiApiKey.trim() !== '') {
+            const keyPreview = this.openaiApiKey.length > 7 ? `${this.openaiApiKey.substring(0, 7)}...` : '***';
+            console.log(`✅ Initializing voice recorder with OpenAI API key: ${keyPreview}`);
+            this.voiceRecorder = new VoiceRecorder(this.openaiApiKey);
+        } else {
+            console.warn('⚠️ OpenAI API key not configured. Voice recording will be disabled.');
+            this.voiceRecorder = null;
+        }
+        this.licenseManager = new LicenseManager(new PolarClient(getPOLAR_CONFIG(this.secureConfig)));
+    }
+
     setupAutoUpdater() {
-        // Configure auto-updater (only call after app is ready)
-        const updater = getAutoUpdater(); // already set feed URL in getAutoUpdater()
+        const updater = getAutoUpdater();
+        if (!updater) return; // e.g. missing lazy-val or other dep - don't block startup
+        console.log('[updater] Feed URL set: github nikhilatfiveguys/Jarvis, app version:', app.getVersion());
         updater.autoDownload = true; // Auto-download updates when available
         updater.autoInstallOnAppQuit = true; // Auto-install on quit after download
         
@@ -197,17 +203,15 @@ class JarvisApp {
         
         // Set update check interval (check every 4 hours)
         setInterval(() => {
-            getAutoUpdater().checkForUpdates().catch(() => {
-                // Silently fail - don't log or show errors
-            });
+            const u = getAutoUpdater();
+            if (u) u.checkForUpdates().catch(() => {});
         }, 4 * 60 * 60 * 1000); // 4 hours
-        
+
         // Check for updates on startup (after a LONG delay to not slow down startup)
         setTimeout(() => {
-            getAutoUpdater().checkForUpdates().catch(() => {
-                // Silently fail - don't log or show errors
-            });
-        }, 30000); // Check 30 seconds after app ready - completely non-blocking
+            const u = getAutoUpdater();
+            if (u) u.checkForUpdates().catch(() => {});
+        }, 30000); // 30 seconds after app ready
         
         // Handle update events
         updater.on('checking-for-update', () => {
@@ -236,12 +240,14 @@ class JarvisApp {
         });
         
         updater.on('error', (err) => {
-            // Silently ignore update errors - don't show to user or log
-            // Only log critical errors (not network timeouts)
-            if (err && err.message && !err.message.includes('504') && !err.message.includes('timeout') && !err.message.includes('time-out')) {
-                console.error('Error in auto-updater:', err);
+            const msg = err && err.message ? err.message : String(err);
+            if (msg.includes('504') || msg.includes('timeout') || msg.includes('time-out') || msg.includes('Gateway')) {
+                return; // Silently ignore network/timeout
             }
-            // Don't send error to renderer - user doesn't need to see update check failures
+            console.error('[updater] Error:', msg);
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('update-check-error', msg);
+            }
         });
         
         updater.on('download-progress', (progressObj) => {
@@ -272,46 +278,35 @@ class JarvisApp {
     async setupApp() {
         // Handle app ready
         app.whenReady().then(async () => {
-            // CRITICAL: Setup IPC handlers FIRST (needed for window communication)
-            this.setupIpcHandlers();
-            
-            // Create and show window IMMEDIATELY for fast perceived startup
-            this.createWindow();
-            if (process.platform === 'darwin' && app.dock) {
-                app.dock.hide();
-            }
-            
-            // If onboarding not complete, show the overlay with tutorial
-            if (!this.isOnboardingComplete()) {
-                this.needsInteractiveTutorial = true;
-                // Show overlay immediately for new users
-                setTimeout(() => {
-                    this.showOverlay();
-                }, 100); // Reduced from 500ms
-            }
-            
-            // DEFERRED INITIALIZATION: Run these in background after window is shown
-            // This prevents blocking the initial window display
+            // Always set up IPC and integrations so onboarding-complete etc. are registered
+            setImmediate(() => {
+                this.initializeIntegrations();
+                this.setupIpcHandlers();
+            });
             setImmediate(() => {
                 this.setupAuthHandlers();
                 this.loadVoiceShortcut();
                 this.loadCurrentUserEmail();
-            });
-            
-            // Delay heavier initialization slightly
-            setTimeout(() => {
                 this.setupVoiceRecording();
                 this.setupGlobalPushToTalk();
-            }, 100);
-            
-            // Delay network-dependent initialization more
-            setTimeout(() => {
+            });
+            setImmediate(() => {
                 this.setupAutoUpdater();
                 this.requestScreenRecordingPermission();
                 this.polarSuccessHandler.start();
                 this.polarWebhookHandler.start();
                 this.startSubscriptionValidation();
-            }, 500);
+            });
+
+            if (!this.isOnboardingComplete()) {
+                setImmediate(() => this.createOnboardingWindow());
+            } else {
+                this.createWindow();
+                if (app.isPackaged && process.platform === 'darwin' && app.dock) {
+                    app.dock.hide();
+                }
+                setImmediate(() => this.showOverlay());
+            }
         });
 
         // Handle window closed
@@ -468,6 +463,11 @@ class JarvisApp {
     setupGlobalPushToTalk() {
         if (!uIOhook || !UiohookKey) {
             console.log('⚠️ Global push-to-talk not available - uiohook-napi not loaded');
+            return;
+        }
+        // Skip in dev (npm start): uiohook aborts with SIGABRT when Accessibility API is disabled
+        if (!app.isPackaged) {
+            console.log('⚠️ Global push-to-talk skipped in dev (run built app for system-wide Control key)');
             return;
         }
 
@@ -666,13 +666,11 @@ class JarvisApp {
         fs.writeFileSync(onboardingFile, JSON.stringify({ completed: true, timestamp: new Date().toISOString() }, null, 2));
     }
 
-    createOnboardingWindow(step = 'permissions') {
+    createOnboardingWindow() {
         if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
             this.onboardingWindow.focus();
             return;
         }
-
-        console.log('Creating onboarding window, step:', step);
 
         const windowOptions = {
             width: 520,
@@ -703,15 +701,8 @@ class JarvisApp {
         const stealthEnabled = this.getStealthModePreference();
         this.setWindowContentProtection(this.onboardingWindow, stealthEnabled);
 
-        // Load the appropriate onboarding screen
-        if (step === 'features') {
-            this.onboardingWindow.loadFile('onboarding-features.html');
-            console.log('Loading features onboarding');
-        } else {
-            this.onboardingWindow.loadFile('onboarding.html');
-            console.log('Loading permissions onboarding');
-                }
-        
+        this.onboardingWindow.loadFile('onboarding.html');
+
         this.onboardingWindow.on('closed', () => {
             console.log('Onboarding window closed');
             // Only clear reference if we're not transitioning (transition handler will manage it)
@@ -740,27 +731,6 @@ class JarvisApp {
                 this.onboardingWindow.focus();
             }
         });
-    }
-
-    showFeaturesOnboarding() {
-        // Set flag to prevent app quit during transition
-        this.isTransitioningOnboarding = true;
-        
-        // Close current onboarding and show features screen
-        if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-            const oldWindow = this.onboardingWindow;
-            this.onboardingWindow = null;
-            oldWindow.close();
-        }
-        
-        // Small delay to ensure old window is closed
-        setTimeout(() => {
-            this.createOnboardingWindow('features');
-            // Clear transition flag after new window is created
-            setTimeout(() => {
-                this.isTransitioningOnboarding = false;
-            }, 200);
-        }, 100);
     }
 
     openScreenRecordingSettings() {
@@ -1325,70 +1295,54 @@ class JarvisApp {
                 this.paywallWindow = null;
             }
             
-            // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-                        this.createWindow();
-                        this.setupIpcHandlers();
-                        if (process.platform === 'darwin' && app.dock) {
-                            app.dock.hide();
-                        }
-                
-                // If onboarding not complete, show overlay with interactive tutorial
+                this.createWindow();
+                this.setupIpcHandlers();
+                if (process.platform === 'darwin' && app.dock) {
+                    app.dock.hide();
+                }
                 if (!this.isOnboardingComplete()) {
-                    this.needsInteractiveTutorial = true;
-                    setTimeout(() => {
-                        this.showOverlay();
-                    }, 500);
+                    setImmediate(() => this.createOnboardingWindow());
+                } else {
+                    setTimeout(() => this.showOverlay(), 500);
                 }
             }
         });
 
         ipcMain.on('trial-started', async () => {
-            // Trial is now active, proceed to main app
             if (this.paywallWindow) {
                 this.paywallWindow.close();
                 this.paywallWindow = null;
             }
-            
-            // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
                 this.createWindow();
                 this.setupIpcHandlers();
                 if (process.platform === 'darwin' && app.dock) {
                     app.dock.hide();
                 }
-                
-                // If onboarding not complete, show overlay with interactive tutorial
                 if (!this.isOnboardingComplete()) {
-                    this.needsInteractiveTutorial = true;
-                    setTimeout(() => {
-                        this.showOverlay();
-                    }, 500);
+                    setImmediate(() => this.createOnboardingWindow());
+                } else {
+                    setTimeout(() => this.showOverlay(), 500);
                 }
             }
         });
 
         ipcMain.on('paywall-skipped', async () => {
-            // User chose to skip, proceed with limited features
             if (this.paywallWindow) {
                 this.paywallWindow.close();
                 this.paywallWindow = null;
             }
-            
-            // Only create window if it doesn't exist
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
                 this.createWindow();
                 this.setupIpcHandlers();
                 if (process.platform === 'darwin' && app.dock) {
                     app.dock.hide();
                 }
-                
-                // If onboarding not complete, show overlay with interactive tutorial
                 if (!this.isOnboardingComplete()) {
-                    this.needsInteractiveTutorial = true;
-                    setTimeout(() => {
-                        this.showOverlay();
-                    }, 500);
+                    setImmediate(() => this.createOnboardingWindow());
+                } else {
+                    setTimeout(() => this.showOverlay(), 500);
                 }
             }
         });
@@ -1418,71 +1372,20 @@ class JarvisApp {
         });
 
         ipcMain.on('onboarding-complete', async () => {
-            // Permissions screen completed - now show features screen
-            // Don't mark onboarding as complete yet, wait for features screen
-            this.showFeaturesOnboarding();
-        });
-
-        ipcMain.on('onboarding-features-complete', async () => {
-            // Mark onboarding as complete (both screens done)
+            // Screen recording popup completed - mark done and show main app
             this.markOnboardingComplete();
-            
-            // Create main window if it doesn't exist - DO NOT close onboarding yet
+            if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
+                this.onboardingWindow.close();
+                this.onboardingWindow = null;
+            }
             if (!this.mainWindow || this.mainWindow.isDestroyed()) {
-                // Create window
                 this.createWindow();
-                
-                if (process.platform === 'darwin' && app.dock) {
+                if (app.isPackaged && process.platform === 'darwin' && app.dock) {
                     app.dock.hide();
                 }
-                
-                // Wait for window to be fully loaded and visible
-                if (this.mainWindow) {
-                    // Use did-finish-load to ensure window is fully ready
-                    this.mainWindow.webContents.once('did-finish-load', () => {
-                        // Additional safety check - wait for ready-to-show
-                        this.mainWindow.once('ready-to-show', () => {
-                            // Force show the overlay
-                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                this.showOverlay();
-                            }
-                            
-                            // Wait for window to be definitely visible before closing onboarding
-                            const checkAndClose = () => {
-                                if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.isVisible()) {
-                                    // Main window is visible, safe to close onboarding
-                                    if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                                        this.onboardingWindow.close();
-                                        this.onboardingWindow = null;
-                                    }
-                                } else {
-                                    // Not visible yet, check again
-                                    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                        this.showOverlay();
-                                    }
-                                    setTimeout(checkAndClose, 200);
-                                }
-                            };
-                            
-                            // Start checking after a delay
-                            setTimeout(checkAndClose, 500);
-                        });
-                    });
-                }
-            } else {
-                // Main window already exists, ensure it's shown
-                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                    this.showOverlay();
-                    // Wait a moment then close onboarding
-                    setTimeout(() => {
-                        if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.isVisible()) {
-                            if (this.onboardingWindow && !this.onboardingWindow.isDestroyed()) {
-                                this.onboardingWindow.close();
-                                this.onboardingWindow = null;
-                            }
-                        }
-                    }, 1000);
-                }
+            }
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.showOverlay();
             }
         });
 
@@ -1535,33 +1438,35 @@ class JarvisApp {
                 contextIsolation: false,
                 enableRemoteModule: true
             },
-            show: false, // Don't show until ready
+            show: true, // Show immediately so app feels instant; content paints when ready
             hasShadow: false,
             thickFrame: false
         };
         
         // macOS-only: Configure as a utility/panel window that doesn't steal focus
+        // In dev (npm start) skip contentProtection to avoid crashes that block opening
         if (process.platform === 'darwin') {
-            mainWindowOptions.contentProtection = true;
-            // These help prevent the window from activating the app
+            if (app.isPackaged) {
+                mainWindowOptions.contentProtection = true;
+            }
             mainWindowOptions.type = 'panel'; // Makes it a floating panel on macOS
             mainWindowOptions.acceptFirstMouse = true; // Accept clicks without activating
         }
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
 
-        // macOS-only: Enable content protection to hide from screen recording (like Cluely)
-        // Check if stealth mode is enabled (default: true)
-        const stealthModeEnabled = this.getStealthModePreference();
-        this.setWindowContentProtection(this.mainWindow, stealthModeEnabled);
-        
-        // CRITICAL: Also ensure screenshot detection is set up when window is created
-        // This ensures shortcuts are registered even if stealth mode was enabled before window creation
-        if (stealthModeEnabled) {
-            // Wait a moment for window to be fully ready, then setup screenshot detection
-            setTimeout(() => {
-                this.setupScreenshotDetection();
-            }, 500);
+        // Stealth mode: set window title to innocuous name when stealth is on (avoids detection by name)
+        this.applyStealthWindowTitle();
+
+        // macOS-only: Enable content protection when packaged; skip in dev to prevent startup crashes
+        if (app.isPackaged) {
+            const stealthModeEnabled = this.getStealthModePreference();
+            this.setWindowContentProtection(this.mainWindow, stealthModeEnabled);
+            if (stealthModeEnabled) {
+                setTimeout(() => {
+                    this.setupScreenshotDetection();
+                }, 500);
+            }
         }
 
         // Immediately assert fullscreen visibility properties after creation
@@ -1593,17 +1498,30 @@ class JarvisApp {
         this.mainWindow.setIgnoreMouseEvents(true);
         
 
-        // Hide Dock for overlay utility feel (macOS)
-        if (process.platform === 'darwin' && app.dock) { try { app.dock.hide(); } catch (_) {} }
+        // Hide Dock for overlay utility feel (macOS) - only when packaged so dev (npm start) keeps dock visible
+        if (app.isPackaged && process.platform === 'darwin' && app.dock) { try { app.dock.hide(); } catch (_) {} }
 
         // Load the HTML file
         this.mainWindow.loadFile('index.html').catch(err => {
             console.error('Failed to load index.html:', err);
         });
 
+        // If ready-to-show doesn't fire within 8s (e.g. load hang), force-show so the app doesn't appear broken
+        const forceShowTimer = setTimeout(() => {
+            if (this.mainWindow && !this.mainWindow.isDestroyed() && !this.mainWindow.isVisible()) {
+                console.warn('[createWindow] ready-to-show did not fire in time, forcing window show');
+                try {
+                    this.mainWindow.show();
+                    this.showOverlay();
+                } catch (e) {
+                    console.error('[createWindow] force-show failed:', e);
+                }
+            }
+        }, 8000);
 
         // Window is ready; show overlay immediately
         this.mainWindow.once('ready-to-show', () => {
+            clearTimeout(forceShowTimer);
             // Ensure window is fully initialized before showing
             // Set up fullscreen visibility BEFORE showing
             try {
@@ -1654,9 +1572,6 @@ class JarvisApp {
             }, 50); // Small delay to ensure window is ready
         });
 
-        // Minimal: no repeated reassertions; rely on initial setup and showOverlay()
-        
-
         this.mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
             console.error('Page failed to load:', errorCode, errorDescription);
         });
@@ -1664,6 +1579,50 @@ class JarvisApp {
         // Handle window closed
         this.mainWindow.on('closed', () => {
             this.mainWindow = null;
+        });
+
+        // AGGRESSIVE: When overlay loses focus (e.g. LockDown Browser enters test), burst re-assert on-top
+        // so the overlay stays visible over exam apps. Never call focus() - act like an invisible tab.
+        this.mainWindow.on('blur', () => {
+            if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+            if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) return;
+            if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) return;
+            const reassert = () => {
+                if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+                this.forceFullscreenVisibility();
+            };
+            setImmediate(reassert);
+            [20, 50, 100, 200, 400, 700, 1000, 1500, 2000, 3000, 4500, 6000].forEach(ms => setTimeout(reassert, ms));
+        });
+
+        // When "Take quiz/test" is pressed, Lockdown Browser often HIDES our window (not just blur).
+        // Re-show immediately and keep re-asserting so Jarvis stays visible over the test.
+        this.mainWindow.on('hide', () => {
+            if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+            if (this.accountWindow && !this.accountWindow.isDestroyed() && this.accountWindow.isFocused()) return;
+            if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) return;
+            const reassert = () => {
+                if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+                try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
+                this.forceFullscreenVisibility();
+            };
+            setImmediate(reassert);
+            [0, 50, 150, 300, 500, 800, 1200, 1800, 2500, 3500, 5000, 7000, 10000].forEach(ms => setTimeout(reassert, ms));
+        });
+
+        // If the test window minimizes us, restore immediately without stealing focus.
+        this.mainWindow.on('minimize', () => {
+            if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+            const restore = () => {
+                if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+                try {
+                    this.mainWindow.restore();
+                    this.mainWindow.showInactive();
+                    this.forceFullscreenVisibility();
+                } catch (_) {}
+            };
+            setImmediate(restore);
+            [100, 300, 600, 1000].forEach(ms => setTimeout(restore, ms));
         });
 
         // Windows-specific focus handling: ensure window can receive focus when clicked
@@ -1729,10 +1688,8 @@ class JarvisApp {
             }));
         });
 
-        // Interactive tutorial IPC handlers
-        ipcMain.handle('needs-interactive-tutorial', () => {
-            return !this.isOnboardingComplete();
-        });
+        // Interactive tutorial removed - only screen recording popup is shown
+        ipcMain.handle('needs-interactive-tutorial', () => false);
         
         ipcMain.handle('check-screen-permission', () => {
             if (process.platform !== 'darwin') return true;
@@ -1944,8 +1901,6 @@ class JarvisApp {
                 this.mainWindow.setIgnoreMouseEvents(false);
             }
         });
-
-        // Removed: open-application and app-action handlers
 
         // Handle license check
         ipcMain.handle('check-license', async (event, userEmail = null) => {
@@ -2473,6 +2428,9 @@ class JarvisApp {
                 const stealthFile = path.join(userDataPath, 'stealth_mode.json');
                 fs.writeFileSync(stealthFile, JSON.stringify({ enabled: enabled }, null, 2));
                 
+                // Stealth mode: update main window title to innocuous name when on, "Jarvis 6.0" when off
+                this.applyStealthWindowTitle();
+                
                 console.log(`✅ Stealth mode ${enabled ? 'ENABLED' : 'DISABLED'} - Protected ${protectedCount} windows`);
                 console.log(`   Windows will be ${enabled ? 'HIDDEN' : 'VISIBLE'} in screen sharing`);
                 
@@ -2720,41 +2678,47 @@ class JarvisApp {
 
         // Auto-update IPC handlers
         ipcMain.handle('check-for-updates', async () => {
+            const currentVersion = app.getVersion();
+            console.log('[updater] Check for updates, current version:', currentVersion);
+            const updater = getAutoUpdater();
+            if (!updater) return { success: false, error: 'Updater not available' };
             try {
-                const result = await getAutoUpdater().checkForUpdates();
-                // If no update info or version matches current, no update available
+                const result = await updater.checkForUpdates();
                 if (!result || !result.updateInfo) {
+                    console.log('[updater] No update info in result');
                     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                         this.mainWindow.webContents.send('update-not-available');
                     }
                     return { success: true, updateAvailable: false };
                 }
-                // Check if the available version is newer
-                const currentVersion = app.getVersion();
                 const availableVersion = result.updateInfo.version;
+                console.log('[updater] Available version:', availableVersion);
                 if (availableVersion === currentVersion) {
                     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                         this.mainWindow.webContents.send('update-not-available');
                     }
                     return { success: true, updateAvailable: false };
                 }
+                console.log('[updater] Update available:', availableVersion);
                 return { success: true, updateAvailable: true, version: availableVersion };
             } catch (error) {
-                console.error('Error checking for updates:', error);
-                // If error contains "no published versions", treat as up to date
+                const msg = error.message || String(error);
+                console.error('[updater] Check failed:', msg);
+                if (error.stack) console.error('[updater] Stack:', error.stack);
                 if (error.message && error.message.includes('no published versions')) {
                     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                         this.mainWindow.webContents.send('update-not-available');
                     }
                     return { success: true, updateAvailable: false };
                 }
-                return { success: false, error: error.message };
+                return { success: false, error: msg };
             }
         });
 
         ipcMain.handle('download-update', async () => {
             try {
                 const updater = getAutoUpdater();
+                if (!updater) return { success: false, error: 'Updater not available' };
                 console.log('📥 [IPC] download-update handler called');
                 console.log('📥 [IPC] autoUpdater state:', {
                     autoDownload: updater.autoDownload,
@@ -2788,23 +2752,19 @@ class JarvisApp {
         ipcMain.handle('install-update', () => {
             try {
                 console.log('📦 Installing update...');
-                // Set a flag so we know we're updating
                 app.isQuitting = true;
-                
-                // Use setTimeout to ensure IPC response is sent before quitting
+                // Squirrel.Mac pulls the zip from our local proxy (~100MB). 45s is enough on most Macs.
+                const delayMs = process.platform === 'darwin' ? 45000 : 500;
                 setTimeout(() => {
                     try {
-                        // quitAndInstall params:
-                        // isSilent: false = show any needed prompts
-                        // isForceRunAfter: true = definitely restart the app
-                        getAutoUpdater().quitAndInstall(false, true);
+                        const u = getAutoUpdater();
+                        if (u) u.quitAndInstall(false, true);
+                        else app.quit();
                     } catch (e) {
                         console.error('quitAndInstall failed:', e);
-                        // Fallback: manually quit and let Squirrel handle restart
                         app.quit();
                     }
-                }, 100);
-                
+                }, delayMs);
                 return { success: true };
             } catch (error) {
                 console.error('Error installing update:', error);
@@ -4354,9 +4314,9 @@ class JarvisApp {
             return;
         }
         
-        // Ensure window is visible first
+        // Ensure window is visible first - use showInactive so we never steal focus (invisible-tab behavior)
         if (!this.mainWindow.isVisible()) {
-            this.mainWindow.show();
+            try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
         }
         
         try {
@@ -4368,7 +4328,7 @@ class JarvisApp {
             }
             
             // CRITICAL: Use screen-saver level for maximum fullscreen visibility (highest level = 1000)
-            // This is the key to appearing over fullscreen apps
+            // This is the key to appearing over fullscreen apps (e.g. Respondus LockDown Browser test)
             let levelSet = false;
             
             try {
@@ -4397,25 +4357,27 @@ class JarvisApp {
             
             this.mainWindow.moveTop();
             
-            // macOS-only: Reinforce content protection (use stealth mode preference)
             const stealthEnabled = this.getStealthModePreference();
             this.setWindowContentProtection(this.mainWindow, stealthEnabled);
             
-            // One reinforcement after a short delay
-            setTimeout(() => {
+            // AGGRESSIVE: Reinforce multiple times so we win against LockDown Browser / exam fullscreen
+            // Use showInactive only - never focus, so it stays like an "invisible tab" over the test
+            const reinforce = () => {
                 if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
-                try { this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) { this.mainWindow.setVisibleOnAllWorkspaces(true); }
-                try { this.mainWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'pop-up-menu'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'floating'); } catch (_) {} } }
-                // Reinforce content protection (use stealth mode preference)
-                const stealthEnabled = this.getStealthModePreference();
-                this.setWindowContentProtection(this.mainWindow, stealthEnabled);
+                try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
+                try { this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) { try { this.mainWindow.setVisibleOnAllWorkspaces(true); } catch (__) {} }
+                try { this.mainWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'pop-up-menu'); } catch (__) { try { this.mainWindow.setAlwaysOnTop(true, 'floating'); } catch (___) {} } }
                 this.mainWindow.moveTop();
-            }, 150);
+                if (app.isPackaged && process.platform === 'darwin') {
+                    this.setWindowContentProtection(this.mainWindow, this.getStealthModePreference());
+                }
+            };
+            [30, 80, 150, 300, 500, 800, 1200, 1800, 2500].forEach(ms => setTimeout(reinforce, ms));
         } catch (error) {
-            // If everything fails, at least try to keep the window visible
+            // If everything fails, at least try to keep the window visible without stealing focus
             console.error('Error forcing fullscreen visibility:', error);
             try {
-                this.mainWindow.show();
+                try { this.mainWindow.showInactive(); } catch (_) { this.mainWindow.show(); }
                 this.mainWindow.setAlwaysOnTop(true);
             } catch (e) {
                 console.error('Critical error keeping window visible:', e);
@@ -4489,7 +4451,6 @@ class JarvisApp {
         this.setWindowContentProtection(this.mainWindow, stealthEnabled);
 
         // Show the window WITHOUT stealing focus (prevents browser blur events)
-        // This is critical for avoiding proctoring software detection (Canvas, etc.)
         try {
             this.mainWindow.showInactive(); // Show without activating/focusing
         } catch (_) {
@@ -4497,6 +4458,9 @@ class JarvisApp {
         }
         this.mainWindow.moveTop();
         this.isOverlayVisible = true;
+        
+        // Stealth: keep window title as innocuous name when stealth is on
+        this.applyStealthWindowTitle();
         
         // DO NOT call focus() - this would trigger browser blur events
         // The window will receive input when the user clicks on it naturally
@@ -4514,7 +4478,8 @@ class JarvisApp {
             clearInterval(this.fullscreenEnforcementInterval);
         }
         
-        // Enforce fullscreen visibility every 500ms when overlay is visible
+        // AGGRESSIVE: Enforce every 30ms so overlay stays on top over LockDown Browser / exam fullscreen.
+        // Only showInactive/moveTop - never focus, so the overlay is like an invisible tab.
         this.fullscreenEnforcementInterval = setInterval(() => {
             if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) {
                 if (this.fullscreenEnforcementInterval) {
@@ -4532,8 +4497,11 @@ class JarvisApp {
                 return;
             }
             
-            // Aggressively enforce fullscreen visibility
+            // Aggressively enforce fullscreen visibility without ever stealing focus
             try {
+                if (!this.mainWindow.isVisible()) {
+                    try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
+                }
                 // Set visible on all workspaces with fullscreen support
                 try {
                     this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -4554,16 +4522,15 @@ class JarvisApp {
                     }
                 }
                 
-                // Bring to front
+                // Bring to front without focusing (invisible-tab behavior)
                 this.mainWindow.moveTop();
                 
-                // macOS-only: Reinforce content protection in enforcement loop (use stealth mode preference)
-                const stealthEnabled = this.getStealthModePreference();
-                this.setWindowContentProtection(this.mainWindow, stealthEnabled);
-            } catch (e) {
-                // Ignore errors in enforcement loop
-            }
-        }, 500);
+                if (app.isPackaged && process.platform === 'darwin') {
+                    const stealthEnabled = this.getStealthModePreference();
+                    this.setWindowContentProtection(this.mainWindow, stealthEnabled);
+                }
+            } catch (e) {}
+        }, 30);
     }
     
     stopFullscreenEnforcement() {
@@ -4735,6 +4702,21 @@ class JarvisApp {
         } catch (error) {
             console.warn('⚠️ Could not read stealth mode preference, defaulting to enabled:', error);
             return true; // Default to enabled
+        }
+    }
+
+    // Stealth mode: use an innocuous window title so proctoring software is less likely to flag by name.
+    // VoiceOver = Apple's built-in screen reader; exam software rarely blocks it (accessibility/ADA).
+    getStealthWindowTitle() {
+        return this.getStealthModePreference() ? 'VoiceOver' : 'Jarvis 6.0';
+    }
+
+    applyStealthWindowTitle() {
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            try {
+                const title = this.getStealthWindowTitle();
+                this.mainWindow.setTitle(title);
+            } catch (_) {}
         }
     }
 

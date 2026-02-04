@@ -2,11 +2,14 @@
   "appId": "com.aaronsoni.jarvis",
   "productName": "Jarvis 6.0",
   "icon": "icon.icns",
+  "publish": null,
   "directories": {
     "output": "dist"
   },
  "files": [
   "**/*",
+  "!**/*.map",
+  "!**/*.d.ts.map",
   "!node_modules/**/*",
   "google-docs-integration.js",
   "google-calendar-integration.js",
@@ -216,12 +219,8 @@
     "icon": "icon.icns",
     "target": [
       {
-        "target": "dmg",
-        "arch": ["arm64", "x64"]
-      },
-      {
         "target": "zip",
-        "arch": ["arm64", "x64"]
+        "arch": ["arm64"]
       }
     ]
   },
