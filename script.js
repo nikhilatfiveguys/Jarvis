@@ -1352,6 +1352,19 @@ class JarvisOverlay {
     }
 
     setupEventListeners() {
+        // Open http(s) links in custom in-app browser when in Electron
+        document.addEventListener('click', (e) => {
+            const a = e.target.closest('a[href^="http"]');
+            if (!a || !a.href) return;
+            if (this.isElectron && window.require) {
+                try {
+                    e.preventDefault();
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.send('open-in-app-browser', a.href);
+                } catch (_) {}
+            }
+        }, true);
+
         if (this.startBtn) this.startBtn.addEventListener('click', () => this.startJarvis());
         this.textInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();

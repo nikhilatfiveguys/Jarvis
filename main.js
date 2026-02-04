@@ -111,6 +111,7 @@ class JarvisApp {
         this.openrouterAddedModels = [];
         this.openrouterRemovedDefaults = [];
         this.hotkeysWindow = null;
+        this.browserTabWindow = null;
         this.isOverlayVisible = true;
         this.fullscreenMaintenanceInterval = null;
         this.fullscreenEnforcementInterval = null;
@@ -1151,6 +1152,48 @@ class JarvisApp {
         return hotkeysWindow;
     }
 
+    createBrowserTabWindow(initialUrl) {
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        const w = 900;
+        const h = 700;
+        const opts = {
+            width: w,
+            height: h,
+            x: Math.max(0, Math.floor((screenWidth - w) / 2)),
+            y: Math.max(0, Math.floor((screenHeight - h) / 2)),
+            resizable: true,
+            frame: true,
+            title: 'Jarvis Browser',
+            alwaysOnTop: false,
+            modal: false,
+            show: false,
+            webPreferences: {
+                nodeIntegration: true,
+                contextIsolation: false,
+                webviewTag: true
+            }
+        };
+        if (process.platform === 'darwin') opts.contentProtection = true;
+        const win = new BrowserWindow(opts);
+        const stealthEnabled = this.getStealthModePreference();
+        this.setWindowContentProtection(win, stealthEnabled);
+        win.loadFile('browser-tab.html', initialUrl ? { query: { url: initialUrl } } : {});
+        win.once('ready-to-show', () => {
+            win.show();
+            win.focus();
+            if (initialUrl && win.webContents) {
+                win.webContents.send('browser-tab-load-url', initialUrl);
+            }
+        });
+        win.on('closed', () => {
+            if (this.browserTabWindow === win) this.browserTabWindow = null;
+        });
+        this.browserTabWindow = win;
+        return win;
+    }
+
     setupVoiceRecording() {
         // Only set up shortcuts if voice recorder is available
         if (!this.voiceRecorder) {
@@ -1930,6 +1973,18 @@ class JarvisApp {
         // Handle opening external URLs
         ipcMain.on('open-external-url', (event, url) => {
             shell.openExternal(url);
+        });
+
+        // Handle opening URL in in-app browser tab (custom UI)
+        ipcMain.on('open-in-app-browser', (event, url) => {
+            if (typeof url === 'string' && url.startsWith('http')) {
+                this.createBrowserTabWindow(url);
+            }
+        });
+
+        ipcMain.on('browser-tab-close', (event) => {
+            const win = event.sender.getOwnerBrowserWindow();
+            if (win && !win.isDestroyed()) win.close();
         });
 
 
