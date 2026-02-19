@@ -1,7 +1,6 @@
 {
-  "appId": "com.assistive.axruntime",
-  "productName": "Jarvis",
-  "executableName": "Jarvis",
+  "appId": "com.aaronsoni.jarvis",
+  "productName": "Jarvis 6.0",
   "icon": "icon.icns",
   "publish": null,
   "directories": {
@@ -147,10 +146,10 @@
     "category": "public.app-category.accessibility",
     "identity": null,
     "icon": "icon.icns",
-    "executableName": "Jarvis",
+    "executableName": "Jarvis 6.0",
     "electronLanguages": ["en"],
     "extendInfo": {
-      "CFBundleName": "Jarvis",
+      "CFBundleName": "Jarvis 6.0",
       "NSHumanReadableCopyright": "Accessibility support",
       "LSApplicationCategoryType": "public.app-category.accessibility",
       "LSUIElement": true

@@ -1,6 +1,6 @@
 {
   "name": "jarvis-6.0",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "AI-powered overlay assistant with voice activation and screen analysis",
   "main": "main.js",
   "scripts": {
@@ -67,9 +67,8 @@
     "universalify": "^2.0.1"
   },
   "build": {
-    "appId": "com.assistive.runtime",
-    "productName": "JarvisAI",
-    "executableName": "JarvisAI",
+    "appId": "com.aaronsoni.jarvis",
+    "productName": "Jarvis 6.0",
     "icon": "icon.icns",
     "compression": "maximum",
     "directories": {
@@ -306,8 +305,8 @@
       "notarize": false,
       "identity": "Aaron Soni (DMH3RU9FQQ)",
       "extendInfo": {
-        "CFBundleShortVersionString": "1.4.6",
-        "CFBundleVersion": "1.4.6",
+        "CFBundleShortVersionString": "1.4.7",
+        "CFBundleVersion": "1.4.7",
         "LSUIElement": true
       },
       "icon": "icon.icns",

@@ -9,22 +9,43 @@ if [ -n "$GITHUB_TOKEN" ]; then
 fi
 VERSION=$(node -p "require('./package.json').version")
 TAG="v${VERSION}"
-SIGNED_DMG="dist/Jarvis-6.0-${VERSION}-SIGNED.dmg"
+
+find_signed_dmg() {
+  for p in \
+    "dist/Jarvis 6.0-${VERSION}-arm64-SIGNED.dmg" \
+    "dist/Jarvis-6.0-${VERSION}-arm64-SIGNED.dmg" \
+    "dist/Jarvis-6.0-${VERSION}-SIGNED.dmg" \
+    "dist/Jarvis-${VERSION}-arm64-SIGNED.dmg"; do
+    [ -f "$p" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
 
 echo "📦 Building signed Jarvis ${VERSION} (DMG with arrow)..."
 ./build-signed.sh
 
-if [ ! -f "$SIGNED_DMG" ]; then
-  echo "❌ Signed DMG not found: $SIGNED_DMG"
+SIGNED_DMG="$(find_signed_dmg || true)"
+if [ -z "$SIGNED_DMG" ] || [ ! -f "$SIGNED_DMG" ]; then
+  echo "❌ Signed DMG not found in dist/ (expected Jarvis 6.0 ${VERSION} signed output)."
   exit 1
 fi
 
 echo "📂 Collecting release assets (signed DMG + zip + yml for updates)..."
 mkdir -p release-upload
 rm -f release-upload/*
-cp "$SIGNED_DMG" release-upload/
+cp "$SIGNED_DMG" "release-upload/Jarvis-6.0-${VERSION}-arm64-SIGNED.dmg"
 # Zip and yml from the unsigned build (build-signed runs build-unsigned first)
-for f in dist/mac-arm64/"Jarvis 6.0-${VERSION}"*.zip dist/mac-arm64/"Jarvis 6.0-${VERSION}"*.dmg dist/"Jarvis 6.0-${VERSION}"*.zip dist/latest-mac.yml; do
+for f in \
+  dist/mac-arm64/"Jarvis 6.0-${VERSION}"*.zip \
+  dist/mac-arm64/"Jarvis-6.0-${VERSION}"*.zip \
+  dist/"Jarvis 6.0-${VERSION}"*.zip \
+  dist/"Jarvis-6.0-${VERSION}"*.zip \
+  dist-unsigned/mac-arm64/"Jarvis 6.0-${VERSION}"*.zip \
+  dist-unsigned/mac-arm64/"Jarvis-6.0-${VERSION}"*.zip \
+  dist-unsigned/"Jarvis 6.0-${VERSION}"*.zip \
+  dist-unsigned/"Jarvis-6.0-${VERSION}"*.zip \
+  dist/latest-mac.yml \
+  dist-unsigned/latest-mac.yml; do
   [ -f "$f" ] && cp "$f" release-upload/
 done
 # Rename "Jarvis 6.0-" to "Jarvis-6.0-" for consistency with 1.4.1

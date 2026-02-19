@@ -30,8 +30,9 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Find the built app (electron-builder-unsigned outputs Jarvis.app to dist-unsigned)
-APP_NAME="Jarvis"
+# Keep build/sign identity aligned with package build config for updater compatibility.
+APP_NAME=$(node -p "require('./package.json').build?.productName || 'Jarvis 6.0'")
+APP_ID=$(node -p "require('./package.json').build?.appId || 'com.aaronsoni.jarvis'")
 APP_PATH=""
 if [ -d "dist-unsigned/mac-arm64/${APP_NAME}.app" ]; then
     APP_PATH="dist-unsigned/mac-arm64/${APP_NAME}.app"
@@ -325,7 +326,7 @@ if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
   echo "📦 Creating installer package (v$VERSION)..."
   # pkgbuild --component installs the .app to /Applications
   if pkgbuild --component "$APP_PATH" \
-    --identifier "com.assistive.runtime" \
+    --identifier "$APP_ID" \
     --version "$VERSION" \
     --install-location "/Applications" \
     "$PKG_PATH" 2>/dev/null; then

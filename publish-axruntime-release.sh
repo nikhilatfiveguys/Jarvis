@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publish Jarvis/AXRuntime release to GitHub so users can update from previous versions.
+# Publish Jarvis release to GitHub so users can update from previous versions.
 # Uses signed DMG if available, else unsigned. Includes latest-mac.yml for electron-updater.
 # Usage: gh auth login  (or GH_TOKEN=xxx) then ./publish-axruntime-release.sh
 set -e
@@ -11,18 +11,22 @@ fi
 VERSION=$(node -p "require('./package.json').version")
 TAG="v${VERSION}"
 
-# Prefer signed DMG, fallback to unsigned. Support both Jarvis and AXRuntime naming.
+# Prefer signed DMG, fallback to unsigned.
 SIGNED_DMG=""
-for p in "dist/Jarvis-${VERSION}-arm64-SIGNED.dmg" \
-         "dist/AXRuntime-${VERSION}-arm64-SIGNED.dmg" \
-         "$HOME/Desktop/Jarvis-${VERSION}-arm64-SIGNED.dmg" \
-         "$HOME/Desktop/AXRuntime-${VERSION}-arm64-SIGNED.dmg"; do
+for p in "dist/Jarvis 6.0-${VERSION}-arm64-SIGNED.dmg" \
+         "dist/Jarvis-6.0-${VERSION}-arm64-SIGNED.dmg" \
+         "dist/Jarvis-${VERSION}-arm64-SIGNED.dmg" \
+         "$HOME/Desktop/Jarvis 6.0-${VERSION}-arm64-SIGNED.dmg" \
+         "$HOME/Desktop/Jarvis-6.0-${VERSION}-arm64-SIGNED.dmg" \
+         "$HOME/Desktop/Jarvis-${VERSION}-arm64-SIGNED.dmg"; do
   [ -f "$p" ] && SIGNED_DMG="$p" && break
 done
 
 DMG="${SIGNED_DMG}"
 if [ -z "$DMG" ]; then
-  for p in "dist-unsigned/Jarvis-${VERSION}-arm64.dmg" "dist-unsigned/AXRuntime-${VERSION}-arm64.dmg"; do
+  for p in "dist-unsigned/Jarvis 6.0-${VERSION}-arm64.dmg" \
+           "dist-unsigned/Jarvis-6.0-${VERSION}-arm64.dmg" \
+           "dist-unsigned/Jarvis-${VERSION}-arm64.dmg"; do
     [ -f "$p" ] && DMG="$p" && break
   done
 fi
@@ -33,9 +37,11 @@ fi
 
 echo "📂 Using DMG: $DMG"
 
-# Zip for electron-updater (Jarvis or AXRuntime naming)
+# Zip for electron-updater
 ZIP=""
-for p in "dist-unsigned/Jarvis-${VERSION}-arm64-mac.zip" "dist-unsigned/AXRuntime-${VERSION}-arm64-mac.zip"; do
+for p in "dist-unsigned/Jarvis 6.0-${VERSION}-arm64-mac.zip" \
+         "dist-unsigned/Jarvis-6.0-${VERSION}-arm64-mac.zip" \
+         "dist-unsigned/Jarvis-${VERSION}-arm64-mac.zip"; do
   if [ -f "$p" ]; then ZIP="$p"; break; fi
 done
 if [ -z "$ZIP" ]; then
@@ -49,18 +55,19 @@ rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
 # Copy DMG with consistent name for download
-cp "$DMG" "$RELEASE_DIR/Jarvis-${VERSION}-arm64.dmg"
+cp "$DMG" "$RELEASE_DIR/Jarvis-6.0-${VERSION}-arm64.dmg"
 
 # Copy zip if available
-[ -n "$ZIP" ] && [ -f "$ZIP" ] && cp "$ZIP" "$RELEASE_DIR/"
+[ -n "$ZIP" ] && [ -f "$ZIP" ] && cp "$ZIP" "$RELEASE_DIR/${ZIP_BASENAME//Jarvis 6.0-/Jarvis-6.0-}"
 
-# Generate latest-mac.yml for electron-updater (app name Jarvis)
+# Generate latest-mac.yml for electron-updater
 if [ -f "$ZIP" ]; then
   echo "📝 Generating latest-mac.yml..."
   SIZE=$(stat -f%z "$ZIP" 2>/dev/null || stat -c%s "$ZIP" 2>/dev/null)
   SHA512=$(shasum -a 512 "$ZIP" 2>/dev/null | cut -d' ' -f1)
   RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
-  [ -n "$ZIP_BASENAME" ] || ZIP_BASENAME="Jarvis-${VERSION}-arm64-mac.zip"
+  ZIP_BASENAME="${ZIP_BASENAME//Jarvis 6.0-/Jarvis-6.0-}"
+  [ -n "$ZIP_BASENAME" ] || ZIP_BASENAME="Jarvis-6.0-${VERSION}-arm64-mac.zip"
   cat > "$RELEASE_DIR/latest-mac.yml" << EOF
 version: ${VERSION}
 files:
