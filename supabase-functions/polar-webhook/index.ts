@@ -190,13 +190,117 @@ serve(async (req) => {
       )
     }
 
-    // Handle subscription.created event
+    // Handle subscription.created event (new subscribers - this was missing, so new users never got added!)
     if (event.type === 'subscription.created') {
-      // Similar logic to subscription.updated
-      // For now, we'll just log it
-      console.log('Subscription created event received:', event.data?.id)
+      const subscriptionId = event.data?.id
+      
+      if (!subscriptionId) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Missing subscription ID' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+
+      // Fetch full subscription details from Polar API
+      console.log('Fetching new subscription from Polar API:', subscriptionId)
+      const polarResponse = await fetch(`https://api.polar.sh/v1/subscriptions/${subscriptionId}`, {
+        headers: {
+          'Authorization': `Bearer ${polarAccessToken}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!polarResponse.ok) {
+        const errorText = await polarResponse.text()
+        console.error('Polar API error:', errorText)
+        return new Response(
+          JSON.stringify({ success: false, error: 'Failed to fetch subscription from Polar' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+        )
+      }
+
+      const polarSubscription = await polarResponse.json()
+      console.log('Fetched new subscription from Polar:', {
+        id: polarSubscription.id,
+        status: polarSubscription.status
+      })
+
+      // Get customer email
+      let email = polarSubscription.customer?.email || event.data?.customer?.email || event.data?.metadata?.email
+      
+      if (!email && polarSubscription.customer?.id) {
+        try {
+          const customerResponse = await fetch(`https://api.polar.sh/v1/customers/${polarSubscription.customer.id}`, {
+            headers: {
+              'Authorization': `Bearer ${polarAccessToken}`,
+              'Content-Type': 'application/json'
+            }
+          })
+          if (customerResponse.ok) {
+            const customer = await customerResponse.json()
+            email = customer.email
+          }
+        } catch (customerError) {
+          console.warn('Could not fetch customer email:', customerError)
+        }
+      }
+
+      if (!email) {
+        console.error('No email found for new subscription:', subscriptionId)
+        return new Response(
+          JSON.stringify({ success: false, error: 'No email found for subscription' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+
+      // Parse dates
+      let currentPeriodStart: string
+      let currentPeriodEnd: string
+      if (polarSubscription.current_period_start) {
+        currentPeriodStart = typeof polarSubscription.current_period_start === 'string'
+          ? new Date(polarSubscription.current_period_start).toISOString()
+          : new Date(polarSubscription.current_period_start * 1000).toISOString()
+      } else {
+        currentPeriodStart = new Date().toISOString()
+      }
+      if (polarSubscription.current_period_end) {
+        currentPeriodEnd = typeof polarSubscription.current_period_end === 'string'
+          ? new Date(polarSubscription.current_period_end).toISOString()
+          : new Date(polarSubscription.current_period_end * 1000).toISOString()
+      } else {
+        currentPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      }
+
+      email = email.toLowerCase().trim()
+
+      const subscriptionData = {
+        email,
+        status: polarSubscription.status === 'active' || polarSubscription.status === 'trialing' ? 'active' : polarSubscription.status,
+        polar_subscription_id: polarSubscription.id,
+        polar_customer_id: polarSubscription.customer?.id || event.data?.customer?.id || event.data?.customerId,
+        current_period_start: currentPeriodStart,
+        current_period_end: currentPeriodEnd,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      console.log('Inserting new subscription in Supabase:', subscriptionData.email)
+
+      const { error: insertError } = await supabase
+        .from('subscriptions')
+        .upsert(subscriptionData, { onConflict: 'email' })
+
+      if (insertError) {
+        console.error('Error inserting subscription:', insertError)
+        return new Response(
+          JSON.stringify({ success: false, error: 'Failed to add subscription' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+        )
+      }
+
+      console.log('✅ New subscription added to Supabase successfully')
       return new Response(
-        JSON.stringify({ success: true, message: 'Event received' }),
+        JSON.stringify({ success: true, message: 'Subscription created' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }

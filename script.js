@@ -13,32 +13,23 @@ class JarvisOverlay {
         this.loadingMessageIndex = 0; // Index for rotating loading messages
         this.selectedModel = 'default'; // Track selected AI model
         this.selectedModelName = 'ChatGPT 5.2'; // Track displayed model name
-        this.grokFreakyMode = false; // Track Grok freaky mode state
         this.grokVoiceMode = false; // Track Grok voice mode state
         // ElevenLabs API key should be stored in Supabase Edge Function Secrets
         this.elevenLabsApiKey = null;
         this.elevenLabsVoiceId = 'ShB6BQqbEXZxWO5511Qq'; // Female voice
         this.elevenLabsVoiceId2 = '4NejU5DwQjevnR6mh3mb'; // Male voice
         this.useSecondVoice = false; // Toggle between voices
-        this.stealthModeEnabled = false; // Track stealth mode state
-        
-        // OpenClaw Gateway integration
-        this.openClawClient = null;
-        this.openClawConnected = false;
-        this.jbotAccepted = false; // Track if user has accepted J Bot warning
+        this.stealthModeEnabled = false; // Cheat mode: hide from recordings + memory off
         
         // For cancelling running commands
         this.currentAbortController = null;
         
-        // Interactive tutorial state
-        this.tutorialStep = 0;
-        this.tutorialToggleCount = 0;
-        this.tutorialActive = false;
-        
-        // Load conversation history from localStorage
+        // Load conversation history from localStorage (cleared when cheat mode is on)
         try {
             const saved = localStorage.getItem('jarvis_conversation_history');
             this.conversationHistory = saved ? JSON.parse(saved) : [];
+            const cheatModeOn = localStorage.getItem('stealth_mode_enabled') === 'true';
+            if (cheatModeOn) this.conversationHistory = [];
         } catch (e) {
             console.error('Failed to load conversation history:', e);
             this.conversationHistory = [];
@@ -76,10 +67,7 @@ class JarvisOverlay {
         this.setupHotkeys();
         this.setupElectronIntegration();
         this.setupDragFunctionality();
-        this.setupVoiceRecording(); // Voice recording handlers disabled inside, but subscription listeners still active
-        // Initialize tutorial asynchronously - don't block
-        this.initializeInteractiveTutorial().catch(e => console.error('Tutorial init:', e));
-        // Check license asynchronously - don't block startup
+        this.setupElectronIPCListeners();
         this.checkLicense().catch(e => console.error('License check:', e));
         this.updateMessageCounter();
     }
@@ -105,7 +93,6 @@ class JarvisOverlay {
                         console.log('OpenRouter key present:', !!this.openrouterApiKey);
                         console.log('API Proxy URL:', this.apiProxyUrl || 'NOT CONFIGURED (using direct API calls)');
                         console.log('Supabase Anon Key present:', !!this.supabaseAnonKey);
-                        console.log('Supabase Anon Key value:', this.supabaseAnonKey ? this.supabaseAnonKey.substring(0, 30) + '...' : 'MISSING');
                         console.log('Has Perplexity access:', !!(this.perplexityApiKey && this.perplexityApiKey.trim() !== '') || !!(this.apiProxyUrl && this.supabaseAnonKey));
                         
                         // Verify the anon key matches what we expect
@@ -156,6 +143,147 @@ class JarvisOverlay {
             // Rebuild tools array (will be empty if no keys)
             this.rebuildToolsArray();
         }
+    }
+
+    /** Build tools in OpenRouter/OpenAI chat completions format for use with any OpenRouter model */
+    getOpenRouterTools() {
+        if (!this.tools || !this.tools.length) {
+            this.rebuildToolsArray();
+        }
+        if (!this.tools || !this.tools.length) return [];
+        return this.tools.map(t => ({
+            type: 'function',
+            function: {
+                name: t.name,
+                description: t.description || '',
+                parameters: t.parameters || { type: 'object', properties: {}, required: [] }
+            }
+        }));
+    }
+
+    /** Slash commands shown when user types "/" – Skills from tools + Actions */
+    getSlashCommands() {
+        const skills = [];
+        if (this.tools && this.tools.length) {
+            const map = {
+                getscreenshot: { name: 'Screenshot', insert: "What's on my screen right now?" },
+                web_search: { name: 'Web search', insert: 'Search the web for: ' },
+                create_quiz: { name: 'Quiz', insert: 'Create a quiz about: ' },
+                askclaude: { name: 'Ask Claude', insert: 'Ask Claude for a deep analysis: ' }
+            };
+            this.tools.forEach(t => {
+                const m = map[t.name];
+                if (m) skills.push({ id: t.name, name: m.name, insert: m.insert, desc: (t.description || '').substring(0, 50) + '…' });
+            });
+        }
+        const actions = [
+            { id: 'add-file', name: 'Add file', insert: '', desc: 'Attach file(s) to your message', action: 'addFile' },
+            { id: 'answer-screen', name: 'Answer screen', insert: '', desc: 'Capture screen and get an answer', action: 'answerScreen' },
+            { id: 'clear-chat', name: 'Clear chat', insert: '', desc: 'Clear conversation history', action: 'clearChat' }
+        ];
+        return { skills, actions };
+    }
+
+    setupSlashCommandMenu() {
+        if (!this.slashCommandMenu || !this.slashCommandList || !this.textInput) return;
+        const renderList = (filter) => {
+            const { skills, actions } = this.getSlashCommands();
+            const f = (filter || '').toLowerCase();
+            const match = (name, id) => !f || name.toLowerCase().includes(f) || id.toLowerCase().includes(f);
+            const skillItems = skills.filter(s => match(s.name, s.id));
+            const actionItems = actions.filter(a => match(a.name, a.id));
+            this.slashCommandList.innerHTML = '';
+            [...skillItems, ...actionItems].forEach((item, idx) => {
+                const el = document.createElement('div');
+                el.className = 'slash-command-item' + (idx === 0 ? ' selected' : '');
+                el.setAttribute('role', 'option');
+                el.dataset.command = item.id;
+                el.dataset.insert = item.insert || '';
+                if (item.action) el.dataset.action = item.action;
+                el.innerHTML = `<span class="slash-command-item-name">${item.name}</span><span class="slash-command-item-desc">${item.desc || ''}</span>`;
+                el.addEventListener('mouseenter', () => {
+                    this.slashCommandList?.querySelectorAll('.slash-command-item').forEach(x => x.classList.remove('selected'));
+                    el.classList.add('selected');
+                });
+                el.addEventListener('click', () => this.selectSlashCommand(item.id, item.insert, item.action));
+                this.slashCommandList.appendChild(el);
+            });
+        };
+        this.renderSlashCommandList = renderList;
+        document.addEventListener('mousedown', (e) => {
+            if (!this.slashCommandMenu || this.slashCommandMenu.classList.contains('hidden')) return;
+            if (this.slashCommandMenu.contains(e.target) || this.textInput?.contains(e.target)) return;
+            this.hideSlashCommandMenu();
+        });
+    }
+
+    onSlashCommandInput() {
+        const val = (this.textInput?.value || '');
+        const lastSlash = val.lastIndexOf('/');
+        if (lastSlash === -1) {
+            this.hideSlashCommandMenu();
+            return;
+        }
+        const isSlashAtStart = lastSlash === 0;
+        const isSlashAfterSpace = lastSlash > 0 && val[lastSlash - 1] === ' ';
+        if (!isSlashAtStart && !isSlashAfterSpace) {
+            this.hideSlashCommandMenu();
+            return;
+        }
+        const afterSlash = val.slice(lastSlash + 1);
+        if (!this.slashCommandMenu) return;
+        this.slashCommandMenu.classList.remove('hidden');
+        this.overlay?.classList.add('slash-menu-open');
+        this.renderSlashCommandList(afterSlash.trim());
+        this.slashCommandMenu.dataset.prefixLength = String(lastSlash);
+    }
+
+    hideSlashCommandMenu() {
+        if (this.slashCommandMenu) this.slashCommandMenu.classList.add('hidden');
+        this.overlay?.classList.remove('slash-menu-open');
+    }
+
+    moveSlashCommandSelection(delta) {
+        const items = this.slashCommandList?.querySelectorAll('.slash-command-item');
+        if (!items?.length) return;
+        const current = this.slashCommandList.querySelector('.slash-command-item.selected');
+        let idx = current ? Array.from(items).indexOf(current) + delta : 0;
+        if (idx < 0) idx = items.length - 1;
+        if (idx >= items.length) idx = 0;
+        items.forEach((el, i) => el.classList.toggle('selected', i === idx));
+        items[idx]?.scrollIntoView({ block: 'nearest' });
+    }
+
+    selectSlashCommand(commandId, insertText, action) {
+        const val = (this.textInput?.value || '');
+        const lastSlash = val.lastIndexOf('/');
+        const prefix = val.slice(0, lastSlash);
+        if (action === 'addFile') {
+            this.textInput.value = prefix.trim();
+            this.hideSlashCommandMenu();
+            if (this.fileInput) {
+                this.fileInput.value = '';
+                this.fileInput.click();
+            }
+            return;
+        }
+        if (action === 'answerScreen') {
+            this.textInput.value = prefix.trim();
+            this.hideSlashCommandMenu();
+            this.answerThis();
+            return;
+        }
+        if (action === 'clearChat') {
+            this.textInput.value = prefix.trim();
+            this.hideSlashCommandMenu();
+            this.clearChatHistory?.();
+            return;
+        }
+        const newVal = prefix.trim() + (prefix.trim() ? ' ' : '') + (insertText || '');
+        this.textInput.value = newVal;
+        this.textInput.focus();
+        this.hideSlashCommandMenu();
+        if (this.resizeTextInput) this.resizeTextInput();
     }
 
     rebuildToolsArray() {
@@ -291,8 +419,13 @@ class JarvisOverlay {
                     this.features = {
                         unlimited_messages: true,
                         screenshot_analysis: true,
-                        voice_activation: true
                     };
+                    // Sync to localStorage so getUserEmail() works (reads from localStorage)
+                    try {
+                        if (subscriptionResult.subscriptionData?.email) {
+                            localStorage.setItem('jarvis_user', JSON.stringify({ email: subscriptionResult.subscriptionData.email, updatedAt: new Date().toISOString() }));
+                        }
+                    } catch (_) {}
                     console.log('✅ Premium subscription active');
                     
                     // Check if user needs to set password
@@ -439,40 +572,10 @@ class JarvisOverlay {
         }
     }
 
-    setupVoiceRecording() {
+    setupElectronIPCListeners() {
         if (!this.isElectron || !window.require) return;
 
         const { ipcRenderer } = window.require('electron');
-
-        // Don't request microphone permission on startup - only when user tries to use voice recording
-
-        // Listen for voice recording events from main process
-        ipcRenderer.on('voice-recording-started', () => {
-            this.showVoiceRecordingIndicator();
-            this.showVoiceShortcutHint();
-        });
-
-        ipcRenderer.on('voice-recording-processing', () => {
-            // Immediately hide recording indicator and show thinking state
-            this.hideVoiceRecordingIndicator();
-            this.hideVoiceShortcutHint();
-            this.showVoiceProcessingState();
-        });
-
-        ipcRenderer.on('voice-recording-stopped', () => {
-            this.hideVoiceRecordingIndicator();
-            this.hideVoiceShortcutHint();
-        });
-
-        ipcRenderer.on('voice-transcription', (event, text) => {
-            this.hideVoiceProcessingState();
-            this.handleVoiceTranscription(text);
-        });
-
-        ipcRenderer.on('voice-recording-error', (event, error) => {
-            this.hideVoiceProcessingState();
-            this.showVoiceError(error);
-        });
 
         // Listen for subscription cancellation
         ipcRenderer.on('subscription-cancelled', () => {
@@ -503,480 +606,57 @@ class JarvisOverlay {
             this.answerThis();
         });
 
-        // Listen for paywall display request
-        ipcRenderer.on('show-paywall', () => {
-            this.showPaywall();
-        });
-
-        // Setup push-to-talk (hold Control key to record, release to stop)
-        this.setupPushToTalk();
-    }
-
-    setupPushToTalk() {
-        // Track if we started recording via push-to-talk
-        this.isPushToTalkActive = false;
-        this.pushToTalkKey = 'Control'; // The key to hold for push-to-talk
-        this.pushToTalkKeyDown = false; // Track if key is currently held
-        this.otherKeyPressed = false; // Track if another key was pressed during Control hold
-        this.globalPushToTalkEnabled = false; // Track if global push-to-talk is handling things
-        
-        // Browser-based recording state
-        this.useBrowserRecording = false;
-        this.mediaRecorder = null;
-        this.audioChunks = [];
-        this.audioStream = null;
-        
-        // Check if sox is available, if not use browser recording
-        this.checkSoxAndSetupRecording();
-        
-        // Listen for global push-to-talk events from main process
-        if (this.isElectron && window.require) {
-            const { ipcRenderer } = window.require('electron');
-            
-            ipcRenderer.on('global-push-to-talk-started', () => {
-                console.log('🎤 Global push-to-talk started (from main process)');
-                this.globalPushToTalkEnabled = true;
-                this.isPushToTalkActive = true;
-                this.showVoiceRecordingIndicator();
-            });
-            
-            ipcRenderer.on('global-push-to-talk-stopped', () => {
-                console.log('🎤 Global push-to-talk stopped (from main process)');
-                this.globalPushToTalkEnabled = false;
-                this.isPushToTalkActive = false;
-                this.hideVoiceRecordingIndicator();
-            });
-            
-            // Handle voice recording errors - fallback to browser recording
-            ipcRenderer.on('voice-recording-error', (event, error) => {
-                if (error && error.includes('sox')) {
-                    console.log('🎤 Sox not available, switching to browser recording');
-                    this.useBrowserRecording = true;
-                }
-            });
-        }
-        
-        // Listen for keydown - start recording when Control is held
-        // This is a fallback for when global hook isn't available
-        document.addEventListener('keydown', (e) => {
-            // Skip if global push-to-talk is handling it
-            if (this.globalPushToTalkEnabled) return;
-            
-            // Track if any other key is pressed while Control is held (indicates a combo like Ctrl+C)
-            if (this.pushToTalkKeyDown && e.key !== 'Control') {
-                this.otherKeyPressed = true;
-                // Cancel recording if it was starting
-                if (this.pushToTalkTimeout) {
-                    clearTimeout(this.pushToTalkTimeout);
-                    this.pushToTalkTimeout = null;
-                }
-                // Stop recording if it already started
-                if (this.isPushToTalkActive) {
-                    this.isPushToTalkActive = false;
-                    console.log('🎤 Push-to-talk: Cancelled (Ctrl+key combo detected)');
-                    if (this.useBrowserRecording) {
-                        this.stopBrowserRecording(true); // Cancel without transcribing
-                    } else {
-                        const { ipcRenderer } = window.require('electron');
-                        ipcRenderer.invoke('stop-push-to-talk');
-                    }
-                }
-                return;
+        // Report overlay bounds to main so hover-to-activate only triggers over the pill (not full screen)
+        const reportOverlayRect = () => {
+            if (!this.overlay) return;
+            const rect = this.overlay.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                ipcRenderer.invoke('report-overlay-rect', { x: rect.x, y: rect.y, width: rect.width, height: rect.height }).catch(() => {});
             }
-            
-            // Only trigger on Control key alone (not with other modifiers as part of a combo)
-            if (e.key === 'Control' && !e.repeat && !this.isPushToTalkActive && !this.pushToTalkKeyDown) {
-                this.pushToTalkKeyDown = true;
-                this.otherKeyPressed = false;
-                
-                // Very short delay (50ms) just to catch immediate Ctrl+key combos
-                this.pushToTalkTimeout = setTimeout(() => {
-                    // Only start if no other key was pressed and global isn't handling it
-                    if (!this.otherKeyPressed && !this.isPushToTalkActive && this.pushToTalkKeyDown && !this.globalPushToTalkEnabled) {
-                        this.isPushToTalkActive = true;
-                        console.log('🎤 Push-to-talk: Starting recording (Control held - local fallback)');
-                        
-                        if (this.useBrowserRecording) {
-                            this.startBrowserRecording();
-                        } else {
-                            const { ipcRenderer } = window.require('electron');
-                            ipcRenderer.invoke('start-push-to-talk');
-                        }
-                    }
-                }, 50); // Reduced to 50ms for faster response
-            }
-        });
-
-        // Listen for keyup - stop recording when Control is released
-        document.addEventListener('keyup', (e) => {
-            // Skip if global push-to-talk is handling it
-            if (this.globalPushToTalkEnabled) return;
-            
-            if (e.key === 'Control') {
-                this.pushToTalkKeyDown = false;
-                
-                // Clear the timeout if key was released quickly (it was a combo)
-                if (this.pushToTalkTimeout) {
-                    clearTimeout(this.pushToTalkTimeout);
-                    this.pushToTalkTimeout = null;
-                }
-                
-                if (this.isPushToTalkActive) {
-                    this.isPushToTalkActive = false;
-                    console.log('🎤 Push-to-talk: Stopping recording (Control released - local fallback)');
-                    
-                    if (this.useBrowserRecording) {
-                        this.stopBrowserRecording(false); // Stop and transcribe
-                    } else {
-                        const { ipcRenderer } = window.require('electron');
-                        ipcRenderer.invoke('stop-push-to-talk');
-                    }
-                }
-                
-                // Reset other key flag
-                this.otherKeyPressed = false;
-            }
-        });
-        
-        // Also listen for window blur to stop recording if user switches away
-        // (only for local fallback - global hook handles its own state)
-        window.addEventListener('blur', () => {
-            if (this.isPushToTalkActive && !this.globalPushToTalkEnabled) {
-                this.isPushToTalkActive = false;
-                this.pushToTalkKeyDown = false;
-                console.log('🎤 Push-to-talk: Stopped (window lost focus)');
-                
-                if (this.useBrowserRecording) {
-                    this.stopBrowserRecording(true); // Cancel on blur
-                } else {
-                    const { ipcRenderer } = window.require('electron');
-                    ipcRenderer.invoke('stop-push-to-talk');
-                }
-            }
-        });
+        };
+        reportOverlayRect();
+        this._overlayRectInterval = setInterval(reportOverlayRect, 250);
     }
 
-    async checkSoxAndSetupRecording() {
-        if (!this.isElectron || !window.require) return;
-        
-        const { ipcRenderer } = window.require('electron');
-        try {
-            const result = await ipcRenderer.invoke('check-sox-available');
-            if (!result.available) {
-                console.log('🎤 Sox not found, using browser-based recording');
-                this.useBrowserRecording = true;
-            } else {
-                console.log('🎤 Sox available at:', result.path);
-                this.useBrowserRecording = false;
-            }
-        } catch (e) {
-            console.log('🎤 Could not check sox availability, using browser recording as fallback');
-            this.useBrowserRecording = true;
-        }
-    }
-
-    async startBrowserRecording() {
-        try {
-            console.log('🎤 Starting browser-based recording...');
-            
-            // Request microphone access
-            this.audioStream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    channelCount: 1,
-                    sampleRate: 16000,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                } 
-            });
-            
-            // Determine supported mime type
-            let mimeType = 'audio/webm;codecs=opus';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                mimeType = 'audio/webm';
-                if (!MediaRecorder.isTypeSupported(mimeType)) {
-                    mimeType = 'audio/mp4';
-                    if (!MediaRecorder.isTypeSupported(mimeType)) {
-                        mimeType = ''; // Let browser choose
-                    }
-                }
-            }
-            
-            this.audioChunks = [];
-            this.mediaRecorder = new MediaRecorder(this.audioStream, mimeType ? { mimeType } : {});
-            
-            this.mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    this.audioChunks.push(event.data);
-                }
-            };
-            
-            this.mediaRecorder.onerror = (event) => {
-                console.error('MediaRecorder error:', event.error);
-                this.showVoiceError('Recording error: ' + event.error.message);
-            };
-            
-            this.mediaRecorder.start(100); // Collect data every 100ms
-            this.showVoiceRecordingIndicator();
-            
-            console.log('🎤 Browser recording started with mime type:', this.mediaRecorder.mimeType);
-        } catch (error) {
-            console.error('Failed to start browser recording:', error);
-            this.showVoiceError('Microphone access denied. Please allow microphone access in System Preferences > Security & Privacy > Privacy > Microphone.');
-        }
-    }
-
-    async stopBrowserRecording(cancel = false) {
-        if (!this.mediaRecorder) {
-            this.hideVoiceRecordingIndicator();
-            return;
-        }
-        
-        console.log('🎤 Stopping browser recording, cancel:', cancel);
-        
-        return new Promise((resolve) => {
-            this.mediaRecorder.onstop = async () => {
-                // Stop all tracks
-                if (this.audioStream) {
-                    this.audioStream.getTracks().forEach(track => track.stop());
-                    this.audioStream = null;
-                }
-                
-                this.hideVoiceRecordingIndicator();
-                
-                if (cancel || this.audioChunks.length === 0) {
-                    console.log('🎤 Recording cancelled or empty');
-                    resolve();
-                    return;
-                }
-                
-                // Show processing state
-                this.showVoiceProcessingState();
-                
-                try {
-                    // Combine audio chunks into a blob
-                    const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
-                    const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-                    
-                    console.log('🎤 Audio blob created:', audioBlob.size, 'bytes, type:', mimeType);
-                    
-                    // Convert blob to array buffer
-                    const arrayBuffer = await audioBlob.arrayBuffer();
-                    const uint8Array = new Uint8Array(arrayBuffer);
-                    
-                    // Send to main process for transcription
-                    const { ipcRenderer } = window.require('electron');
-                    const result = await ipcRenderer.invoke('transcribe-audio-buffer', {
-                        buffer: Array.from(uint8Array),
-                        mimeType: mimeType
-                    });
-                    
-                    this.hideVoiceProcessingState();
-                    
-                    if (result.success && result.text) {
-                        console.log('🎤 Transcription result:', result.text);
-                        this.handleVoiceTranscription(result.text);
-                    } else if (result.error) {
-                        console.error('Transcription failed:', result.error);
-                        this.showVoiceError('Transcription failed: ' + result.error);
-                    }
-                } catch (error) {
-                    console.error('Error processing recording:', error);
-                    this.hideVoiceProcessingState();
-                    this.showVoiceError('Error processing recording: ' + error.message);
-                }
-                
-                resolve();
-            };
-            
-            // Stop the recorder
-            if (this.mediaRecorder.state !== 'inactive') {
-                this.mediaRecorder.stop();
-            } else {
-                this.hideVoiceRecordingIndicator();
-                resolve();
-            }
-        });
-    }
-
-    async requestMicrophonePermission() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach(track => track.stop());
-        } catch (error) {
-            console.error('Microphone permission denied:', error);
-            // Don't show notification on startup - only show when user actually tries to record
-        }
-    }
-
-    showVoiceRecordingIndicator() {
-        // Create or show voice recording indicator
-        let indicator = document.getElementById('voice-recording-indicator');
-        if (!indicator) {
-            indicator = document.createElement('div');
-            indicator.id = 'voice-recording-indicator';
-            indicator.className = 'voice-recording-indicator';
-            indicator.innerHTML = `
-                <span class="recording-dot">●</span>
-                <span class="recording-text">recording</span>
-                <span class="recording-cancel" title="Cancel recording">×</span>
-            `;
-            document.body.appendChild(indicator);
-            
-            // Add click handler for cancel button with interactive handling
-            const cancelBtn = indicator.querySelector('.recording-cancel');
-            if (cancelBtn) {
-                // Make window interactive when hovering/clicking cancel button
-                const makeInteractive = () => {
-                    if (this.isElectron && window.require) {
-                        const { ipcRenderer } = window.require('electron');
-                        ipcRenderer.invoke('make-interactive');
-                    }
-                };
-                
-                cancelBtn.addEventListener('mouseenter', makeInteractive);
-                cancelBtn.addEventListener('mousedown', (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    makeInteractive();
-                });
-                cancelBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    this.cancelVoiceRecording();
-                });
-            }
-        }
-        indicator.style.display = 'flex';
-        
-        // Ensure window is interactive when recording indicator is shown
-        if (this.isElectron && window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.invoke('make-interactive');
-        }
-    }
-    
-    cancelVoiceRecording() {
-        console.log('🎤 Voice recording cancelled by user');
-        this.hideVoiceRecordingIndicator();
-        this.hideVoiceShortcutHint();
-        
-        // Stop browser recording if active
-        if (this.useBrowserRecording && this.mediaRecorder) {
-            this.stopBrowserRecording(true); // Cancel without transcribing
-        }
-        
-        // Stop the recording via IPC (for sox-based recording)
-        if (this.isElectron && !this.useBrowserRecording) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.invoke('stop-push-to-talk');
-            ipcRenderer.invoke('cancel-voice-recording');
-        }
-        
-        // Reset push-to-talk state
-        this.isPushToTalkActive = false;
-        this.pushToTalkKeyDown = false;
-    }
-
-    hideVoiceRecordingIndicator() {
-        const indicator = document.getElementById('voice-recording-indicator');
-        if (indicator) {
-            indicator.style.display = 'none';
-        }
-    }
-
-    showVoiceShortcutHint() {
-        // Only show hint the first few times
-        const hintCount = parseInt(localStorage.getItem('jarvis-voice-hint-count') || '0');
-        if (hintCount >= 3) return; // Stop showing after 3 times
-        
-        localStorage.setItem('jarvis-voice-hint-count', String(hintCount + 1));
-        
-        let hint = document.getElementById('voice-shortcut-hint');
-        if (!hint) {
-            hint = document.createElement('div');
-            hint.id = 'voice-shortcut-hint';
-            hint.className = 'voice-shortcut-hint';
-            // Show different hint based on whether it was push-to-talk
-            hint.innerHTML = this.isPushToTalkActive 
-                ? 'Release <kbd>⌃</kbd> to stop'
-                : 'Press <kbd>⌘S</kbd> to stop';
-            document.body.appendChild(hint);
-        } else {
-            hint.innerHTML = this.isPushToTalkActive 
-                ? 'Release <kbd>⌃</kbd> to stop'
-                : 'Press <kbd>⌘S</kbd> to stop';
-        }
-        hint.style.display = 'block';
-        
-        // Auto-hide after 3 seconds
-        setTimeout(() => this.hideVoiceShortcutHint(), 3000);
-    }
-
-    hideVoiceShortcutHint() {
-        const hint = document.getElementById('voice-shortcut-hint');
-        if (hint) {
-            hint.style.display = 'none';
-        }
-    }
-
-    showVoiceProcessingState() {
-        // Show the loading notification with analyzing animation
-        this.showLoadingNotification(null, 'default');
-    }
-
-    hideVoiceProcessingState() {
-        // Content will be replaced by actual response
-    }
-
-    handleVoiceTranscription(text) {
-        if (text && text.trim()) {
-            const trimmedText = text.trim();
-            const lowerText = trimmedText.toLowerCase();
-            
-            // Check for screenshot voice command "6-7" or variations
-            const screenshotPatterns = [
-                '6-7', '67', '6 7', 'six seven', 'six-seven',
-                'take screenshot', 'take a screenshot', 'screenshot',
-                'capture screen', 'screen capture'
-            ];
-            
-            const isScreenshotCommand = screenshotPatterns.some(pattern => 
-                lowerText.includes(pattern) || lowerText === pattern
-            );
-            
-            if (isScreenshotCommand) {
-                // Clear input since we're executing a command
-                if (this.textInput) this.textInput.value = '';
-                // Take screenshot and analyze
-                this.takeScreenshotAndAnalyze();
-                return;
-            }
-            
-            // Set the input value and send the transcribed text to the API
-            this.textInput.value = trimmedText;
-            this.sendMessage();
-        }
-    }
-    
     async takeScreenshotAndAnalyze() {
         try {
             this.showNotification('📸 Taking screenshot...', 'info');
             
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
-                const screenshot = await ipcRenderer.invoke('take-screenshot');
+                let screenshot = await ipcRenderer.invoke('take-screenshot');
+                
+                // If screen capture looks black (protected content), try window capture then all windows
+                if (screenshot && await this.isScreenshotMostlyBlack(screenshot)) {
+                    const windowShot = await ipcRenderer.invoke('take-screenshot-window');
+                    if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
+                        screenshot = windowShot;
+                    } else {
+                        const allWindows = await ipcRenderer.invoke('take-screenshot-all-windows');
+                        for (const w of allWindows || []) {
+                            if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
+                                screenshot = w.dataUrl;
+                                break;
+                            }
+                        }
+                    }
+                }
                 
                 if (screenshot) {
-                    // Store the screenshot
+                    if (await this.isScreenshotMostlyBlack(screenshot)) {
+                        this.currentScreenCapture = null;
+                        this.showNotification('The screenshot is blank (Chrome/Lockdown content is often protected). Paste the question text in the chat instead.', 'error');
+                        if (this.textInput) {
+                            this.textInput.focus();
+                            this.textInput.placeholder = 'Ask Jarvis, / for commands';
+                        }
+                        return;
+                    }
                     this.currentScreenCapture = screenshot;
-                    
-                    // Show the screenshot in the UI and prompt for analysis
                     this.showNotification('Screenshot captured! Ask a question about it.', 'success');
-                    
-                    // Focus the input
                     if (this.textInput) {
                         this.textInput.focus();
-                        this.textInput.placeholder = 'Ask about the screenshot...';
+                        this.textInput.placeholder = 'Ask Jarvis, / for commands';
                     }
                 } else {
                     this.showNotification('Failed to capture screenshot', 'error');
@@ -986,10 +666,6 @@ class JarvisOverlay {
             console.error('Screenshot error:', error);
             this.showNotification('Screenshot failed: ' + error.message, 'error');
         }
-    }
-
-    showVoiceError(error) {
-        this.showNotification(`Voice recording error: ${error}`, 'error');
     }
 
     handleSubscriptionCancelled() {
@@ -1059,8 +735,7 @@ class JarvisOverlay {
         };
         this.features = {
             unlimited_messages: true,
-            screenshot_analysis: true,
-            voice_activation: true
+            screenshot_analysis: true
         };
         
         // Reset message count for premium users
@@ -1107,39 +782,33 @@ class JarvisOverlay {
         console.log('✅ Subscription activation complete');
     }
 
-    showPaywall() {
-        
-        // Show the paywall overlay
-        this.showUpgradePrompt();
-        
-        // Show notification
-        this.showNotification('Please subscribe to continue using Jarvis Premium features.', 'info');
-    }
-
-
     async showUpgradePrompt() {
-        // Open paywall/checkout directly
+        // Try checkout first; if that fails (e.g. not signed in), open upgrade page in browser (no paywall window)
         if (this.isElectron && window.require) {
             try {
                 const { ipcRenderer } = window.require('electron');
-                // Create checkout session and open it
                 const result = await ipcRenderer.invoke('create-checkout-session');
                 if (result && result.success) {
                     this.showNotification('Opening checkout page...', 'info');
                 } else {
-                    // Fallback to paywall window
-                    ipcRenderer.send('open-paywall');
+                    await ipcRenderer.invoke('open-upgrade-page');
+                    this.showNotification('Opening upgrade page...', 'info');
                 }
             } catch (error) {
                 console.error('Error opening checkout:', error);
-                // Fallback to paywall window
                 const { ipcRenderer } = window.require('electron');
-                ipcRenderer.send('open-paywall');
+                await ipcRenderer.invoke('open-upgrade-page');
+                this.showNotification('Opening upgrade page...', 'info');
             }
         }
     }
 
+    shouldUseConversationMemory() {
+        return !this.stealthModeEnabled; // Cheat mode = memory off
+    }
+
     saveConversationHistory() {
+        if (!this.shouldUseConversationMemory()) return;
         try {
             localStorage.setItem('jarvis_conversation_history', JSON.stringify(this.conversationHistory));
         } catch (e) {
@@ -1256,29 +925,18 @@ class JarvisOverlay {
         this.activationIndicator = document.getElementById('activation-indicator');
         this.textInput = document.getElementById('text-input');
         this.dragOutput = document.getElementById('drag-output');
-        this.dragHandle = document.getElementById('drag-handle');
+        this.dragHandle = null; /* removed: whole overlay is draggable */
         this.closeOutputBtn = document.getElementById('close-output');
         this.closeOutputFloating = document.getElementById('close-output-floating');
         this.answerThisBtn = document.getElementById('answer-this-btn');
         this.actionButtonsContainer = document.getElementById('action-buttons-container');
         this.humanizeBtn = document.getElementById('humanize-btn');
-        this.documentNameModal = document.getElementById('document-name-modal');
-        this.documentNameInput = document.getElementById('document-name-input');
-        this.documentNameConfirm = document.getElementById('document-name-confirm');
-        this.documentNameCancel = document.getElementById('document-name-cancel');
-        this.documentSelectionModal = document.getElementById('document-selection-modal');
-        this.documentList = document.getElementById('document-list');
-        this.documentListLoading = document.getElementById('document-list-loading');
-        this.documentSelectionCancel = document.getElementById('document-selection-cancel');
-        this.documentSelectionNew = document.getElementById('document-selection-new');
-        this.docsWritingIndicator = document.getElementById('docs-writing-indicator');
-        this.docsDoneIndicator = document.getElementById('docs-done-indicator');
-        this.docsOpenBtn = document.getElementById('docs-open-btn');
-        this.docsDismissBtn = document.getElementById('docs-dismiss-btn');
         this.startBtn = document.getElementById('start-jarvis');
         this.resizeHandle = document.getElementById('resize-handle');
         this.settingsBtn = document.getElementById('settings-btn');
         this.settingsMenu = document.getElementById('settings-menu');
+        this.slashCommandMenu = document.getElementById('slash-command-menu');
+        this.slashCommandList = document.getElementById('slash-command-list');
         this.fileBtn = document.getElementById('add-btn');
         this.clearChatBtn = document.getElementById('clear-chat-btn');
         this.settingsCloseBtn = document.getElementById('settings-close-btn');
@@ -1286,6 +944,7 @@ class JarvisOverlay {
         this.hotkeysBtn = document.getElementById('hotkeys-btn');
         this.stealthModeToggle = document.getElementById('stealth-mode-toggle');
         this.stealthModeCheckbox = document.getElementById('stealth-mode-checkbox');
+        this.lockdownLauncherBtn = document.getElementById('lockdown-launcher-btn');
         this.fileInput = document.getElementById('file-input');
         this.accountModal = document.getElementById('account-modal');
         this.accountModalClose = document.getElementById('account-modal-close');
@@ -1333,6 +992,7 @@ class JarvisOverlay {
         this.isDragging = false;
         this.dragOffset = { x: 0, y: 0 };
         this.isDraggingOutput = false; // Track if output element is being dragged
+        this.isDraggingOverlay = false; // Track if overlay bar is being dragged (so we don't go click-through during drag)
         this.pendingAttachments = [];
         
         this.currentModel = 'gpt-5.1';
@@ -1366,15 +1026,55 @@ class JarvisOverlay {
         }, true);
 
         if (this.startBtn) this.startBtn.addEventListener('click', () => this.startJarvis());
-        this.textInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.sendMessage();
+        this.textInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                if (this.slashCommandMenu && !this.slashCommandMenu.classList.contains('hidden')) {
+                    const selected = this.slashCommandList?.querySelector('.slash-command-item.selected');
+                    if (selected) {
+                        e.preventDefault();
+                        const action = selected.dataset.action || undefined;
+                        this.selectSlashCommand(selected.dataset.command, selected.dataset.insert, action);
+                        return;
+                    }
+                }
+                e.preventDefault();
+                this.sendMessage();
+            }
+            if (e.key === 'Escape') {
+                if (this.slashCommandMenu && !this.slashCommandMenu.classList.contains('hidden')) {
+                    e.preventDefault();
+                    this.hideSlashCommandMenu();
+                    return;
+                }
+            }
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (this.slashCommandMenu && !this.slashCommandMenu.classList.contains('hidden')) {
+                    e.preventDefault();
+                    this.moveSlashCommandSelection(e.key === 'ArrowDown' ? 1 : -1);
+                    return;
+                }
+            }
         });
+        const resizeTextInput = () => {
+            if (!this.textInput) return;
+            // Fixed single-line height; no expansion – content scrolls inside
+            this.textInput.style.height = '20px';
+        };
+        this.textInput.addEventListener('input', (e) => {
+            resizeTextInput();
+            this.onSlashCommandInput();
+        });
+        this.resizeTextInput = resizeTextInput;
         
-        // Windows-specific: Request window focus when input field gets focus
-        // This ensures the window can receive keyboard input
+        this.setupSlashCommandMenu();
+        
+        // When text input gets focus: request window focus and keep overlay interactive (prevent click-through)
         this.textInput.addEventListener('focus', () => {
-            if (this.isElectron) {
+            if (this.isElectron && window.require) {
+                clearTimeout(this._clickThroughMenuCloseTimeout);
+                this._clickThroughMenuCloseTimeout = null;
                 const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('make-interactive').catch(() => {});
                 ipcRenderer.invoke('request-focus').catch(() => {});
             }
         });
@@ -1397,14 +1097,6 @@ class JarvisOverlay {
         // Output Toolbar event listeners
         this.initializeOutputToolbar();
         
-        if (this.docsOpenBtn) {
-            this.docsOpenBtn.addEventListener('click', () => this.openGoogleDoc());
-        }
-        
-        if (this.docsDismissBtn) {
-            this.docsDismissBtn.addEventListener('click', () => this.hideDocsDoneIndicator());
-        }
-        
         // Reveal history button event listener
         if (this.revealHistoryBtn) {
             this.revealHistoryBtn.addEventListener('click', () => this.toggleChatHistory());
@@ -1426,8 +1118,12 @@ class JarvisOverlay {
             });
         }
         
-        // Initialize opacity value (default 95% = original fully visible)
-        const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '95';
+        // Initialize opacity value (default 100% so first launch is not more transparent)
+        let savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '100';
+        if (savedOpacity === '95') {
+            localStorage.setItem('jarvis-overlay-opacity', '100');
+            savedOpacity = '100';
+        }
         this.currentOpacity = parseInt(savedOpacity);
         this.setOverlayOpacity(parseInt(savedOpacity));
         
@@ -1466,10 +1162,6 @@ class JarvisOverlay {
             const modelItems = this.modelSubmenu.querySelectorAll('.model-item');
             modelItems.forEach(item => {
                 item.addEventListener('click', (e) => {
-                    // Don't trigger model selection if clicking the freaky toggle
-                    if (e.target.classList.contains('freaky-toggle')) {
-                        return;
-                    }
                     e.stopPropagation();
                     const model = item.getAttribute('data-model');
                     const modelName = item.querySelector('.model-name').textContent;
@@ -1477,21 +1169,6 @@ class JarvisOverlay {
                     this.hideModelSubmenu();
                 });
             });
-            
-            // Freaky mode toggle for Grok
-            const freakyToggle = document.getElementById('freaky-toggle');
-            const freakyCheckbox = document.getElementById('freaky-toggle-checkbox');
-            if (freakyToggle) {
-                freakyToggle.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                });
-            }
-            if (freakyCheckbox) {
-                freakyCheckbox.addEventListener('change', (e) => {
-                    e.stopPropagation();
-                    this.toggleGrokFreakyMode(freakyCheckbox.checked);
-                });
-            }
             
             // "More models" button
             const moreModelsBtn = document.getElementById('model-more-btn');
@@ -1536,6 +1213,12 @@ class JarvisOverlay {
         if (this.settingsBtn) {
             this.settingsBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (this.isElectron && window.require) {
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.invoke('make-interactive').catch(() => {});
+                    this._overlayIsInteractive = true;
+                    clearTimeout(this._clickThroughMenuCloseTimeout);
+                }
                 // Toggle settings menu
                 if (this.settingsMenu) {
                     if (this.settingsMenu.classList.contains('hidden')) {
@@ -1546,8 +1229,6 @@ class JarvisOverlay {
                         this.settingsMenu.classList.add('hidden');
                     }
                 }
-                // Track for tutorial
-                this.advanceTutorial('hamburger');
             });
         }
         
@@ -1587,49 +1268,30 @@ class JarvisOverlay {
             this.clearChatBtn.addEventListener('click', () => this.clearChatHistory());
         }
         
-        // Check for updates button
-        const checkUpdatesBtn = document.getElementById('check-updates-btn');
-        if (checkUpdatesBtn) {
-            checkUpdatesBtn.addEventListener('click', () => {
-                this.checkForUpdates();
-                this.showUpdateNotification('🔍 Checking for updates...', 'info');
-            });
-        }
-        
-        // Quit app button
-        const quitAppBtn = document.getElementById('quit-app-btn');
-        if (quitAppBtn) {
-            quitAppBtn.addEventListener('click', () => {
+        if (this.settingsCloseBtn) {
+            this.settingsCloseBtn.addEventListener('click', () => {
+                this.hideSettingsMenu();
                 this.quitApp();
             });
         }
         
-        // Load and display current app version
-        this.loadAppVersion();
-        
-        if (this.settingsCloseBtn) {
-            this.settingsCloseBtn.addEventListener('click', () => {
-                this.hideSettingsMenu();
-                // Hide overlay like Option+Space does
-                if (this.isElectron && window.require) {
-                    try {
-                        const { ipcRenderer } = window.require('electron');
-                        ipcRenderer.invoke('hide-overlay');
-                    } catch (e) {
-                        console.error('Failed to hide overlay:', e);
-                    }
-                }
+        if (this.accountInfoBtn) {
+            // Use mousedown so the action runs before opening the Account window causes blur (which would close the menu and can swallow the click)
+            this.accountInfoBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.showAccountWindow();
             });
         }
         
-        if (this.accountInfoBtn) {
-            this.accountInfoBtn.addEventListener('click', () => this.showAccountWindow());
-        }
-        
         if (this.hotkeysBtn) {
-            this.hotkeysBtn.addEventListener('click', () => this.showHotkeysWindow());
+            this.hotkeysBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.showHotkeysWindow();
+            });
         }
-        
+
         // Stealth Mode toggle
         if (this.stealthModeCheckbox) {
             // Load saved preference (default to true/ON if not set)
@@ -1637,7 +1299,7 @@ class JarvisOverlay {
             const stealthModeEnabled = savedPreference === null ? true : savedPreference === 'true';
             this.stealthModeEnabled = stealthModeEnabled; // Initialize state
             this.stealthModeCheckbox.checked = stealthModeEnabled;
-            console.log('🔧 Initial stealth mode state:', stealthModeEnabled);
+            console.log('🔧 Initial cheat mode state:', stealthModeEnabled);
             
             // Apply on load (with a small delay to ensure Electron is ready)
             // Only enable stealth mode on load if user has premium
@@ -1646,9 +1308,13 @@ class JarvisOverlay {
                 if (stealthModeEnabled && !this.hasPremiumAccess()) {
                     this.stealthModeCheckbox.checked = false;
                     this.stealthModeEnabled = false;
-                    console.log('🔧 Stealth mode disabled on load - requires premium');
+                    console.log('🔧 Cheat mode disabled on load - requires premium');
                 } else {
                 this.toggleStealthMode(stealthModeEnabled, false); // false = don't show notification on initial load
+                    if (stealthModeEnabled) {
+                        this.conversationHistory = [];
+                        try { localStorage.removeItem('jarvis_conversation_history'); } catch (err) {}
+                    }
                 }
             }, 500);
             
@@ -1662,7 +1328,7 @@ class JarvisOverlay {
                 if (enabled && !this.hasPremiumAccess()) {
                     // Revert the checkbox
                     e.target.checked = false;
-                    this.showNotification('🔒 Stealth Mode requires Jarvis Premium. Upgrade to hide Jarvis from screen recordings!', false);
+                    this.showNotification('🔒 Cheat Mode requires Jarvis Premium. Upgrade to hide Jarvis from screen recordings!', false);
                     this.showUpgradePrompt();
                     return;
                 }
@@ -1686,7 +1352,7 @@ class JarvisOverlay {
                     
                     // Check if user has premium access
                     if (!this.hasPremiumAccess()) {
-                        this.showNotification('🔒 Stealth Mode requires Jarvis Premium. Upgrade to hide Jarvis from screen recordings!', false);
+                        this.showNotification('🔒 Cheat Mode requires Jarvis Premium. Upgrade to hide Jarvis from screen recordings!', false);
                         this.showUpgradePrompt();
                         return;
                     }
@@ -1709,7 +1375,27 @@ class JarvisOverlay {
                 });
             }
         }
-        
+
+        if (this.lockdownLauncherBtn) {
+            if (typeof process !== 'undefined' && process.platform === 'darwin') {
+                this.lockdownLauncherBtn.style.display = '';
+                this.lockdownLauncherBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    try {
+                        const { ipcRenderer } = window.require('electron');
+                        const r = await ipcRenderer.invoke('run-lockdown-launcher');
+                        if (r && r.ok) {
+                            this.showNotification('Lockdown Launcher opened in Terminal. Keep that window open during your exam.', 'success');
+                        } else {
+                            this.showNotification(r?.error || 'Could not run launcher', 'error');
+                        }
+                    } catch (err) {
+                        this.showNotification('Could not run launcher', 'error');
+                    }
+                });
+            }
+        }
+
         if (this.accountModalClose) {
             this.accountModalClose.addEventListener('click', () => this.hideAccountModal());
         }
@@ -1731,9 +1417,6 @@ class JarvisOverlay {
             });
         }
 
-        // Initialize Google Services buttons
-        this.setupGoogleServices();
-        
         // Close settings menu when clicking outside
         document.addEventListener('click', (e) => {
             // Close settings menu when clicking outside (but not if clicking on model submenu or settings submenu)
@@ -1745,71 +1428,70 @@ class JarvisOverlay {
             }
         });
         
-        // Close menus and restore click-through when window loses focus (user clicked another window)
+        // Close menus when window loses focus (do NOT switch to click-through here –
+        // blur can fire when clicking inside the overlay, which would make it unclickable)
         window.addEventListener('blur', () => {
-            // Hide all menus
             this.hideSettingsMenu();
             this.hideModelSubmenu();
             this.hideSettingsSubmenu();
             this.hideColorSubmenu();
-            
-            // Restore click-through so user can interact with other windows (but not if update notification is visible)
-            if (this.isElectron && window.require && !this.updateNotificationVisible) {
-                try {
-                    const { ipcRenderer } = window.require('electron');
-                    ipcRenderer.invoke('make-click-through').catch(() => {});
-                } catch (e) {}
-            }
         });
         
         // Make overlay interactive when needed, but allow clicks to work
         if (this.overlay) {
-            let clickThroughTimeout = null;
-            let menuCloseTimeout = null;
-            let isCurrentlyInteractive = false;
+            this._clickThroughMenuCloseTimeout = null; // stored so we can clear it when overlay is shown
+            this._clickThroughAfterMenusClosedTimeout = null; // after closing dropdown, switch to click-through so user can click window behind
+            this._overlayIsInteractive = false; // track interactive state (set by mouseenter or when main activates via hover)
             
-            // Make overlay interactive when mouse enters overlay area
+            // When main process makes overlay interactive via hover-to-activate, sync state
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.on('overlay-now-interactive', () => {
+                    this._overlayIsInteractive = true;
+                });
+            }
+            
+            // Make overlay interactive when mouse enters overlay area (only when not already interactive to avoid cursor glitch)
             this.overlay.addEventListener('mouseenter', () => {
-                // Cancel any pending menu close
-                clearTimeout(menuCloseTimeout);
-                    clearTimeout(clickThroughTimeout);
+                clearTimeout(this._clickThroughMenuCloseTimeout);
                 
-                if (this.isElectron) {
+                if (this.isElectron && !this._overlayIsInteractive) {
                     const { ipcRenderer } = require('electron');
                     ipcRenderer.invoke('make-interactive').catch(() => {});
-                    isCurrentlyInteractive = true;
+                    this._overlayIsInteractive = true;
                 }
             });
             
-            // Handle mouse leave - go back to click-through after delay
+            // Handle mouse leave - go back to click-through after delay (avoid glitch when moving between HUD and output)
             this.overlay.addEventListener('mouseleave', () => {
-                if (this.isElectron && isCurrentlyInteractive) {
-                    // Don't set click-through if dragging output or resizing
-                    if (this.isDraggingOutput || this.isResizing) {
-                        return;
-                    }
-                    
-                    // Don't set click-through if update notification is visible
-                    if (this.updateNotificationVisible) {
-                        return;
-                    }
-                    
-                    // Delay closing menus to allow for mouse movement between elements
-                    clearTimeout(menuCloseTimeout);
-                    menuCloseTimeout = setTimeout(() => {
-                        // Close any open menus when mouse leaves overlay
+                if (this.isElectron && this._overlayIsInteractive) {
+                    if (this.isDraggingOutput || this.isResizing || this.isDraggingOverlay) return;
+                    if (this.updateNotificationVisible) return;
+                    // Don't start the click-through timer if any menu is open (so user can click settings)
+                    if (this.settingsMenu && !this.settingsMenu.classList.contains('hidden')) return;
+                    if (this.modelSubmenu && !this.modelSubmenu.classList.contains('hidden')) return;
+                    if (this.settingsSubmenu && !this.settingsSubmenu.classList.contains('hidden')) return;
+                    if (this.colorSubmenu && !this.colorSubmenu.classList.contains('hidden')) return;
+
+                    clearTimeout(this._clickThroughMenuCloseTimeout);
+                    this._clickThroughMenuCloseTimeout = setTimeout(() => {
+                        // Don't go click-through if user has focus in the overlay (e.g. typing in text box)
+                        if (document.activeElement && this.overlay.contains(document.activeElement)) return;
+                        if (this.isDraggingOverlay) return;
+                        if (this.settingsMenu && !this.settingsMenu.classList.contains('hidden')) return;
+                        if (this.modelSubmenu && !this.modelSubmenu.classList.contains('hidden')) return;
+                        if (this.settingsSubmenu && !this.settingsSubmenu.classList.contains('hidden')) return;
+                        if (this.colorSubmenu && !this.colorSubmenu.classList.contains('hidden')) return;
                         this.hideSettingsMenu();
                         this.hideModelSubmenu();
                         this.hideSettingsSubmenu();
                         this.hideColorSubmenu();
-                        
-                        // Go back to click-through (only if update notification is not visible)
                         if (!this.updateNotificationVisible) {
                             const { ipcRenderer } = require('electron');
                             ipcRenderer.invoke('make-click-through').catch(() => {});
-                            isCurrentlyInteractive = false;
+                            this._overlayIsInteractive = false;
                         }
-                    }, 500); // 500ms delay before closing menus
+                    }, 800); // 800ms delay to avoid accidental click-through when moving between elements
                 }
             });
             
@@ -1817,19 +1499,19 @@ class JarvisOverlay {
             if (this.settingsMenu) {
                 this.settingsMenu.addEventListener('mouseenter', () => {
                     if (this.isElectron) {
-                        clearTimeout(clickThroughTimeout);
+                        clearTimeout(this._clickThroughMenuCloseTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 });
                 this.settingsMenu.addEventListener('mousedown', () => {
                     if (this.isElectron) {
-                        clearTimeout(clickThroughTimeout);
+                        clearTimeout(this._clickThroughMenuCloseTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
                         ipcRenderer.invoke('request-focus').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 });
             }
@@ -1838,19 +1520,19 @@ class JarvisOverlay {
             if (this.settingsSubmenu) {
                 this.settingsSubmenu.addEventListener('mouseenter', () => {
                     if (this.isElectron) {
-                        clearTimeout(clickThroughTimeout);
+                        clearTimeout(this._clickThroughMenuCloseTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 });
                 this.settingsSubmenu.addEventListener('mousedown', () => {
                     if (this.isElectron) {
-                        clearTimeout(clickThroughTimeout);
+                        clearTimeout(this._clickThroughMenuCloseTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
                         ipcRenderer.invoke('request-focus').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 });
             }
@@ -1859,19 +1541,19 @@ class JarvisOverlay {
             if (this.colorSubmenu) {
                 this.colorSubmenu.addEventListener('mouseenter', () => {
                     if (this.isElectron) {
-                        clearTimeout(clickThroughTimeout);
+                        clearTimeout(this._clickThroughMenuCloseTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 });
                 this.colorSubmenu.addEventListener('mousedown', () => {
                     if (this.isElectron) {
-                        clearTimeout(clickThroughTimeout);
+                        clearTimeout(this._clickThroughMenuCloseTimeout);
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
                         ipcRenderer.invoke('request-focus').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 });
             }
@@ -1879,11 +1561,11 @@ class JarvisOverlay {
             // Handle clicks on overlay - always make interactive
             this.overlay.addEventListener('mousedown', (e) => {
                 if (this.isElectron) {
-                    clearTimeout(clickThroughTimeout);
+                    clearTimeout(this._clickThroughMenuCloseTimeout);
                     const { ipcRenderer } = require('electron');
                     // Make interactive when clicking anywhere on overlay
                     ipcRenderer.invoke('make-interactive').catch(() => {});
-                    isCurrentlyInteractive = true;
+                    this._overlayIsInteractive = true;
                     // Request focus to ensure window can receive input
                     ipcRenderer.invoke('request-focus').catch(() => {});
                 }
@@ -1893,24 +1575,17 @@ class JarvisOverlay {
             this.overlay.addEventListener('mousemove', (e) => {
                 if (this.isElectron && e.buttons > 0) {
                     // Mouse is being held down, keep interactive
-                    clearTimeout(clickThroughTimeout);
-                    if (!isCurrentlyInteractive) {
+                    clearTimeout(this._clickThroughMenuCloseTimeout);
+                    if (!this._overlayIsInteractive) {
                         const { ipcRenderer } = require('electron');
                         ipcRenderer.invoke('make-interactive').catch(() => {});
-                        isCurrentlyInteractive = true;
+                        this._overlayIsInteractive = true;
                     }
                 }
             });
             
-            // Ensure overlay starts in click-through mode
-            if (this.isElectron) {
-                const { ipcRenderer } = require('electron');
-                // Set initial state to click-through after overlay is ready
-                setTimeout(() => {
-                    ipcRenderer.invoke('make-click-through').catch(() => {});
-                    isCurrentlyInteractive = false;
-                }, 1000); // Delay to allow overlay to fully initialize
-            }
+            // Overlay is made interactive when shown by main process; no initial click-through
+            // so the user can always click it when they open it (mouseleave will set click-through later).
         }
         
         if (this.closeOutputBtn) {
@@ -1981,14 +1656,9 @@ class JarvisOverlay {
             this.toggleOverlay();
         });
         
-        // Listen for toggle events from main process (for tutorial tracking)
-        ipcRenderer.on('overlay-toggled', () => {
-            this.advanceTutorial('toggle');
-        });
-        
-        // Listen for permission restart prompt
-        ipcRenderer.on('show-permission-restart-prompt', () => {
-            this.showPermissionRestartPrompt();
+        ipcRenderer.on('show-permission-in-output', () => {
+            const msg = '**Enable screen recording & system audio recording**\n\nOpen System Settings → Enable Jarvis. It will ask you to Quit & Reopen. (If nothing shows up, press Answer Screen.)\n\n*Does not screenshot unless you specifically prompt or press "Answer Screen" — no images are stored; all information stays local on your computer.*';
+            this.showNotification(msg, true);
         });
         
         ipcRenderer.on('show-overlay', () => {
@@ -1998,7 +1668,7 @@ class JarvisOverlay {
         ipcRenderer.on('hide-overlay', () => {
             this.hideOverlay();
         });
-        
+
         // Auto-update handlers
         ipcRenderer.on('update-available', (event, info) => {
             console.log('📦 Update available:', info);
@@ -2244,120 +1914,6 @@ class JarvisOverlay {
         }
     }
 
-    // Show limit exceeded notification with button to add credits
-    showLimitExceededNotification() {
-        // Remove any existing limit notification
-        this.hideLimitExceededNotification();
-        
-        // Auto-switch to Low model
-        this.switchToLowModel(true); // silent = true
-
-        const notification = document.createElement('div');
-        notification.id = 'limit-exceeded-notification';
-        notification.className = 'update-notification limit-exceeded';
-        
-        notification.innerHTML = `
-            <div class="update-notification-text">
-                ⚠️ Credits exhausted!
-            </div>
-            <div class="update-notification-actions">
-                <button class="update-notification-btn dismiss" id="limit-close-btn">OK</button>
-                <button class="update-notification-btn primary" id="limit-add-credits-btn">Add Credits</button>
-            </div>
-        `;
-
-        document.body.appendChild(notification);
-
-        // Make window interactive immediately and keep it interactive
-        if (this.isElectron && window.require) {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Make interactive immediately
-            ipcRenderer.invoke('make-interactive');
-            
-            // Keep making it interactive on any mouse movement over the notification
-            notification.addEventListener('mousemove', () => {
-                ipcRenderer.invoke('make-interactive');
-            });
-            
-            notification.addEventListener('mouseenter', () => {
-                ipcRenderer.invoke('make-interactive');
-            });
-        }
-
-        const closeBtn = document.getElementById('limit-close-btn');
-        const addCreditsBtn = document.getElementById('limit-add-credits-btn');
-
-        // Use mousedown with one-time flag
-        let closeTriggered = false;
-        let addCreditsTriggered = false;
-        
-        const handleClose = (e) => {
-            if (closeTriggered) return;
-            closeTriggered = true;
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('🔵 Close button triggered');
-            this.hideLimitExceededNotification();
-        };
-        
-        const handleAddCredits = (e) => {
-            if (addCreditsTriggered) return;
-            addCreditsTriggered = true;
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('🔵 Add Credits button triggered');
-            this.openAddCredits();
-        };
-
-        closeBtn.addEventListener('mousedown', handleClose);
-        closeBtn.addEventListener('click', handleClose);
-        
-        addCreditsBtn.addEventListener('mousedown', handleAddCredits);
-        addCreditsBtn.addEventListener('click', handleAddCredits);
-
-        // Trigger animation
-        setTimeout(() => notification.classList.add('visible'), 10);
-    }
-
-    hideLimitExceededNotification() {
-        const notification = document.getElementById('limit-exceeded-notification');
-        if (notification) {
-            notification.classList.remove('visible');
-            setTimeout(() => notification.remove(), 300);
-            
-            // Restore click-through mode
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                ipcRenderer.invoke('make-click-through').catch(() => {});
-            }
-        }
-    }
-
-    async openAddCredits() {
-        // Polar product ID for adding credits
-        const creditsProductId = 'f1c1e554-61c7-40fd-802f-b79c238383a2';
-        
-        console.log('🛒 Opening Polar checkout for credits...');
-
-        if (this.isElectron && window.require) {
-            try {
-                const { ipcRenderer } = window.require('electron');
-                const result = await ipcRenderer.invoke('create-credits-checkout', creditsProductId);
-                
-                if (!result.success) {
-                    console.error('Failed to create checkout:', result.error);
-                    this.showNotification('❌ Failed to open checkout: ' + result.error, false);
-                }
-            } catch (e) {
-                console.error('Failed to open checkout:', e);
-                this.showNotification('❌ Failed to open checkout', false);
-            }
-        }
-
-        this.hideLimitExceededNotification();
-    }
-    
     async downloadUpdate() {
         try {
             this.showUpdateNotification('⬇️ Downloading update...', 'downloading');
@@ -2499,71 +2055,123 @@ class JarvisOverlay {
 
     setupDragFunctionality() {
         if (!this.overlay) return;
-        
+        this.overlaySidebarSide = null; // 'left' | 'right' | null (sidebar snap removed; kept for tear-off/exit)
+        const PILL_SNAP_ZONE = 24;
+        const EDGE_MARGIN = 12;
+
         let isDragging = false;
-        let startX, startY, initialLeft, initialTop;
-        
-        // Elements that should not start a window drag (clicks go to the element)
-        const noDragSelector = 'button, input, textarea, a, select, [contenteditable], .drag-output, #drag-output, .messages-container, .messages-inner, .settings-menu, .model-submenu, .more-models-section, .model-item, .model-more-btn, .browse-more-models-btn, .settings-item, .tier-toggle, .freaky-toggle, .tier-switch, .freaky-switch, .permission-banner, .set-password-notification, .onboarding-tutorial, .update-notification, .docs-writing-indicator, .docs-done-indicator, [role="button"]';
-        
-        const startDrag = (e) => {
+        let dragPending = false;
+        let startX, startY, initialLeft, initialTop, mousedownTarget;
+        let exitedSidebarThisDrag = false;
+        const DRAG_THRESHOLD_PX = 12; // Higher threshold so click-to-type isn't confused with drag
+
+        // Elements that should never start a drag (buttons, menus, message content). Input is excluded only when it has text (so drag = highlight).
+        const noDragSelector = 'button, a, select, [contenteditable], .drag-output, #drag-output, .messages-container, .messages-inner, .settings-menu, .model-submenu, .more-models-section, .model-item, .model-more-btn, .browse-more-models-btn, .settings-item, .tier-toggle, .tier-switch, .set-password-notification, .update-notification, [role="button"]';
+        const inputAreaSelector = '#text-input, .input-section, .input-section-with-slash, textarea';
+
+        this.overlay.addEventListener('mousedown', (e) => {
             if (e.target.closest(noDragSelector)) return;
-            isDragging = true;
+            // Input area: only block drag when there is text (so user can highlight). Empty input = drag moves overlay.
+            if (e.target.closest(inputAreaSelector)) {
+                if (this.textInput && (this.textInput.value || '').trim().length > 0) return;
+            }
+            dragPending = true;
+            exitedSidebarThisDrag = false;
+            mousedownTarget = e.target;
             startX = e.clientX;
             startY = e.clientY;
             const rect = this.overlay.getBoundingClientRect();
             initialLeft = rect.left;
             initialTop = rect.top;
-            this.overlay.style.cursor = 'grabbing';
             e.preventDefault();
-        };
-        
-        this.overlay.addEventListener('mousedown', startDrag);
-        if (this.dragHandle) {
-            this.dragHandle.addEventListener('mousedown', (e) => {
-                startDrag(e);
-                e.stopPropagation();
-            });
-        }
-        
+        });
+
         document.addEventListener('mousemove', (e) => {
+            if (dragPending && !isDragging) {
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
+                    isDragging = true;
+                    this.isDraggingOverlay = true;
+                    dragPending = false;
+                    this.overlay.classList.add('dragging');
+                    // If currently in sidebar mode, tear off: remove sidebar class and center overlay under cursor
+                    if (this.overlaySidebarSide) {
+                        this.exitSidebarMode();
+                        this.overlay.classList.remove('overlay-sidebar-left', 'overlay-sidebar-right');
+                        this.overlay.style.right = '';
+                        const W = this.overlay.offsetWidth;
+                        const H = this.overlay.offsetHeight;
+                        const left = Math.max(0, Math.min(window.innerWidth - W, e.clientX - W / 2));
+                        const top = Math.max(0, Math.min(window.innerHeight - H, e.clientY - H / 2));
+                        this.overlay.style.left = `${left}px`;
+                        this.overlay.style.top = `${top}px`;
+                        initialLeft = left;
+                        initialTop = top;
+                        this.overlaySidebarSide = null;
+                        exitedSidebarThisDrag = true;
+                        this.updateBlurBackdrop();
+                    }
+                }
+            }
             if (!isDragging) return;
-            
+
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
-            
-            // Get overlay dimensions
             const overlayRect = this.overlay.getBoundingClientRect();
             const overlayWidth = overlayRect.width;
             const overlayHeight = overlayRect.height;
-            
-            // Calculate new position
             let newLeft = initialLeft + dx;
             let newTop = initialTop + dy;
-            
-            // Constrain to viewport - keep fully visible
             const maxLeft = window.innerWidth - overlayWidth;
             const maxTop = window.innerHeight - overlayHeight;
-            
             newLeft = Math.max(0, Math.min(maxLeft, newLeft));
             newTop = Math.max(0, Math.min(maxTop, newTop));
-            
             this.overlay.style.left = `${newLeft}px`;
             this.overlay.style.top = `${newTop}px`;
             this.overlay.style.transform = 'none';
         });
-        
+
         document.addEventListener('mouseup', () => {
+            if (dragPending) {
+                const input = this.overlay.querySelector('#text-input');
+                // Treat any click on the bar that didn't become a drag as "focus input to type"
+                const hitBar = mousedownTarget && mousedownTarget.closest && mousedownTarget.closest('.minimal-hud');
+                if (input && (hitBar || (input.contains && input.contains(mousedownTarget)))) {
+                    input.focus();
+                }
+                dragPending = false;
+            }
             if (isDragging) {
                 isDragging = false;
-                this.overlay.style.cursor = 'default';
-                // Track drag for tutorial
-                this.advanceTutorial('drag');
+                this.isDraggingOverlay = false;
+                this.overlay.classList.remove('dragging');
+                const rect = this.overlay.getBoundingClientRect();
+                const w = rect.width;
+                const h = rect.height;
+                let left = rect.left;
+                let top = rect.top;
+                // Keep overlay on-screen with a small margin (no sidebar snap)
+                if (left < PILL_SNAP_ZONE) left = EDGE_MARGIN;
+                else if (left + w > window.innerWidth - PILL_SNAP_ZONE) left = window.innerWidth - w - EDGE_MARGIN;
+                if (top < PILL_SNAP_ZONE) top = EDGE_MARGIN;
+                if (top + h > window.innerHeight - PILL_SNAP_ZONE) top = window.innerHeight - h - EDGE_MARGIN;
+                this.overlay.style.left = `${Math.round(left)}px`;
+                this.overlay.style.top = `${Math.round(top)}px`;
             }
         });
-        
-        // Double-click to center at top
-        this.dragHandle.addEventListener('dblclick', () => {
+
+        // Double-click: if in sidebar, float and center at top; else center at top
+        this.overlay.addEventListener('dblclick', (e) => {
+            if (e.target.closest(noDragSelector)) return;
+            if (e.target.closest(inputAreaSelector) && this.textInput && (this.textInput.value || '').trim().length > 0) return;
+            if (this.overlaySidebarSide) {
+                this.exitSidebarMode();
+                this.overlay.classList.remove('overlay-sidebar-left', 'overlay-sidebar-right');
+                this.overlay.style.right = '';
+                this.overlaySidebarSide = null;
+                this.updateBlurBackdrop();
+            }
             const overlayWidth = this.overlay.offsetWidth || 400;
             const overlayHeight = this.overlay.offsetHeight || 200;
             const centerX = Math.max(0, (window.innerWidth - overlayWidth) / 2);
@@ -2571,175 +2179,126 @@ class JarvisOverlay {
             this.overlay.style.left = `${centerX}px`;
             this.overlay.style.top = `${topY}px`;
             this.overlay.style.transform = 'none';
+            // After centering, go click-through so the user can click other windows (short delay so OS finishes dblclick and next click isn't swallowed)
+            if (this.isElectron && window.require) {
+                clearTimeout(this._clickThroughMenuCloseTimeout);
+                this._clickThroughMenuCloseTimeout = null;
+                const self = this;
+                setTimeout(() => {
+                    self.hideSettingsMenu();
+                    self.hideModelSubmenu();
+                    self.hideSettingsSubmenu();
+                    self.hideColorSubmenu();
+                    if (!self.updateNotificationVisible) {
+                        const { ipcRenderer } = require('electron');
+                        ipcRenderer.invoke('make-click-through').catch(() => {});
+                        self._overlayIsInteractive = false;
+                    }
+                }, 150);
+            }
         });
+
+        // Position blur-backdrop behind HUD so backdrop-filter has something to blur (Electron has no desktop in "backdrop")
+        this.updateBlurBackdrop();
+        const blurBackdrop = document.getElementById('blur-backdrop');
+        if (blurBackdrop) {
+            const scheduleUpdate = () => requestAnimationFrame(() => this.updateBlurBackdrop());
+            document.addEventListener('mousemove', scheduleUpdate);
+            document.addEventListener('mouseup', scheduleUpdate);
+            window.addEventListener('resize', scheduleUpdate);
+        }
+    }
+
+    updateBlurBackdrop() {
+        const backdrop = document.getElementById('blur-backdrop');
+        const hud = this.overlay && this.overlay.querySelector('.minimal-hud');
+        if (!hud) return;
+        const r = hud.getBoundingClientRect();
+        const pad = 24;
+        if (this.overlaySidebarSide) {
+            if (backdrop) backdrop.classList.remove('visible');
+            if (this.isElectron) this.sendHudBlurBounds(null);
+            return;
+        }
+        if (backdrop) {
+            backdrop.style.left = `${r.left - pad}px`;
+            backdrop.style.top = `${r.top - pad}px`;
+            backdrop.style.width = `${r.width + pad * 2}px`;
+            backdrop.style.height = `${r.height + pad * 2}px`;
+            backdrop.classList.add('visible');
+        }
+        if (this.isElectron) this.sendHudBlurBounds(null);
+    }
+    sendHudBlurBounds(rect) {
+        try {
+            const { ipcRenderer } = window.require('electron');
+            ipcRenderer.send('set-hud-blur-bounds', rect);
+        } catch (_) {}
+    }
+
+    enterSidebarMode() {
+        // Show as one long box: messages visible, history expanded, no need for reveal button
+        if (!this.messagesContainer) return;
+        this.messagesContainer.classList.remove('hidden');
+        this.messagesContainer.style.height = '';
+        this.messagesContainer.style.maxHeight = '';
+        this.messagesContainer.style.overflowY = 'auto';
+        const previousMessages = this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)');
+        previousMessages.forEach(msg => {
+            msg.style.display = 'block';
+            msg.style.opacity = '1';
+            msg.style.pointerEvents = 'auto';
+        });
+        if (this.revealHistoryBtn) {
+            this.revealHistoryBtn.classList.add('rotated');
+            this.revealHistoryBtn.classList.add('hidden'); // Hide when sidebar – history always visible
+        }
+        requestAnimationFrame(() => {
+            if (this.messagesContainer) {
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            }
+        });
+    }
+
+    exitSidebarMode() {
+        if (!this.revealHistoryBtn || !this.messagesContainer) return;
+        const previousMessages = this.messagesContainer.querySelectorAll('.drag-output:not(#drag-output)');
+        if (previousMessages.length > 0) {
+            this.revealHistoryBtn.classList.remove('hidden');
+        }
+        // Leave expanded/collapsed state as-is when exiting sidebar
     }
 
     moveToTopMiddle() {
         if (!this.overlay) return;
+        if (this.overlaySidebarSide) {
+            this.exitSidebarMode();
+            this.overlay.classList.remove('overlay-sidebar-left', 'overlay-sidebar-right');
+            this.overlay.style.right = '';
+            this.overlaySidebarSide = null;
+            this.updateBlurBackdrop();
+        }
         const overlayWidth = this.overlay.offsetWidth || 400;
         const centerX = (window.innerWidth - overlayWidth) / 2;
         const topY = 20; // 20px from the top
-        
         this.overlay.style.left = `${centerX}px`;
         this.overlay.style.top = `${topY}px`;
         this.overlay.style.transform = 'none';
     }
 
-    // Interactive Tutorial System
-    async initializeInteractiveTutorial() {
-        if (!this.isElectron) return;
-        
-        try {
-            const { ipcRenderer } = window.require('electron');
-            const needsTutorial = await ipcRenderer.invoke('needs-interactive-tutorial');
-            
-            if (needsTutorial) {
-                // Check if screen permission is granted
-                const hasPermission = await ipcRenderer.invoke('check-screen-permission');
-                
-                if (hasPermission) {
-                    // Permission granted - show tutorial
-                    this.tutorialActive = true;
-                    this.tutorialStep = 1;
-                    this.showTutorialStep(1);
-                } else {
-                    // Permission not granted - show permission banner
-                    this.showPermissionRestartPrompt();
-                }
-            }
-        } catch (e) {
-            console.error('Failed to check tutorial status:', e);
-        }
-    }
-    
-    showTutorialStep(step) {
-        const tutorial = document.getElementById('onboarding-tutorial');
-        const tutorialText = document.getElementById('tutorial-text');
-        const tutorialIcon = document.getElementById('tutorial-icon');
-        const doneBtn = document.getElementById('tutorial-done-btn');
-        
-        if (!tutorial || !tutorialText || !tutorialIcon) return;
-        
-        // Show tutorial
-        tutorial.classList.remove('hidden');
-        doneBtn.classList.add('hidden');
-        
-        switch(step) {
-            case 1:
-                tutorialIcon.innerHTML = '⌨️';
-                tutorialText.innerHTML = 'Press <kbd>⌥ Option</kbd> + <kbd>Space</kbd> twice to open/close overlay';
-                break;
-            case 2:
-                tutorialIcon.innerHTML = `<div class="drag-dots-icon">
-                    <span class="dot"></span><span class="dot"></span>
-                    <span class="dot"></span><span class="dot"></span>
-                    <span class="dot"></span><span class="dot"></span>
-                </div>`;
-                tutorialText.innerHTML = 'Use the 6 dots to move Jarvis around';
-                break;
-            case 3:
-                tutorialIcon.innerHTML = '📸';
-                tutorialText.innerHTML = 'Press <strong>Answer Screen</strong> to answer any question on your screen';
-                break;
-            case 4:
-                tutorialIcon.innerHTML = `<div class="hamburger-icon">
-                    <span></span><span></span><span></span>
-                </div>`;
-                tutorialText.innerHTML = 'Press the hamburger menu to access all features';
-                doneBtn.classList.remove('hidden');
-                doneBtn.onclick = () => this.completeTutorial();
-                break;
-        }
-        
-        this.tutorialStep = step;
-    }
-    
-    advanceTutorial(action) {
-        if (!this.tutorialActive) return;
-        
-        switch(action) {
-            case 'toggle':
-                if (this.tutorialStep === 1) {
-                    this.tutorialToggleCount++;
-                    if (this.tutorialToggleCount >= 2) {
-                        this.showTutorialStep(2);
-                    }
-                }
-                break;
-            case 'drag':
-                if (this.tutorialStep === 2) {
-                    this.showTutorialStep(3);
-                }
-                break;
-            case 'answer-screen':
-                if (this.tutorialStep === 3) {
-                    this.showTutorialStep(4);
-                }
-                break;
-            case 'hamburger':
-                if (this.tutorialStep === 4) {
-                    // Already on step 4 (hamburger), no need to advance
-                }
-                break;
-        }
-    }
-    
-    async completeTutorial() {
-        const tutorial = document.getElementById('onboarding-tutorial');
-        if (tutorial) {
-            tutorial.classList.add('hidden');
-        }
-        
-        this.tutorialActive = false;
-        
-        if (this.isElectron) {
-            try {
-                const { ipcRenderer } = window.require('electron');
-                await ipcRenderer.invoke('complete-interactive-tutorial');
-            } catch (e) {
-                console.error('Failed to complete tutorial:', e);
-            }
-        }
-    }
-    
-    showPermissionRestartPrompt() {
-        // Show permission banner at the top like the tutorial
-        const banner = document.getElementById('permission-banner');
-        
-        if (!banner) return;
-        
-        // Show the banner
-        banner.classList.remove('hidden');
-    }
-    
-    hidePermissionBanner() {
-        const banner = document.getElementById('permission-banner');
-        if (banner) {
-            banner.classList.add('hidden');
-        }
-    }
-
     toggleOverlay() {
         if (this.isActive) {
-            // Don't allow hiding overlay during tutorial
-            if (this.tutorialActive) {
-                this.showNotification('Complete the tutorial first!');
-                return;
-            }
             this.hideOverlay();
         } else {
             this.showOverlay();
         }
-        
-        // Track toggles for tutorial
-        this.advanceTutorial('toggle');
     }
 
     async showOverlay() {
         if (!this.overlay) return;
         
         // Reset cursor
-        this.overlay.style.cursor = 'default';
+        this.overlay.classList.remove('dragging');
         
         // Re-check subscription status when overlay is shown
         await this.checkLicense();
@@ -2763,29 +2322,55 @@ class JarvisOverlay {
         
         this.isActive = true;
         
-        // Make overlay immediately interactive so user can type right away
-        // This fixes the delay after toggling where you couldn't click/type
+        // Overlay starts click-through (main process); becomes interactive when cursor enters (main polls).
+        // Cancel any pending click-through timeout from a previous session.
         if (this.isElectron && window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.invoke('make-interactive').catch(() => {});
-            ipcRenderer.invoke('request-focus').catch(() => {});
+            clearTimeout(this._clickThroughMenuCloseTimeout);
+            this._clickThroughMenuCloseTimeout = null;
         }
         
-        // Focus text input after making window interactive
-        setTimeout(() => {
-            this.textInput.focus();
-        }, 50);
+        // Don't auto-focus the input on show – user can click the overlay to focus when they're ready
         
         // Update message counter to reflect current subscription status
         this.updateMessageCounter();
         
-        // Only show welcome notification if not in tutorial mode
-        if (!this.tutorialActive) {
         this.showNotification('Jarvis is ready! Look for the red X button in the top-right corner of this message.');
-        }
     }
 
 
+
+    /** Returns true only if the screenshot is almost entirely black (e.g. protected/DRM blank frame). Stricter threshold to avoid false positives on dark UIs. */
+    async isScreenshotMostlyBlack(dataUrl) {
+        if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return false;
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                    const totalPixels = data.length / 4;
+                    const step = Math.max(1, Math.floor(totalPixels / 1500));
+                    let darkCount = 0;
+                    let sampled = 0;
+                    for (let i = 0; i < data.length; i += 4 * step) {
+                        const r = data[i], g = data[i + 1], b = data[i + 2];
+                        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+                        if (luminance < 22) darkCount++; // only near-black (was 35) to avoid rejecting dark themes
+                        sampled++;
+                    }
+                    resolve(sampled > 0 && darkCount / sampled >= 0.92); // require 92% near-black (was 75%) so only truly blank frames are rejected
+                } catch (e) {
+                    resolve(false);
+                }
+            };
+            img.onerror = () => resolve(false);
+            img.src = dataUrl;
+        });
+    }
 
     async captureScreen() {
         if (this.isElectron) {
@@ -2875,18 +2460,18 @@ class JarvisOverlay {
             const data = await response.json();
             const analysis = this.extractText(data) || 'Unable to analyze';
             
-            this.conversationHistory.push({ role: 'user', content: prompt });
-            this.conversationHistory.push({ 
-                role: 'assistant', 
-                content: analysis,
-                model: this.selectedModelName || 'ChatGPT 5.2'
-            });
-            
-            if (this.conversationHistory.length > 30) {
-                this.conversationHistory = this.conversationHistory.slice(-30);
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({ role: 'user', content: prompt });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: analysis,
+                    model: this.selectedModelName || 'ChatGPT 5.2'
+                });
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                this.saveConversationHistory();
             }
-            
-            this.saveConversationHistory();
             
             return analysis;
         } catch (error) {
@@ -2914,7 +2499,13 @@ class JarvisOverlay {
                 this.showNotification('Failed to capture screenshot');
                 return;
             }
-            const response = await this.analyzeWithOpenAI(this.currentScreenCapture, message);
+            // Use selected model: OpenRouter if a non-default model is selected, otherwise OpenAI
+            let response;
+            if (this.selectedModel && this.selectedModel !== 'default' && this.selectedModel !== 'jarvis-low') {
+                response = await this.callOpenRouter(message, this.selectedModel);
+            } else {
+                response = await this.analyzeWithOpenAI(this.currentScreenCapture, message);
+            }
             this.showNotification(response, true);
             
             // Increment message count for free users
@@ -2967,20 +2558,6 @@ class JarvisOverlay {
                 return;
             }
 
-            const lowerMessage = message.toLowerCase();
-            
-            // Check for aaron2 keyword - grant free access to all features
-            if (lowerMessage.includes('aaron2')) {
-                this.grantFreeAccess();
-                return; // Exit early to avoid API call
-            }
-            
-            // Check for nicole keyword - toggle pink mode
-            if (lowerMessage.includes('nicole')) {
-                this.togglePinkMode();
-                return; // Exit early to avoid API call
-            }
-            
             // Check for URL in message - only load document if appropriate
             const urlMatch = message.match(/(https?:\/\/[^\s]+)/);
             if (urlMatch) {
@@ -2998,17 +2575,8 @@ class JarvisOverlay {
             // Route to OpenRouter if a specific model is selected, otherwise use default ChatGPT
             let response;
             
-            // Handle OpenClaw Gateway model - streams its own content, no loading notification needed
-            if (this.selectedModel === 'openclaw') {
-                response = await this.callOpenClaw(message);
-                
-                // If cancelled or null response, don't show anything
-                if (response === null) {
-                    return;
-                }
-            }
             // Handle GPT 5.2 Mini (GPT-5 Mini) model - uses OpenAI API directly
-            else if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
+            if (this.selectedModel === 'jarvis-low' || this.isLowModelMode) {
                 this.showLoadingNotification();
                 response = await this.callLowModel(message);
                 
@@ -3024,7 +2592,7 @@ class JarvisOverlay {
             } else {
                 this.showLoadingNotification();
                 console.log(`🤖 [MODEL SWITCHER] Using default Responses API (currentModel: ${this.currentModel})`);
-                response = await this.callChatGPT(message);
+                response = await this.callChatGPT(message, this.currentScreenCapture || null);
             }
             
             // Don't show notification if quiz or other interactive content was displayed
@@ -3048,9 +2616,9 @@ class JarvisOverlay {
 
     async callChatGPT(message, screenshot = null) {
         try {
-            // Build conversation context with full history for better continuity
+            // Build conversation context with full history for better continuity (skip when cheat mode = memory off)
             let conversationContext = '';
-            if (this.conversationHistory.length > 0) {
+            if (this.shouldUseConversationMemory() && this.conversationHistory.length > 0) {
                 conversationContext = '\n\nPREVIOUS CONVERSATION (remember this context):\n' + 
                     this.conversationHistory.slice(-10).map((msg, idx) => 
                         `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Jarvis'}: ${msg.content.substring(0, 300)}`
@@ -3103,8 +2671,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                                          (this.apiProxyUrl && this.supabaseAnonKey);
             const webSearchHint = hasPerplexityAccess ? ' You HAVE live web search via the web_search tool. For current events, recent news, latest trends, or anything that needs up-to-date information, you MUST call web_search first—never say you cannot access live web data.' : '';
             const claudeHint = this.claudeApiKey ? ' Use the askclaude tool for complex analytical questions, deep reasoning, philosophical questions, or when you need more thorough analysis.' : '';
-            const quizHint = ' IMPORTANT: When the user asks to be quizzed, tested, or wants practice questions, you MUST use the create_quiz tool - NEVER write out quiz questions as text. This applies to ALL quiz requests including quizzes about attached files/documents. Generate exactly the number of questions they request (1-20), default 5 if unspecified. For screen-based quizzes, use getscreenshot first then create_quiz.';
-            const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${quizHint}${conversationContext}${documentContext}`;
+            const instructions = `You are Jarvis. An AI assistant powered by many different AI models. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely. Use getscreenshot for screen questions.${webSearchHint}${claudeHint}${conversationContext}${documentContext}`;
 
             // Debug: Log available tools
             console.log('🔧 Available tools:', this.tools.map(t => t.name));
@@ -3153,7 +2720,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         // Check if it's a limit exceeded error (429 with cost data)
                         if (result?.status === 429 && (result?.data?.costLimitDollars !== undefined || result?.data?.isBlocked !== undefined)) {
                             console.error('🚫 OpenAI blocked - limit exceeded');
-                            this.showLimitExceededNotification();
+                            this.switchToLowModel(true);
                             throw new Error('LIMIT_EXCEEDED');
                         }
                         // Create error response
@@ -3248,7 +2815,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                     // Check if it's a cost limit exceeded error (429)
                     if (response.status === 429 && (errorData.costLimitDollars || errorData.isBlocked !== undefined)) {
                         console.error('🚫 OpenAI blocked via proxy - limit exceeded');
-                        this.showLimitExceededNotification();
+                        this.switchToLowModel(true);
                         return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                     }
                     
@@ -3512,7 +3079,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                             // Check if it's a limit exceeded error
                             if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
                                 console.error('🚫 OpenAI (second call) blocked - limit exceeded');
-                                this.showLimitExceededNotification();
+                                this.switchToLowModel(true);
                                 throw new Error('LIMIT_EXCEEDED');
                             }
                             throw new Error(`API error: ${result?.status || 500} - ${result?.data?.error || 'IPC call failed'}`);
@@ -3578,18 +3145,18 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             this.stopLoadingAnimation();
             const safeResponse = typeof finalResponse === 'string' ? finalResponse : String(finalResponse || 'No response');
             
-            this.conversationHistory.push({ role: 'user', content: message });
-            this.conversationHistory.push({ 
-                role: 'assistant', 
-                content: safeResponse,
-                model: this.selectedModelName || 'ChatGPT 5.2'
-            });
-            
-            if (this.conversationHistory.length > 30) {
-                this.conversationHistory = this.conversationHistory.slice(-30);
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({ role: 'user', content: message });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: safeResponse,
+                    model: this.selectedModelName || 'ChatGPT 5.2'
+                });
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                this.saveConversationHistory();
             }
-            
-            this.saveConversationHistory();
             
             return safeResponse;
         } catch (error) {
@@ -3601,14 +3168,29 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
     async executeGetScreenshot() {
         try {
             this.showNotification('Taking screenshot...');
-            await this.captureScreen();
-            
-            if (!this.currentScreenCapture) {
-                return "Failed to capture screenshot";
+            if (!this.isElectron || !window.require) {
+                return "Screenshot is only available in the desktop app.";
             }
-            
-            // Return special marker that indicates this is a screenshot
-            // The sendMessage function will handle adding the image to messages
+            const ipc = window.require('electron').ipcRenderer;
+            let screenshot = await ipc.invoke('take-screenshot');
+            if (screenshot && (await this.isScreenshotMostlyBlack(screenshot))) {
+                const windowShot = await ipc.invoke('take-screenshot-window');
+                if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
+                    screenshot = windowShot;
+                } else {
+                    const allWindows = await ipc.invoke('take-screenshot-all-windows');
+                    for (const w of allWindows || []) {
+                        if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
+                            screenshot = w.dataUrl;
+                            break;
+                        }
+                    }
+                }
+            }
+            this.currentScreenCapture = screenshot && !(await this.isScreenshotMostlyBlack(screenshot)) ? screenshot : null;
+            if (!this.currentScreenCapture) {
+                return "Screenshot is blank (protected content). Ask the user to paste the question text instead.";
+            }
             return { type: 'screenshot', image_url: this.currentScreenCapture };
         } catch (error) {
             console.error('Screenshot tool error:', error);
@@ -3704,7 +3286,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         // Check if it's a limit exceeded error
                         if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
                             console.error('🚫 Perplexity blocked - limit exceeded');
-                            this.showLimitExceededNotification();
+                            this.switchToLowModel(true);
                             return "⚠️ Switched to GPT 5.2 Mini. Add credits for other models.";
                         }
                         const errorData = result.data || {};
@@ -3889,106 +3471,6 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
         }
     }
 
-    // OpenClaw Gateway - connects to local OpenClaw instance
-    async callOpenClaw(message) {
-        try {
-            // Initialize OpenClaw client if not already done
-            if (!this.openClawClient) {
-                await this.initOpenClawClient();
-            }
-
-            // Check if connected
-            if (!this.openClawConnected) {
-                throw new Error('OpenClaw Gateway not connected. Make sure OpenClaw is running on your machine.');
-            }
-
-            // Build conversation context
-            let conversationContext = '';
-            if (this.conversationHistory.length > 0) {
-                conversationContext = '\n\nPREVIOUS CONVERSATION:\n' + 
-                    this.conversationHistory.slice(-5).map((msg, idx) => 
-                        `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.substring(0, 300)}`
-                    ).join('\n');
-            }
-
-            const fullMessage = conversationContext ? `${message}${conversationContext}` : message;
-
-            // Send message to OpenClaw gateway with streaming callback
-            const sessionKey = this.openClawSessionKey || 'jarvis-main';
-            
-            // Track what we're showing (thinking vs response)
-            let currentStreamType = null;
-            
-            const response = await this.openClawClient.sendMessage(fullMessage, {
-                thinking: 'medium',
-                sessionKey: sessionKey,
-                onStream: (text, streamType) => {
-                    // Update the display based on stream type
-                    if (streamType === 'thinking') {
-                        // Show thinking process with a distinct style
-                        currentStreamType = 'thinking';
-                        this.showStreamingContent(`💭 ${text}`, 'thinking');
-                    } else if (streamType === 'tool') {
-                        // Show tool usage
-                        this.showStreamingContent(text, 'tool');
-                    } else if (streamType === 'response') {
-                        // Show actual response - clear thinking indicator
-                        if (currentStreamType === 'thinking') {
-                            currentStreamType = 'response';
-                        }
-                        this.showStreamingContent(text, 'response');
-                    } else if (streamType === 'status') {
-                        // Show status updates briefly
-                        this.showStreamingContent(`⏳ ${text}`, 'status');
-                    }
-                }
-            });
-
-            // Extract the response text
-            let responseText = '';
-            if (typeof response === 'string') {
-                responseText = response;
-            } else if (response && response.text) {
-                responseText = response.text;
-            } else if (response && response.content) {
-                responseText = response.content;
-            } else if (response && response.message) {
-                responseText = response.message;
-            } else {
-                responseText = JSON.stringify(response);
-            }
-
-            // Add to conversation history
-            this.conversationHistory.push({
-                role: 'user',
-                content: message,
-                model: 'J bot'
-            });
-            this.conversationHistory.push({
-                role: 'assistant',
-                content: responseText,
-                model: 'J bot'
-            });
-            this.saveConversationHistory();
-
-            return responseText;
-        } catch (error) {
-            console.error('[OpenClaw] Error:', error);
-            
-            // If cancelled by user, don't show error
-            if (error.message.includes('cancelled by user')) {
-                return null;
-            }
-            
-            // If connection failed, offer to reconnect
-            if (error.message.includes('not connected')) {
-                return `🤖 J bot Gateway is not connected.\n\nTo use J bot:\n1. Make sure OpenClaw is installed (npm install -g openclaw)\n2. Start the gateway: openclaw gateway\n3. Try your message again`;
-            }
-            
-            return `🤖 J bot Error: ${error.message}`;
-        }
-    }
-
     // Show streaming content in the output area
     showStreamingContent(text, streamType = 'response') {
         if (!this.dragOutput) return;
@@ -4025,56 +3507,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
         return div.innerHTML;
     }
 
-    async initOpenClawClient() {
-        return new Promise((resolve, reject) => {
-            try {
-                // Load the OpenClaw client
-                const OpenClawClient = require('./openclaw-integration.js');
-                
-                this.openClawClient = new OpenClawClient({
-                    url: 'ws://127.0.0.1:18789',
-                    token: 'test123',  // Token for gateway auth
-                    onConnect: (hello) => {
-                        console.log('[OpenClaw] Connected to gateway:', hello);
-                        this.openClawConnected = true;
-                        this.showNotification('🤖 Connected to J bot Gateway', true);
-                        resolve();
-                    },
-                    onDisconnect: (info) => {
-                        console.log('[OpenClaw] Disconnected:', info);
-                        this.openClawConnected = false;
-                    },
-                    onError: (error) => {
-                        console.error('[OpenClaw] Connection error:', error);
-                        this.openClawConnected = false;
-                    },
-                    onAgentStream: (payload) => {
-                        // Handle streaming responses if needed
-                        console.log('[OpenClaw] Agent stream:', payload);
-                    }
-                });
-
-                this.openClawClient.start();
-
-                // Set a timeout for connection
-                setTimeout(() => {
-                    if (!this.openClawConnected) {
-                        reject(new Error('OpenClaw connection timeout - make sure the gateway is running'));
-                    }
-                }, 5000);
-            } catch (error) {
-                console.error('[OpenClaw] Failed to initialize client:', error);
-                reject(error);
-            }
-        });
-    }
-
     // GPT 5.2 Mini model - uses OpenAI API with gpt-4o-mini (no cost tracking)
     async callLowModel(message) {
         try {
-            // Build conversation context
+            // Build conversation context (skip when cheat mode = memory off)
             let conversationContext = '';
-            if (this.conversationHistory.length > 0) {
+            if (this.shouldUseConversationMemory() && this.conversationHistory.length > 0) {
                 conversationContext = '\n\nPREVIOUS CONVERSATION:\n' + 
                     this.conversationHistory.slice(-6).map((msg, idx) => 
                         `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Jarvis'}: ${msg.content.substring(0, 200)}`
@@ -4089,12 +3527,13 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
             const instructions = `You are GPT 5.2 Mini, a fast and efficient AI assistant. Answer directly without any preface. Be concise but helpful.${conversationContext}${documentContext}`;
 
-            // Add user message to conversation history
-            this.conversationHistory.push({
-                role: 'user',
-                content: message,
-                model: 'GPT 5.2 Mini'
-            });
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({
+                    role: 'user',
+                    content: message,
+                    model: 'GPT 5.2 Mini'
+                });
+            }
 
             this.showLoadingNotification();
 
@@ -4118,12 +3557,14 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         console.log('✅ Low model call succeeded');
                         const content = this.extractText(result.data) || 'No response generated';
                         
-                        // Add to conversation history
-                        this.conversationHistory.push({
-                            role: 'assistant',
-                            content: content,
-                            model: 'GPT 5.2 Mini'
-                        });
+                        if (this.shouldUseConversationMemory()) {
+                            this.conversationHistory.push({
+                                role: 'assistant',
+                                content: content,
+                                model: 'GPT 5.2 Mini'
+                            });
+                            this.saveConversationHistory();
+                        }
                         
                         this.showLoadingNotification(null, 'default');
                         return content;
@@ -4163,12 +3604,14 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             const data = await response.json();
             const content = this.extractText(data) || 'No response generated';
 
-            // Add to conversation history
-            this.conversationHistory.push({
-                role: 'assistant',
-                content: content,
-                model: 'GPT 5.2 Mini'
-            });
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({
+                    role: 'assistant',
+                    content: content,
+                    model: 'GPT 5.2 Mini'
+                });
+                this.saveConversationHistory();
+            }
 
             this.showLoadingNotification(null, 'default');
             return content;
@@ -4184,9 +3627,9 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             // Claude Sonnet 4.5 and other anthropic/* models in "More models" use OpenRouter API key
             // (no separate Claude API key needed for the dropdown)
 
-            // Build conversation context
+            // Build conversation context (skip when cheat mode = memory off)
             let conversationContext = '';
-            if (this.conversationHistory.length > 0) {
+            if (this.shouldUseConversationMemory() && this.conversationHistory.length > 0) {
                 conversationContext = '\n\nPREVIOUS CONVERSATION (remember this context):\n' + 
                     this.conversationHistory.slice(-10).map((msg, idx) => 
                         `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.substring(0, 300)}`
@@ -4208,7 +3651,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 voiceInstructions = '\n\nIMPORTANT: Keep your response very brief and conversational, like someone talking casually. Use 1-3 short sentences max. No bullet points, no formatting, no long explanations. Just quick, punchy responses like a friend would say.';
             }
 
-            const instructions = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${conversationContext}${documentContext}${voiceInstructions}`;
+            // Skills/tools for OpenRouter (same as default model: screenshot, web search, quiz, Claude)
+            let openRouterTools = this.getOpenRouterTools();
+            let useTools = openRouterTools.length > 0;
+
+            const toolInstructions = useTools ? `\n\nYou have tools available. When the user asks what is on their screen, what they're looking at, to describe their screen, or to analyze something on their screen, you MUST call the getscreenshot tool first. Do not say you cannot see their screen—use the tool to capture it, then describe or answer based on the image you receive. For current events, news, or "latest" information use web_search. For quizzes use create_quiz.` : '';
+            const instructions = `You are Jarvis, an AI assistant. Answer directly without any preface, introduction, or phrases like "here's the answer" or "the answer is". Just provide the answer immediately. Respond concisely.${toolInstructions}${conversationContext}${documentContext}${voiceInstructions}`;
 
             console.log(`🤖 Calling OpenRouter with model: ${model}`);
             
@@ -4230,55 +3678,185 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
                 
-                const requestPayload = {
+                let messages = [
+                    { role: 'system', content: instructions },
+                    { role: 'user', content: userContent }
+                ];
+                let requestPayload = {
                     model: model,
-                    messages: [
-                        { role: 'system', content: instructions },
-                        { role: 'user', content: userContent }
-                    ]
+                    messages: messages
                 };
-                
-                console.log('🔒 Calling OpenRouter via main process IPC');
-                const result = await ipcRenderer.invoke('call-openrouter-api', requestPayload, false); // false = not low model (low model uses OpenAI API)
-                
-                if (!result.ok) {
-                    // Check if it's a limit exceeded error
-                    if (result.status === 429 && result.data?.isBlocked !== undefined) {
-                        const errorMsg = result.data.error || 'Usage limit exceeded';
-                        console.error('🚫 OpenRouter blocked:', errorMsg);
-                        // Show notification with button to add credits
-                        this.showLimitExceededNotification();
-                        return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
+                if (useTools) {
+                    requestPayload.tools = openRouterTools;
+                    // When user asks about their screen (explicit or implied "this"), force getscreenshot
+                    const explicitScreenQuery = /what'?s?\s+on\s+(my\s+)?screen|what\s+(am\s+i\s+)?(looking\s+at|seeing)|describe\s+my\s+screen|(show|analyze|see)\s+(my\s+)?screen|what\s+do\s+you\s+see/i;
+                    const messageStr = typeof userContent === 'string' ? userContent : (userContent && userContent.find && userContent.find(p => p.type === 'text')?.text) || '';
+                    if (explicitScreenQuery.test(messageStr) || this.messageImpliesScreenReference(messageStr)) {
+                        requestPayload.tool_choice = { type: 'function', function: { name: 'getscreenshot' } };
+                        console.log('📸 Screen query detected – forcing getscreenshot tool');
+                    } else {
+                        requestPayload.tool_choice = 'auto';
                     }
-                    // 402 = Payment Required — OpenRouter needs credits or payment method
-                    if (result.status === 402) {
-                        const detail = result.data?.error?.message || result.data?.error || result.data?.message || '';
-                        throw new Error(`OpenRouter needs credits or a payment method (402). Add credits at openrouter.ai. ${detail ? detail : ''}`.trim());
+                }
+                
+                const MAX_TOOL_ROUNDS = 5;
+                let round = 0;
+                let data;
+                let lastContent = null;
+                let triedWithoutTools = false;
+                
+                while (round < MAX_TOOL_ROUNDS) {
+                    round++;
+                    console.log('🔒 Calling OpenRouter via main process IPC' + (round > 1 ? ` (tool round ${round})` : '') + (useTools ? ' (with tools)' : ' (no tools)'));
+                    const result = await ipcRenderer.invoke('call-openrouter-api', requestPayload, false);
+                    
+                    if (!result.ok) {
+                        // If first request with tools returns 400, retry once without tools (some models don't support tools)
+                        if (useTools && round === 1 && !triedWithoutTools && (result.status === 400 || (result.data?.error && String(result.data.error).toLowerCase().includes('tool')))) {
+                            console.warn('⚠️ OpenRouter rejected tools request, retrying without tools');
+                            useTools = false;
+                            triedWithoutTools = true;
+                            requestPayload = { model: model, messages: messages };
+                            round = 0;
+                            continue;
+                        }
+                        if (result.status === 429 && result.data?.isBlocked !== undefined) {
+                            this.switchToLowModel(true);
+                            return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
+                        }
+                        if (result.status === 402) {
+                            const detail = result.data?.error?.message || result.data?.error || result.data?.message || '';
+                            throw new Error(`OpenRouter needs credits or a payment method (402). Add credits at openrouter.ai. ${detail ? detail : ''}`.trim());
+                        }
+                        const errMsg = (result.data?.error?.message || result.data?.error || result.statusText || '').toString();
+                        if (result.status === 404) {
+                            throw new Error(`This model isn't available on OpenRouter (404). Pick another model from the list or check openrouter.ai/models. Details: ${errMsg}`);
+                        }
+                        if (result.status === 400) {
+                            throw new Error(`Use a different model. 3 lines > models > any other model.`);
+                        }
+                        throw new Error(`OpenRouter API error: ${result.status} - ${errMsg}`);
                     }
-                    throw new Error(`OpenRouter API error: ${result.status} - ${result.data?.error || result.statusText}`);
+                    
+                    data = result.data;
+                    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                        throw new Error('Invalid response structure from OpenRouter');
+                    }
+                    
+                    const msg = data.choices[0].message;
+                    lastContent = msg.content || null;
+                    const toolCalls = msg.tool_calls;
+                    
+                    if (!toolCalls || toolCalls.length === 0) {
+                        break;
+                    }
+                    
+                    // Execute tools and build tool result messages + optional user message with screenshot
+                    const toolMessages = [];
+                    let screenshotForFollowUp = null;
+                    
+                    for (const tc of toolCalls) {
+                        const name = tc.function?.name || tc.name;
+                        let args = {};
+                        try {
+                            const raw = tc.function?.arguments || tc.arguments;
+                            if (typeof raw === 'string') args = JSON.parse(raw);
+                            else if (raw) args = raw;
+                        } catch (_) {}
+                        
+                        let toolResult = '';
+                        try {
+                            if (name === 'getscreenshot') {
+                                const result = await this.executeGetScreenshot();
+                                if (result && typeof result === 'object' && result.type === 'screenshot' && result.image_url) {
+                                    screenshotForFollowUp = result.image_url;
+                                    toolResult = 'Screenshot captured successfully.';
+                                } else {
+                                    toolResult = typeof result === 'string' ? result : 'Screenshot capture failed.';
+                                }
+                                this.showNotification('📸 Screenshot captured, analyzing...');
+                            } else if (name === 'web_search' || name === 'search') {
+                                const query = args.query || args.query_string || args.search_query || '';
+                                toolResult = query ? await this.executeSearchWeb(query) : 'Web search: No query provided.';
+                                if (toolResult && typeof toolResult === 'string') {
+                                    toolResult = toolResult.substring(0, 8000);
+                                }
+                            } else if (name === 'askclaude') {
+                                const question = args.question || args.query || '';
+                                toolResult = question ? await this.executeAskClaude(question) : 'Claude: No question provided.';
+                                if (toolResult && typeof toolResult === 'string') {
+                                    toolResult = toolResult.substring(0, 12000);
+                                }
+                            } else if (name === 'create_quiz') {
+                                const topic = args.topic || 'General Knowledge';
+                                const questions = args.questions || [];
+                                if (questions.length === 0) {
+                                    toolResult = 'Quiz: No questions provided by model.';
+                                } else {
+                                    this.stopLoadingAnimation();
+                                    if (this.dragOutput) this.dragOutput.classList.remove('loading-notification');
+                                    this.showQuiz(topic, questions);
+                                    return '__QUIZ_DISPLAYED__';
+                                }
+                            } else {
+                                toolResult = `Unknown tool: ${name}`;
+                            }
+                        } catch (err) {
+                            console.error(`OpenRouter tool ${name} error:`, err);
+                            toolResult = `Error: ${err.message}`;
+                        }
+                        
+                        toolMessages.push({
+                            role: 'tool',
+                            tool_call_id: tc.id,
+                            content: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
+                        });
+                    }
+                    
+                    // Append assistant message (with tool_calls) and tool results to messages
+                    messages.push({
+                        role: 'assistant',
+                        content: msg.content || null,
+                        tool_calls: toolCalls
+                    });
+                    messages.push(...toolMessages);
+                    
+                    // If getscreenshot was used, add a user message with the image so the model can see it
+                    if (screenshotForFollowUp) {
+                        messages.push({
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: 'Here is the screenshot you requested:' },
+                                { type: 'image_url', image_url: { url: screenshotForFollowUp } }
+                            ]
+                        });
+                    }
+                    
+                    requestPayload = { model: model, messages };
+                    if (useTools) {
+                        requestPayload.tools = openRouterTools;
+                        requestPayload.tool_choice = 'auto';
+                    }
                 }
                 
-                const data = result.data;
-                
-                if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-                    throw new Error('Invalid response structure from OpenRouter');
+                let content = lastContent != null ? lastContent : (data?.choices?.[0]?.message?.content ?? '');
+                if (Array.isArray(content)) {
+                    content = content.map(part => (part && part.type === 'text' ? part.text : '')).filter(Boolean).join('\n') || '';
                 }
-
-                const content = data.choices[0].message.content;
+                if (typeof content !== 'string') content = String(content || '');
                 
-                // Update conversation history
-                this.conversationHistory.push({ role: 'user', content: message });
-                this.conversationHistory.push({ 
-                    role: 'assistant', 
-                    content: content,
-                    model: this.selectedModelName || 'ChatGPT 5.2'
-                });
-                
-                if (this.conversationHistory.length > 30) {
-                    this.conversationHistory = this.conversationHistory.slice(-30);
+                if (this.shouldUseConversationMemory()) {
+                    this.conversationHistory.push({ role: 'user', content: message });
+                    this.conversationHistory.push({ 
+                        role: 'assistant', 
+                        content: content,
+                        model: this.selectedModelName || 'ChatGPT 5.2'
+                    });
+                    if (this.conversationHistory.length > 30) {
+                        this.conversationHistory = this.conversationHistory.slice(-30);
+                    }
+                    this.saveConversationHistory();
                 }
-                
-                this.saveConversationHistory();
                 
                 // Speak the response if Grok voice mode is enabled
                 if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode && content) {
@@ -4319,6 +3897,12 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error('OpenRouter API error:', errorText);
+                    if (response.status === 404) {
+                        throw new Error(`This model isn't available on OpenRouter (404). Pick another model or check openrouter.ai/models. Details: ${errorText}`);
+                    }
+                    if (response.status === 400) {
+                        throw new Error(`Use a different model. 3 lines > models > any other model.`);
+                    }
                     throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
                 }
 
@@ -4330,19 +3914,18 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
                 const content = data.choices[0].message.content;
                 
-                // Update conversation history
-                this.conversationHistory.push({ role: 'user', content: message });
-                this.conversationHistory.push({ 
-                    role: 'assistant', 
-                    content: content,
-                    model: this.selectedModelName || 'ChatGPT 5.2'
-                });
-                
-                if (this.conversationHistory.length > 30) {
-                    this.conversationHistory = this.conversationHistory.slice(-30);
+                if (this.shouldUseConversationMemory()) {
+                    this.conversationHistory.push({ role: 'user', content: message });
+                    this.conversationHistory.push({ 
+                        role: 'assistant', 
+                        content: content,
+                        model: this.selectedModelName || 'ChatGPT 5.2'
+                    });
+                    if (this.conversationHistory.length > 30) {
+                        this.conversationHistory = this.conversationHistory.slice(-30);
+                    }
+                    this.saveConversationHistory();
                 }
-                
-                this.saveConversationHistory();
                 
                 // Speak the response if Grok voice mode is enabled
                 if (model === 'x-ai/grok-4.1-fast' && this.grokVoiceMode && content) {
@@ -4361,15 +3944,16 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
         // Map OpenRouter model names to Claude API model names
         const modelMap = {
             'anthropic/claude-sonnet-4.5': 'claude-sonnet-4-5-20250929',
-            'anthropic/claude-opus-4.5': 'claude-3-opus-20240229' // Opus 4.5 maps to Opus 3
+            'anthropic/claude-opus-4.5': 'claude-3-opus-20240229',
+            'anthropic/claude-opus-4.6': 'claude-3-opus-20240229' // Opus 4.6 via OpenRouter; direct fallback uses Opus 3
         };
         
         let claudeModel = modelMap[openRouterModel] || 'claude-sonnet-4-5-20250929';
         
         try {
-            // Build conversation context
+            // Build conversation context (skip when cheat mode = memory off)
             let conversationContext = '';
-            if (this.conversationHistory.length > 0) {
+            if (this.shouldUseConversationMemory() && this.conversationHistory.length > 0) {
                 conversationContext = '\n\nPREVIOUS CONVERSATION (remember this context):\n' + 
                     this.conversationHistory.slice(-10).map((msg, idx) => 
                         `${idx + 1}. ${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content.substring(0, 300)}`
@@ -4442,7 +4026,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
                         console.error('🚫 Claude blocked:', errorMsg);
                         // Show notification with button to add credits
                         if (result.data.costLimitDollars) {
-                            this.showLimitExceededNotification();
+                            this.switchToLowModel(true);
                         }
                         return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
                     }
@@ -4457,19 +4041,18 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
                 const content = data.content[0].text;
                 
-                // Update conversation history
-                this.conversationHistory.push({ role: 'user', content: message });
-                this.conversationHistory.push({ 
-                    role: 'assistant', 
-                    content: content,
-                    model: this.selectedModelName || 'Claude'
-                });
-                
-                if (this.conversationHistory.length > 30) {
-                    this.conversationHistory = this.conversationHistory.slice(-30);
+                if (this.shouldUseConversationMemory()) {
+                    this.conversationHistory.push({ role: 'user', content: message });
+                    this.conversationHistory.push({ 
+                        role: 'assistant', 
+                        content: content,
+                        model: this.selectedModelName || 'Claude'
+                    });
+                    if (this.conversationHistory.length > 30) {
+                        this.conversationHistory = this.conversationHistory.slice(-30);
+                    }
+                    this.saveConversationHistory();
                 }
-                
-                this.saveConversationHistory();
                 
                 return content;
             } else {
@@ -4510,19 +4093,18 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
 
                 const content = data.content[0].text;
                 
-                // Update conversation history
-                this.conversationHistory.push({ role: 'user', content: message });
-                this.conversationHistory.push({ 
-                    role: 'assistant', 
-                    content: content,
-                    model: this.selectedModelName || 'Claude'
-                });
-                
-                if (this.conversationHistory.length > 30) {
-                    this.conversationHistory = this.conversationHistory.slice(-30);
+                if (this.shouldUseConversationMemory()) {
+                    this.conversationHistory.push({ role: 'user', content: message });
+                    this.conversationHistory.push({ 
+                        role: 'assistant', 
+                        content: content,
+                        model: this.selectedModelName || 'Claude'
+                    });
+                    if (this.conversationHistory.length > 30) {
+                        this.conversationHistory = this.conversationHistory.slice(-30);
+                    }
+                    this.saveConversationHistory();
                 }
-                
-                this.saveConversationHistory();
                 
                 return content;
             }
@@ -4540,8 +4122,8 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             // Present the question directly to Claude without confusing context
             const messages = [];
             
-            // Only include recent USER messages for context (skip assistant messages entirely)
-            if (this.conversationHistory.length > 0) {
+            // Only include recent USER messages for context (skip when cheat mode = memory off)
+            if (this.shouldUseConversationMemory() && this.conversationHistory.length > 0) {
                 const recentHistory = this.conversationHistory.slice(-5);
                 recentHistory.forEach(msg => {
                     if (msg.role === 'user') {
@@ -4619,7 +4201,7 @@ ${currentQuestion}`;
                         this.stopLoadingAnimation();
                         // Show notification with button to add credits
                         if (result.data.costLimitDollars) {
-                            this.showLimitExceededNotification();
+                            this.switchToLowModel(true);
                         }
                         return `⚠️ Switched to GPT 5.2 Mini. Add credits for other models.`;
                     }
@@ -4671,6 +4253,49 @@ ${currentQuestion}`;
     }
 
 
+    // Detect if the user's message implies they're referring to something on their screen (e.g. "what's the answer to this", "is this correct", "what do I do")
+    messageImpliesScreenReference(message) {
+        if (!message || typeof message !== 'string') return false;
+        const text = message.trim();
+        const screenPatterns = [
+            /\bwhat'?s?\s+the\s+answer\s+to\s+this\b/i,
+            /\bwhat\s+is\s+the\s+answer\s+to\s+this\b/i,
+            /\bhow\s+do\s+i\s+do\s+this\b/i,
+            /\bhow\s+do\s+i\s+solve\s+this\b/i,
+            /\bwhat\s+does\s+this\s+say\b/i,
+            /\bwhat\s+does\s+this\s+mean\b/i,
+            /\bexplain\s+this\b/i,
+            /\bhelp\s+me\s+with\s+this\b/i,
+            /\bhelp\s+with\s+this\b/i,
+            /\bwhat\s+is\s+this\b/i,
+            /\bwhat'?s?\s+this\b/i,
+            /\bcan\s+you\s+help\s+with\s+this\b/i,
+            /\banswer\s+this\b/i,
+            /\bsolve\s+this\b/i,
+            /\bhow\s+(do\s+i\s+)?(fix|solve|do)\s+this\b/i,
+            /\bwhat\s+do\s+i\s+do\s+(here|with\s+this)?\b/i,
+            /\bwhat\s+should\s+i\s+do\s+(here|with\s+this|now)?\b/i,
+            /\bhow\s+do\s+i\s+(do|solve|fix)\s+it\b/i,
+            /\bwhat'?s?\s+the\s+(answer|solution)\s+here\b/i,
+            // "Is this correct / right / wrong" – implies they're looking at something
+            /\bis\s+this\s+correct\b/i,
+            /\bis\s+this\s+right\b/i,
+            /\bis\s+this\s+wrong\b/i,
+            /\bdid\s+i\s+get\s+this\s+right\b/i,
+            /\bam\s+i\s+doing\s+this\s+right\b/i,
+            /\bdoes\s+this\s+look\s+right\b/i,
+            /\bdoes\s+this\s+look\s+correct\b/i,
+            // "Check / review / look at this"
+            /\b(check|review|look\s+at)\s+this\b/i,
+            /\bcan\s+you\s+(check|review|look\s+at)\s+this\b/i,
+            // Short contextual asks
+            /\bwhat\s+about\s+this\b/i,
+            /\bthoughts\s+on\s+this\b/i,
+            /\bwhat\s+do\s+you\s+think\s+(of\s+)?this\b/i
+        ];
+        return screenPatterns.some(p => p.test(text));
+    }
+
     async sendMessage() {
         const message = (this.textInput?.value || '').trim();
         if (!message && (!this.pendingAttachments || this.pendingAttachments.length === 0)) return;
@@ -4693,19 +4318,49 @@ ${currentQuestion}`;
         }
 
         // Immediately clear UI input so text disappears as soon as user sends
-        if (this.textInput) this.textInput.value = '';
+        if (this.textInput) {
+            this.textInput.value = '';
+            if (this.resizeTextInput) this.resizeTextInput();
+        }
 
         try {
+            // If the message implies the user is asking about something on screen (e.g. "what's the answer to this"), capture screen so the AI can see it
+            if (this.messageImpliesScreenReference(message) && this.features?.screenshotAnalysis && !this.currentScreenCapture && this.isElectron && window.require) {
+                try {
+                    this.showNotification('📸 Capturing screen...', 'info');
+                    const ipc = window.require('electron').ipcRenderer;
+                    let screenshot = await ipc.invoke('take-screenshot');
+                    if (screenshot && typeof screenshot === 'string' && screenshot.startsWith('data:image/')) {
+                        if (await this.isScreenshotMostlyBlack(screenshot)) {
+                            const windowShot = await ipc.invoke('take-screenshot-window');
+                            if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
+                                screenshot = windowShot;
+                            } else {
+                                const allWindows = await ipc.invoke('take-screenshot-all-windows');
+                                for (const w of allWindows || []) {
+                                    if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
+                                        screenshot = w.dataUrl;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (!(await this.isScreenshotMostlyBlack(screenshot))) {
+                            this.currentScreenCapture = screenshot;
+                            console.log('📸 Inferred screen reference – attached screenshot to message');
+                        } else {
+                            this.showNotification('Screenshot is blank (protected content). Paste the question text instead.', 'error');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Auto screenshot for screen-inferrable message failed:', e);
+                }
+            }
+
             if (this.pendingAttachments && this.pendingAttachments.length > 0) {
                 const sending = this.pendingAttachments.slice();
                 
-                // For OpenClaw, include file content directly in the message instead of separate processing
-                if (this.selectedModel === 'openclaw') {
-                    const messageWithFiles = this.buildMessageWithAttachments(message || 'Analyze these files', sending);
-                    await this.processMessage(messageWithFiles);
-                } else {
-                    await this.analyzeFilesWithChatGPT(sending, message || 'Analyze these files');
-                }
+                await this.analyzeFilesWithChatGPT(sending, message || 'Analyze these files');
                 
                 // Clear attachments after send and revoke blob URLs
                 this.pendingAttachments.forEach(att => {
@@ -4721,34 +4376,6 @@ ${currentQuestion}`;
         } catch (error) {
             console.error('sendMessage failed:', error);
         }
-    }
-
-    // Build a message that includes file attachments inline (for OpenClaw and similar)
-    buildMessageWithAttachments(prompt, files) {
-        let fullMessage = prompt;
-        
-        // Add file info header
-        if (files.length === 1) {
-            fullMessage += `\n\n📎 Attached file: ${files[0].name}`;
-        } else {
-            fullMessage += `\n\n📎 Attached files (${files.length}): ${files.map(f => f.name).join(', ')}`;
-        }
-        
-        // Add file contents
-        for (const file of files) {
-            if (file.type === 'text' && file.content) {
-                fullMessage += `\n\n--- Content of ${file.name} ---\n${file.content}`;
-            } else if (file.type === 'pdf' && file.content && typeof file.content === 'string' && file.content.trim().length > 0) {
-                fullMessage += `\n\n--- Extracted text from PDF: ${file.name} ---\n${file.content}`;
-            } else if (file.type === 'image') {
-                // For images, just note that it was attached (OpenClaw may not support images directly)
-                fullMessage += `\n\n[Image attached: ${file.name}]`;
-            } else {
-                fullMessage += `\n\n[Attachment: ${file.name} (${file.mimeType || file.type || 'unknown type'})]`;
-            }
-        }
-        
-        return fullMessage;
     }
 
     showNotification(text, isHTML = false) {
@@ -4791,18 +4418,21 @@ ${currentQuestion}`;
         currentOutput.title = 'Drag me to drop text into apps';
         currentOutput.innerHTML = processedContent;
         
-        // Apply current theme if set
+        // Apply current theme – keep glassmorphism (translucent + blur)
         if (this.currentTheme) {
-            currentOutput.style.background = `rgba(${this.hexToRgb(this.currentTheme.bg)}, 0.95)`;
+            currentOutput.style.background = `rgba(${this.hexToRgb(this.currentTheme.bg)}, 0.92)`;
             currentOutput.style.color = this.currentTheme.text;
-            currentOutput.style.border = 'none'; // No border
+            currentOutput.style.border = `1px solid ${this.currentTheme.border}`;
+            currentOutput.style.webkitBackdropFilter = '';
+            currentOutput.style.backdropFilter = '';
+            currentOutput.style.boxShadow = 'none';
         }
         
         // Apply current opacity if set
         let opacityToApply = this.currentOpacity;
         if (opacityToApply === undefined) {
-            // Default opacity if not set (95% = original fully visible)
-            opacityToApply = parseInt(localStorage.getItem('jarvis-overlay-opacity') || '95');
+            // Default opacity if not set (100% = fully visible on first launch)
+            opacityToApply = parseInt(localStorage.getItem('jarvis-overlay-opacity') || '100');
         }
         const opacityValue = (opacityToApply / 100).toString();
         currentOutput.style.setProperty('opacity', opacityValue, 'important');
@@ -5423,12 +5053,12 @@ ${currentQuestion}`;
     }
 
     addMessage(sender, content, role = 'user') {
-        // Add message to conversation history
-        this.conversationHistory.push({
-            role: role,
-            content: content
-        });
-        
+        if (this.shouldUseConversationMemory()) {
+            this.conversationHistory.push({
+                role: role,
+                content: content
+            });
+        }
         // Show notification with the message
         this.showNotification(content, true);
     }
@@ -5436,11 +5066,14 @@ ${currentQuestion}`;
     toggleSettingsMenu() {
         if (this.settingsMenu) {
             if (this.settingsMenu.classList.contains('hidden')) {
+                clearTimeout(this._clickThroughAfterMenusClosedTimeout);
+                this._clickThroughAfterMenusClosedTimeout = null;
                 this.settingsMenu.classList.remove('hidden');
                 // Attach opacity slider listener when menu opens
                 this.attachOpacitySliderWhenReady();
             } else {
                 this.settingsMenu.classList.add('hidden');
+                this._scheduleClickThroughAfterMenusClosed();
             }
         }
     }
@@ -5449,6 +5082,28 @@ ${currentQuestion}`;
         if (this.settingsMenu) {
             this.settingsMenu.classList.add('hidden');
         }
+        this._scheduleClickThroughAfterMenusClosed();
+    }
+    
+    /** After closing a dropdown/settings menu, switch to click-through so user can click window behind without clicking overlay first */
+    _scheduleClickThroughAfterMenusClosed() {
+        if (!this.isElectron || !window.require) return;
+        clearTimeout(this._clickThroughAfterMenusClosedTimeout);
+        this._clickThroughAfterMenusClosedTimeout = setTimeout(() => {
+            this._clickThroughAfterMenusClosedTimeout = null;
+            if (this.isDraggingOutput || this.isResizing || this.isDraggingOverlay || this.updateNotificationVisible) return;
+            if (document.activeElement && this.overlay && this.overlay.contains(document.activeElement)) return;
+            const menusClosed = (!this.settingsMenu || this.settingsMenu.classList.contains('hidden')) &&
+                (!this.modelSubmenu || this.modelSubmenu.classList.contains('hidden')) &&
+                (!this.settingsSubmenu || this.settingsSubmenu.classList.contains('hidden')) &&
+                (!this.colorSubmenu || this.colorSubmenu.classList.contains('hidden'));
+            if (!menusClosed) return;
+            try {
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('make-click-through').catch(() => {});
+                this._overlayIsInteractive = false;
+            } catch (_) {}
+        }, 350);
     }
     
     attachOpacitySliderWhenReady() {
@@ -5459,8 +5114,8 @@ ${currentQuestion}`;
             return;
         }
         
-        // Set the saved value (default 95% = original fully visible)
-        const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '95';
+        // Set the saved value (default 100% so first launch is not more transparent)
+        const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '100';
         slider.value = savedOpacity;
         
         // Update display
@@ -5475,7 +5130,9 @@ ${currentQuestion}`;
     toggleModelSubmenu() {
         if (this.modelSubmenu) {
             const isHidden = this.modelSubmenu.classList.contains('hidden');
-            if (isHidden) {
+                if (isHidden) {
+                clearTimeout(this._clickThroughAfterMenusClosedTimeout);
+                this._clickThroughAfterMenusClosedTimeout = null;
                 this.modelSubmenu.classList.remove('hidden');
                 // Sync added models from main (so models added in OpenRouter window always show up)
                 if (this.isElectron) {
@@ -5525,17 +5182,21 @@ ${currentQuestion}`;
         if (this.modelSubmenu) {
             this.modelSubmenu.classList.add('hidden');
         }
+        this._scheduleClickThroughAfterMenusClosed();
     }
     
     toggleSettingsSubmenu() {
         if (this.settingsSubmenu) {
             const isHidden = this.settingsSubmenu.classList.contains('hidden');
             if (isHidden) {
+                clearTimeout(this._clickThroughAfterMenusClosedTimeout);
+                this._clickThroughAfterMenusClosedTimeout = null;
                 this.settingsSubmenu.classList.remove('hidden');
                 // Attach opacity slider listener when submenu opens
                 setTimeout(() => this.attachOpacitySliderWhenReady(), 50);
             } else {
                 this.settingsSubmenu.classList.add('hidden');
+                this._scheduleClickThroughAfterMenusClosed();
             }
         }
     }
@@ -5545,15 +5206,19 @@ ${currentQuestion}`;
         if (this.settingsSubmenu) {
             this.settingsSubmenu.classList.add('hidden');
         }
+        this._scheduleClickThroughAfterMenusClosed();
     }
     
     toggleColorSubmenu() {
         if (this.colorSubmenu) {
             const isHidden = this.colorSubmenu.classList.contains('hidden');
             if (isHidden) {
+                clearTimeout(this._clickThroughAfterMenusClosedTimeout);
+                this._clickThroughAfterMenusClosedTimeout = null;
                 this.colorSubmenu.classList.remove('hidden');
             } else {
                 this.colorSubmenu.classList.add('hidden');
+                this._scheduleClickThroughAfterMenusClosed();
             }
         }
     }
@@ -5562,6 +5227,7 @@ ${currentQuestion}`;
         if (this.colorSubmenu) {
             this.colorSubmenu.classList.add('hidden');
         }
+        this._scheduleClickThroughAfterMenusClosed();
     }
     
     
@@ -5581,24 +5247,23 @@ ${currentQuestion}`;
             document.head.appendChild(opacityStyle);
         }
         
-        // Apply to all overlay elements: HUD, output, buttons, history
+        // Apply to all overlay elements (HUD, output, etc.) – Answer screen buttons always 1, never transparent
         opacityStyle.textContent = `
             .minimal-hud { opacity: ${opacityValue} !important; }
             .drag-output { opacity: ${opacityValue} !important; }
             #drag-output { opacity: ${opacityValue} !important; }
             .messages-container { opacity: ${opacityValue} !important; }
-            .answer-this-btn { opacity: ${opacityValue} !important; }
+            #answer-this-btn, #answer-this-btn-moved, .answer-this-btn { opacity: 1 !important; }
             .humanize-btn { opacity: ${opacityValue} !important; }
             .reveal-history-btn { opacity: ${opacityValue} !important; }
             .action-buttons-container { opacity: ${opacityValue} !important; }
         `;
         
-        // Apply directly to elements
+        // Apply directly to elements (skip Answer screen button – it stays at 1)
         const elements = [
             '.minimal-hud',
             '.drag-output',
             '.messages-container',
-            '.answer-this-btn',
             '.humanize-btn',
             '.reveal-history-btn',
             '.action-buttons-container'
@@ -5608,6 +5273,9 @@ ${currentQuestion}`;
             document.querySelectorAll(selector).forEach(el => {
                 el.style.setProperty('opacity', opacityValue, 'important');
             });
+        });
+        document.querySelectorAll('.answer-this-btn').forEach(el => {
+            el.style.setProperty('opacity', '1', 'important');
         });
         
         console.log(`Opacity set to ${opacity}% for all overlay elements`);
@@ -5633,21 +5301,24 @@ ${currentQuestion}`;
         this.currentTheme = theme;
         this.currentColor = color;
         
-        // Update minimal-hud background
+        // Update minimal-hud: same transparency as output (0.92), tint by theme
         const minimalHud = this.overlay.querySelector('.minimal-hud');
         if (minimalHud) {
-            minimalHud.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+            minimalHud.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.92)`;
             minimalHud.style.borderColor = theme.border;
+            minimalHud.style.webkitBackdropFilter = '';
+            minimalHud.style.backdropFilter = '';
         }
         
-        // Update all drag-output elements (all message outputs)
+        // Update all drag-output elements – keep glassmorphism (translucent + blur), only tint and text color by theme
         const allDragOutputs = this.overlay.querySelectorAll('.drag-output');
         allDragOutputs.forEach(output => {
-            output.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.95)`;
+            output.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.92)`;
             output.style.color = theme.text;
-            output.style.border = 'none'; // Remove border
-            
-            // Update all text inside
+            output.style.border = `1px solid ${theme.border}`;
+            output.style.webkitBackdropFilter = '';
+            output.style.backdropFilter = '';
+            output.style.boxShadow = 'none';
             const textElements = output.querySelectorAll('*');
             textElements.forEach(el => {
                 if (el.tagName !== 'SVG' && !el.classList.contains('action-btn')) {
@@ -5694,15 +5365,7 @@ ${currentQuestion}`;
         const iconColor = isWhite ? '#333333' : 'rgba(255, 255, 255, 0.7)';
         const iconHoverColor = isWhite ? '#000000' : 'rgba(255, 255, 255, 1)';
         
-        // Update drag handle color
-        const dragHandle = this.overlay.querySelector('.drag-handle');
-        if (dragHandle) {
-            dragHandle.style.color = iconColor;
-            const dots = dragHandle.querySelectorAll('.dot');
-            dots.forEach(dot => {
-                dot.style.background = iconColor;
-            });
-        }
+        // (Drag handle removed – whole overlay is draggable)
         
         // Update paperclip (add button) color
         const addBtn = this.overlay.querySelector('.add-btn');
@@ -5732,20 +5395,24 @@ ${currentQuestion}`;
                 answerBtn.style.color = '#000000';
                 answerBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
             } else if (color === 'pink' || color === '#ec4899') {
-                // Pink theme: pink button
-                answerBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                answerBtn.style.background = 'rgba(236, 72, 153, 0.5)';
                 answerBtn.style.color = '#ffffff';
                 answerBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                answerBtn.style.webkitBackdropFilter = 'blur(28px) saturate(195%)';
+                answerBtn.style.backdropFilter = 'blur(28px) saturate(195%)';
             } else if (color === 'blue' || color === '#4A9EFF') {
-                // Blue theme: blue button
-                answerBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                answerBtn.style.background = 'rgba(74, 158, 255, 0.5)';
                 answerBtn.style.color = '#ffffff';
                 answerBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                answerBtn.style.webkitBackdropFilter = 'blur(28px) saturate(195%)';
+                answerBtn.style.backdropFilter = 'blur(28px) saturate(195%)';
             } else {
-                // Black/default theme
-                answerBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+                // Black/default: keep liquid glass (translucent + blur)
+                answerBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.35)`;
                 answerBtn.style.color = theme.text;
                 answerBtn.style.borderColor = theme.border;
+                answerBtn.style.webkitBackdropFilter = 'blur(28px) saturate(195%)';
+                answerBtn.style.backdropFilter = 'blur(28px) saturate(195%)';
             }
         }
         
@@ -5757,37 +5424,41 @@ ${currentQuestion}`;
                 humanizeBtn.style.color = '#000000';
                 humanizeBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
             } else if (color === 'pink' || color === '#ec4899') {
-                humanizeBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                humanizeBtn.style.background = 'rgba(236, 72, 153, 0.5)';
                 humanizeBtn.style.color = '#ffffff';
                 humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
             } else if (color === 'blue' || color === '#4A9EFF') {
-                humanizeBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                humanizeBtn.style.background = 'rgba(74, 158, 255, 0.5)';
                 humanizeBtn.style.color = '#ffffff';
                 humanizeBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
             } else {
-                humanizeBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+                humanizeBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.35)`;
                 humanizeBtn.style.color = theme.text;
                 humanizeBtn.style.borderColor = theme.border;
+                humanizeBtn.style.webkitBackdropFilter = 'blur(28px) saturate(195%)';
+                humanizeBtn.style.backdropFilter = 'blur(28px) saturate(195%)';
             }
         }
         
-        // Update reveal history button
+        // Update reveal history button – keep glassmorphism (translucent + blur) in all themes
         const revealHistoryBtn = this.overlay.querySelector('.reveal-history-btn');
         if (revealHistoryBtn) {
+            revealHistoryBtn.style.webkitBackdropFilter = 'blur(28px) saturate(195%)';
+            revealHistoryBtn.style.backdropFilter = 'blur(28px) saturate(195%)';
             if (isWhite) {
-                revealHistoryBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                revealHistoryBtn.style.background = 'rgba(255, 255, 255, 0.4)';
                 revealHistoryBtn.style.color = '#000000';
-                revealHistoryBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+                revealHistoryBtn.style.borderColor = 'rgba(0, 0, 0, 0.18)';
             } else if (color === 'pink' || color === '#ec4899') {
-                revealHistoryBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                revealHistoryBtn.style.background = 'rgba(236, 72, 153, 0.4)';
                 revealHistoryBtn.style.color = '#ffffff';
                 revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
             } else if (color === 'blue' || color === '#4A9EFF') {
-                revealHistoryBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                revealHistoryBtn.style.background = 'rgba(74, 158, 255, 0.4)';
                 revealHistoryBtn.style.color = '#ffffff';
                 revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
             } else {
-                revealHistoryBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.9)`;
+                revealHistoryBtn.style.background = `rgba(${this.hexToRgb(theme.bg)}, 0.35)`;
                 revealHistoryBtn.style.color = theme.text;
                 revealHistoryBtn.style.borderColor = theme.border;
             }
@@ -5851,25 +5522,27 @@ ${currentQuestion}`;
             }
         }
         
-        // Update reveal history button
+        // Update reveal history button – keep glassmorphism in all themes
         const revealHistoryBtn = this.overlay?.querySelector('.reveal-history-btn');
         if (revealHistoryBtn) {
+            revealHistoryBtn.style.webkitBackdropFilter = 'blur(28px) saturate(195%)';
+            revealHistoryBtn.style.backdropFilter = 'blur(28px) saturate(195%)';
             if (isWhite) {
-                revealHistoryBtn.style.background = 'rgba(255, 255, 255, 0.95)';
+                revealHistoryBtn.style.background = 'rgba(255, 255, 255, 0.4)';
                 revealHistoryBtn.style.color = '#000000';
-                revealHistoryBtn.style.borderColor = 'rgba(0, 0, 0, 0.2)';
+                revealHistoryBtn.style.borderColor = 'rgba(0, 0, 0, 0.18)';
             } else if (color === 'pink' || color === '#ec4899') {
-                revealHistoryBtn.style.background = 'rgba(236, 72, 153, 0.9)';
+                revealHistoryBtn.style.background = 'rgba(236, 72, 153, 0.4)';
                 revealHistoryBtn.style.color = '#ffffff';
                 revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
             } else if (color === 'blue' || color === '#4A9EFF') {
-                revealHistoryBtn.style.background = 'rgba(74, 158, 255, 0.9)';
+                revealHistoryBtn.style.background = 'rgba(74, 158, 255, 0.4)';
                 revealHistoryBtn.style.color = '#ffffff';
                 revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
             } else {
-                revealHistoryBtn.style.background = 'rgba(0, 0, 0, 0.9)';
+                revealHistoryBtn.style.background = 'rgba(28, 28, 30, 0.45)';
                 revealHistoryBtn.style.color = '#ffffff';
-                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                revealHistoryBtn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
             }
         }
     }
@@ -5886,24 +5559,11 @@ ${currentQuestion}`;
         console.log(`🤖 [MODEL SWITCHER] OpenRouter API key present: ${!!this.openrouterApiKey}`);
         
         // Free users can only use the default Jarvis model (with Low/High toggle)
-        // Block selection of any other model (except OpenClaw which is local)
-        if (model !== 'default' && model !== 'openclaw' && !this.hasPremiumAccess()) {
+        // Block selection of any other model for free users
+        if (model !== 'default' && !this.hasPremiumAccess()) {
             this.showNotification('🔒 This model requires Jarvis Premium. Upgrade to access all AI models!', false);
             this.showUpgradePrompt();
             return;
-        }
-        
-        // Show J Bot warning modal if selecting openclaw and not already accepted
-        if (model === 'openclaw' && !this.jbotAccepted) {
-            this.showJBotWarningModal(model, modelName);
-            return;
-        }
-        
-        // Initialize OpenClaw if selected
-        if (model === 'openclaw' && !this.openClawClient) {
-            this.initOpenClawClient().catch(err => {
-                console.error('[OpenClaw] Init error:', err);
-            });
         }
         
         // If selecting a non-low model, clear the forced low model mode
@@ -5937,164 +5597,22 @@ ${currentQuestion}`;
             });
         }
         
-        // Hide voice button and reset freaky/voice mode when switching away from Grok
-        if (model !== 'x-ai/grok-4.1-fast') {
-            const voiceBtn = document.getElementById('grok-voice-btn');
-            const voiceSelectBtn = document.getElementById('voice-select-btn');
-            const freakyCheckbox = document.getElementById('freaky-toggle-checkbox');
-            const freakyEmoji = document.getElementById('freaky-emoji');
+        // Show voice buttons when Grok is selected, hide and reset when switching away
+        const voiceBtn = document.getElementById('grok-voice-btn');
+        const voiceSelectBtn = document.getElementById('voice-select-btn');
+        if (model === 'x-ai/grok-4.1-fast') {
+            if (voiceBtn) voiceBtn.classList.remove('hidden');
+            if (voiceSelectBtn) voiceSelectBtn.classList.remove('hidden');
+        } else {
             if (voiceBtn) {
                 voiceBtn.classList.add('hidden');
                 voiceBtn.classList.remove('active');
             }
-            if (voiceSelectBtn) {
-                voiceSelectBtn.classList.add('hidden');
-            }
-            if (freakyCheckbox) {
-                freakyCheckbox.checked = false;
-            }
-            if (freakyEmoji) {
-                freakyEmoji.textContent = '😇';
-            }
-            this.grokFreakyMode = false;
+            if (voiceSelectBtn) voiceSelectBtn.classList.add('hidden');
             this.grokVoiceMode = false;
         }
         
         console.log(`🤖 [MODEL SWITCHER] Successfully switched to ${modelName} (${model})`);
-    }
-
-    showJBotWarningModal(model, modelName) {
-        const modal = document.getElementById('jbot-warning-modal');
-        const modalContent = modal?.querySelector('.jbot-warning-modal-content');
-        const passwordInput = document.getElementById('jbot-password-input');
-        const passwordError = document.getElementById('jbot-password-error');
-        const acceptBtn = document.getElementById('jbot-warning-accept');
-        const cancelBtn = document.getElementById('jbot-warning-cancel');
-        
-        if (!modal) {
-            console.error('[J Bot] Warning modal not found');
-            return;
-        }
-        
-        // Make sure window is interactive (not click-through)
-        const makeInteractive = () => {
-            if (this.isElectron) {
-                const { ipcRenderer } = require('electron');
-                ipcRenderer.invoke('make-interactive').catch(() => {});
-                ipcRenderer.invoke('request-focus').catch(() => {});
-            }
-        };
-        
-        makeInteractive();
-        
-        // Reset modal state
-        passwordInput.value = '';
-        passwordError.classList.add('hidden');
-        
-        // Show modal
-        modal.classList.remove('hidden');
-        
-        // Focus password input
-        setTimeout(() => {
-            makeInteractive();
-            passwordInput.focus();
-        }, 100);
-        
-        // Store pending model selection
-        this.pendingJBotModel = model;
-        this.pendingJBotModelName = modelName;
-        
-        // Keep modal interactive on any mouse interaction
-        modal.onmouseenter = () => makeInteractive();
-        modal.onmousemove = () => makeInteractive();
-        
-        // Prevent clicks on modal content from propagating
-        if (modalContent) {
-            modalContent.onmouseenter = () => makeInteractive();
-            modalContent.onmousedown = (e) => {
-                makeInteractive();
-                e.stopPropagation();
-            };
-            modalContent.onmouseup = (e) => e.stopPropagation();
-            modalContent.onclick = (e) => e.stopPropagation();
-        }
-        
-        // Close modal when clicking backdrop
-        modal.onclick = (e) => {
-            if (e.target === modal) {
-                this.hideJBotWarningModal();
-            }
-        };
-        
-        // Set up button handlers directly
-        acceptBtn.onmouseenter = () => makeInteractive();
-        acceptBtn.onmousedown = (e) => {
-            makeInteractive();
-            e.preventDefault();
-            e.stopPropagation();
-        };
-        acceptBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.handleJBotAccept();
-        };
-        
-        cancelBtn.onmouseenter = () => makeInteractive();
-        cancelBtn.onmousedown = (e) => {
-            makeInteractive();
-            e.preventDefault();
-            e.stopPropagation();
-        };
-        cancelBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.hideJBotWarningModal();
-        };
-        
-        // Handle Enter key in password input
-        passwordInput.onmouseenter = () => makeInteractive();
-        passwordInput.onfocus = () => makeInteractive();
-        passwordInput.onkeypress = (e) => {
-            if (e.key === 'Enter') {
-                this.handleJBotAccept();
-            }
-        };
-    }
-
-    hideJBotWarningModal() {
-        const modal = document.getElementById('jbot-warning-modal');
-        if (modal) {
-            modal.classList.add('hidden');
-        }
-        this.pendingJBotModel = null;
-        this.pendingJBotModelName = null;
-    }
-
-    handleJBotAccept() {
-        const passwordInput = document.getElementById('jbot-password-input');
-        const passwordError = document.getElementById('jbot-password-error');
-        const password = passwordInput.value.trim();
-        
-        // Check password
-        if (password !== 'unlockalpha') {
-            passwordError.classList.remove('hidden');
-            passwordInput.value = '';
-            passwordInput.focus();
-            return;
-        }
-        
-        // Password correct - mark as accepted
-        this.jbotAccepted = true;
-        
-        // Hide modal
-        this.hideJBotWarningModal();
-        
-        // Now actually select the model
-        if (this.pendingJBotModel && this.pendingJBotModelName) {
-            this.selectModel(this.pendingJBotModel, this.pendingJBotModelName);
-        }
-        
-        this.showNotification('⚠️ J Bot unlocked. Use responsibly.', true);
     }
 
     clearChatHistory() {
@@ -6106,17 +5624,6 @@ ${currentQuestion}`;
             localStorage.removeItem('jarvis_conversation_history');
         } catch (e) {
             console.error('Failed to clear conversation history from localStorage:', e);
-        }
-        
-        // Reset OpenClaw session if connected
-        if (this.openClawClient && this.openClawConnected) {
-            // Generate a new session key to ensure fresh context
-            this.openClawSessionKey = 'jarvis-' + Date.now();
-            this.openClawClient.resetSession('jarvis-main').then(() => {
-                console.log('[OpenClaw] Session reset successfully, new session:', this.openClawSessionKey);
-            }).catch(err => {
-                console.error('[OpenClaw] Failed to reset session:', err);
-            });
         }
         
         // Clear the messages container
@@ -6204,7 +5711,6 @@ ${currentQuestion}`;
     showAccountModal() {
         if (this.accountModal) {
             this.updateAccountInfo();
-            this.updateGoogleServicesStatus();
             this.accountModal.classList.remove('hidden');
             this.hideSettingsMenu();
         }
@@ -6222,10 +5728,13 @@ ${currentQuestion}`;
             return;
         }
         
-        // Update stealth mode state
+        // Update cheat mode state
         this.stealthModeEnabled = enabled;
-        
-        // Apply CSS to disable click sounds when stealth mode is enabled
+        if (enabled) {
+            this.conversationHistory = [];
+            try { localStorage.removeItem('jarvis_conversation_history'); } catch (err) {}
+        }
+        // Apply CSS to disable click sounds when cheat mode is enabled
         this.applyStealthModeStyles(enabled);
         
         try {
@@ -6234,24 +5743,24 @@ ${currentQuestion}`;
             ipcRenderer.invoke('toggle-stealth-mode', enabled).then((success) => {
                 console.log(`✅ Stealth mode IPC result: ${success}, enabled: ${enabled}`);
                 if (success && showNotification) {
-                    const message = enabled ? 'Stealth Mode: ON 🥷 (Hidden from screen share, sounds disabled)' : 'Stealth Mode: OFF 👁️ (Visible in screen share)';
+                    const message = enabled ? 'Cheat Mode: ON 🥷 (Hidden from screen share, memory off)' : 'Cheat Mode: OFF 👁️ (Visible in screen share, memory on)';
                     this.showNotification(message, true);
                 } else if (!success) {
                     console.error('❌ IPC returned false');
                     if (showNotification) {
-                        this.showNotification('Failed to toggle stealth mode', false);
+                        this.showNotification('Failed to toggle cheat mode', false);
                     }
                 }
             }).catch((error) => {
                 console.error('❌ IPC call failed:', error);
                 if (showNotification) {
-                    this.showNotification('Failed to toggle stealth mode: ' + error.message, false);
+                    this.showNotification('Failed to toggle cheat mode: ' + error.message, false);
                 }
             });
         } catch (error) {
             console.error('❌ Error in toggleStealthMode:', error);
             if (showNotification) {
-                this.showNotification('Error toggling stealth mode: ' + error.message, false);
+                this.showNotification('Error toggling cheat mode: ' + error.message, false);
             }
         }
     }
@@ -6272,7 +5781,7 @@ ${currentQuestion}`;
             styleElement.textContent = `
                 /* Disable system click sounds and reduce visual feedback in stealth mode */
                 button, .file-btn, .settings-btn, .model-item, .settings-item, 
-                .drag-handle, .answer-this-btn, .humanize-btn, .close-output-floating {
+                .answer-this-btn, .humanize-btn, .close-output-floating {
                     -webkit-tap-highlight-color: transparent !important;
                     tap-highlight-color: transparent !important;
                     outline: none !important;
@@ -6596,15 +6105,7 @@ ${currentQuestion}`;
             // If using OpenRouter model, send to OpenRouter with file attachments
             if (this.selectedModel && this.selectedModel !== 'default') {
                     // All "More models" (including Claude Sonnet 4.5) use OpenRouter API key
-                    const lowerPrompt = prompt.toLowerCase();
-                    const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
-                                         lowerPrompt.includes('question') || lowerPrompt.includes('practice');
-                    
-                    // Build message for OpenRouter chat format
-                    let systemContent = 'Analyze the provided files and respond to the user succinctly and clearly.';
-                    if (isQuizRequest) {
-                        systemContent = `The user wants a QUIZ based on the attached file content. You MUST respond with ONLY a JSON object in this exact format (no other text): {"quiz": true, "topic": "Topic Name", "questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 0, "explanation": "Why"}]}. Generate questions based on the file content. Default to 5 questions unless user specifies a different number.`;
-                    }
+                    const systemContent = 'Analyze the provided files and respond to the user succinctly and clearly.';
                     const messages = [
                         { role: 'system', content: systemContent }
                     ];
@@ -6657,6 +6158,12 @@ ${currentQuestion}`;
                     
                     if (!response.ok) {
                         const errorText = await response.text();
+                        if (response.status === 404) {
+                            throw new Error(`This model isn't available on OpenRouter (404). Pick another model or check openrouter.ai/models. Details: ${errorText}`);
+                        }
+                        if (response.status === 400) {
+                            throw new Error(`Use a different model. 3 lines > models > any other model.`);
+                        }
                         throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
                     }
                     
@@ -6675,12 +6182,13 @@ ${currentQuestion}`;
                                     this.dragOutput.classList.remove('loading-notification');
                                 }
                                 this.showQuiz(quizData.topic || 'Document Quiz', quizData.questions);
-                                // Save to history
                                 const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
-                                this.conversationHistory.push({ role: 'user', content: userMessage });
-                                this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${quizData.topic} with ${quizData.questions.length} questions`, model: this.selectedModelName || 'AI' });
-                                if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
-                                this.saveConversationHistory();
+                                if (this.shouldUseConversationMemory()) {
+                                    this.conversationHistory.push({ role: 'user', content: userMessage });
+                                    this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${quizData.topic} with ${quizData.questions.length} questions`, model: this.selectedModelName || 'AI' });
+                                    if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
+                                    this.saveConversationHistory();
+                                }
                                 if (!this.hasPremiumAccess()) this.incrementMessageCount();
                                 return; // Exit early - quiz is displayed
                             }
@@ -6692,17 +6200,7 @@ ${currentQuestion}`;
                     analysis = responseContent;
             } else {
                 // Use default Jarvis model (GPT-5 Mini via IPC or proxy)
-                // Check if this is a quiz request
-                const lowerPrompt = prompt.toLowerCase();
-                const isQuizRequest = lowerPrompt.includes('quiz') || lowerPrompt.includes('test me') || 
-                                     lowerPrompt.includes('question') || lowerPrompt.includes('practice');
-                
-                // Include strong quiz instructions if quiz-related words detected
-                let instructions = 'Analyze the provided files and respond to the user succinctly and clearly.';
-                if (isQuizRequest) {
-                    instructions = `The user wants a QUIZ based on the attached file content. You MUST use the create_quiz tool immediately to create an interactive quiz. Do NOT write out questions as text - ONLY use the create_quiz tool. Generate questions based on the file content. Default to 5 questions unless user specifies a different number.`;
-                }
-                
+                const instructions = 'Analyze the provided files and respond to the user succinctly and clearly.';
                 const requestPayload = {
                     model: this.currentModel,
                     instructions: instructions,
@@ -6726,7 +6224,7 @@ ${currentQuestion}`;
                             // Check if it's a limit exceeded error
                             if (result?.status === 429 && result?.data?.costLimitDollars !== undefined) {
                                 console.error('🚫 File analysis blocked - limit exceeded');
-                                this.showLimitExceededNotification();
+                                this.switchToLowModel(true);
                                 throw new Error('LIMIT_EXCEEDED');
                             }
                             throw new Error(`IPC call failed: ${JSON.stringify(result)}`);
@@ -6789,12 +6287,13 @@ ${currentQuestion}`;
                                     this.dragOutput.classList.remove('loading-notification');
                                 }
                                 this.showQuiz(topic, questions);
-                                // Save to history
                                 const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
-                                this.conversationHistory.push({ role: 'user', content: userMessage });
-                                this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${topic} with ${questions.length} questions`, model: 'Jarvis' });
-                                if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
-                                this.saveConversationHistory();
+                                if (this.shouldUseConversationMemory()) {
+                                    this.conversationHistory.push({ role: 'user', content: userMessage });
+                                    this.conversationHistory.push({ role: 'assistant', content: `Created quiz: ${topic} with ${questions.length} questions`, model: 'Jarvis' });
+                                    if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
+                                    this.saveConversationHistory();
+                                }
                                 if (!this.hasPremiumAccess()) this.incrementMessageCount();
                                 return; // Exit early - quiz is displayed
                             } else {
@@ -6810,15 +6309,6 @@ ${currentQuestion}`;
                     const textResponse = this.extractTextSafe(apiData);
                     if (textResponse) {
                         analysis = textResponse;
-                    } else if (isQuizRequest && toolCalls.length > 0) {
-                        // Quiz was requested but tool didn't work - try again by returning early
-                        // This forces the user to see the loading finished without weird message
-                        this.stopLoadingAnimation();
-                        if (this.dragOutput) {
-                            this.dragOutput.classList.remove('loading-notification');
-                        }
-                        this.showNotification('Quiz generation failed. Please try again.', false);
-                        return;
                     } else if (toolCalls.length > 0) {
                         // Only tool calls, no text - this is an error case for non-quiz tools
                         analysis = 'File analysis complete. The AI processed your request.';
@@ -6828,16 +6318,18 @@ ${currentQuestion}`;
                 }
             }
             const userMessage = `${prompt} [Attached ${files.length} file(s): ${files.map(f => f.name).join(', ')}]`;
-            this.conversationHistory.push({ role: 'user', content: userMessage });
-            this.conversationHistory.push({ 
-                role: 'assistant', 
-                content: analysis,
-                model: this.selectedModelName || 'ChatGPT 5.2'
-            });
-            if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
-            this.saveConversationHistory();
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({ role: 'user', content: userMessage });
+                this.conversationHistory.push({ 
+                    role: 'assistant', 
+                    content: analysis,
+                    model: this.selectedModelName || 'ChatGPT 5.2'
+                });
+                if (this.conversationHistory.length > 30) this.conversationHistory = this.conversationHistory.slice(-30);
+                this.saveConversationHistory();
+            }
             if (!this.hasPremiumAccess()) this.incrementMessageCount();
-            if (this.textInput) this.textInput.value = '';
+            if (this.textInput) { this.textInput.value = ''; if (this.resizeTextInput) this.resizeTextInput(); }
             this.showNotification(analysis, true);
         } catch (error) {
             console.error('Error analyzing files:', error);
@@ -6878,7 +6370,7 @@ ${currentQuestion}`;
             const hasValidLicense = this.licenseStatus && this.licenseStatus.valid;
             
             if (isFreeAccess) {
-                this.premiumStatusElement.textContent = 'Free Access (aaron2)';
+                this.premiumStatusElement.textContent = 'Free Access';
                 this.premiumStatusElement.style.color = '#4CAF50';
             } else if (hasValidLicense) {
                 this.premiumStatusElement.textContent = 'Premium';
@@ -6915,228 +6407,6 @@ ${currentQuestion}`;
         }
     }
 
-    setupGoogleServices() {
-        if (!this.isElectron || !window.require) return;
-
-        const { ipcRenderer } = window.require('electron');
-
-        // Docs
-        const docsConnectBtn = document.getElementById('docs-connect-btn');
-        const docsDisconnectBtn = document.getElementById('docs-disconnect-btn');
-        if (docsConnectBtn) {
-            docsConnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-docs-authenticate');
-                    if (result.success) {
-                        this.showNotification('✅ Connected to Google Docs!', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error connecting to Google Docs: ${error.message}`, false);
-                }
-            });
-        }
-        if (docsDisconnectBtn) {
-            docsDisconnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-docs-sign-out');
-                    if (result.success) {
-                        this.showNotification('✅ Disconnected from Google Docs', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
-                }
-            });
-        }
-
-        // Sheets (shares auth with Docs)
-        const sheetsConnectBtn = document.getElementById('sheets-connect-btn');
-        const sheetsDisconnectBtn = document.getElementById('sheets-disconnect-btn');
-        if (sheetsConnectBtn) {
-            sheetsConnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-docs-authenticate');
-                    if (result.success) {
-                        this.showNotification('✅ Connected to Google Sheets!', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error connecting to Google Sheets: ${error.message}`, false);
-                }
-            });
-        }
-        if (sheetsDisconnectBtn) {
-            sheetsDisconnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-docs-sign-out');
-                    if (result.success) {
-                        this.showNotification('✅ Disconnected from Google Sheets', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
-                }
-            });
-        }
-
-        // Drive (shares auth with Docs)
-        const driveConnectBtn = document.getElementById('drive-connect-btn');
-        const driveDisconnectBtn = document.getElementById('drive-disconnect-btn');
-        if (driveConnectBtn) {
-            driveConnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-docs-authenticate');
-                    if (result.success) {
-                        this.showNotification('✅ Connected to Google Drive!', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error connecting to Google Drive: ${error.message}`, false);
-                }
-            });
-        }
-        if (driveDisconnectBtn) {
-            driveDisconnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-docs-sign-out');
-                    if (result.success) {
-                        this.showNotification('✅ Disconnected from Google Drive', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
-                }
-            });
-        }
-
-        // Gmail
-        const gmailConnectBtn = document.getElementById('gmail-connect-btn');
-        const gmailDisconnectBtn = document.getElementById('gmail-disconnect-btn');
-        if (gmailConnectBtn) {
-            gmailConnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('gmail-authenticate');
-                    if (result.success) {
-                        this.showNotification('✅ Connected to Gmail!', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error connecting to Gmail: ${error.message}`, false);
-                }
-            });
-        }
-        if (gmailDisconnectBtn) {
-            gmailDisconnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('gmail-sign-out');
-                    if (result.success) {
-                        this.showNotification('✅ Disconnected from Gmail', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
-                }
-            });
-        }
-
-        // Calendar
-        const calendarConnectBtn = document.getElementById('calendar-connect-btn');
-        const calendarDisconnectBtn = document.getElementById('calendar-disconnect-btn');
-        if (calendarConnectBtn) {
-            calendarConnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-calendar-authenticate');
-                    if (result.success) {
-                        this.showNotification('✅ Connected to Google Calendar!', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to connect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error connecting to Google Calendar: ${error.message}`, false);
-                }
-            });
-        }
-        if (calendarDisconnectBtn) {
-            calendarDisconnectBtn.addEventListener('click', async () => {
-                try {
-                    const result = await ipcRenderer.invoke('google-calendar-sign-out');
-                    if (result.success) {
-                        this.showNotification('✅ Disconnected from Google Calendar', true);
-                        this.updateGoogleServicesStatus();
-                    } else {
-                        this.showNotification(`❌ Failed to disconnect: ${result.error || 'Unknown error'}`, false);
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Error disconnecting: ${error.message}`, false);
-                }
-            });
-        }
-    }
-
-    async updateGoogleServicesStatus() {
-        if (!this.isElectron || !window.require) return;
-
-        const { ipcRenderer } = window.require('electron');
-
-        try {
-            // Check Docs status
-            const docsStatus = await ipcRenderer.invoke('google-docs-auth-status');
-            this.updateServiceStatus('docs', docsStatus.authenticated);
-
-            // Check Drive/Sheets status (shares tokens with Docs)
-            const driveStatus = await ipcRenderer.invoke('google-drive-auth-status');
-            this.updateServiceStatus('drive', driveStatus.authenticated);
-            this.updateServiceStatus('sheets', driveStatus.authenticated);
-
-            // Check Gmail status
-            const gmailStatus = await ipcRenderer.invoke('gmail-auth-status');
-            this.updateServiceStatus('gmail', gmailStatus.authenticated);
-
-            // Check Calendar status
-            const calendarStatus = await ipcRenderer.invoke('google-calendar-auth-status');
-            this.updateServiceStatus('calendar', calendarStatus.authenticated);
-        } catch (error) {
-            console.error('Error updating Google Services status:', error);
-        }
-    }
-
-    updateServiceStatus(service, isConnected) {
-        const statusElement = document.getElementById(`${service}-status`);
-        const connectBtn = document.getElementById(`${service}-connect-btn`);
-        const disconnectBtn = document.getElementById(`${service}-disconnect-btn`);
-
-        if (statusElement) {
-            statusElement.textContent = isConnected ? 'Connected' : 'Not connected';
-            statusElement.style.color = isConnected ? '#4CAF50' : '#888';
-        }
-
-        if (connectBtn) {
-            connectBtn.classList.toggle('hidden', isConnected);
-        }
-
-        if (disconnectBtn) {
-            disconnectBtn.classList.toggle('hidden', !isConnected);
-        }
-    }
-
     togglePinkMode() {
         const minimalHud = document.querySelector('.minimal-hud');
         const dragOutput = document.getElementById('drag-output');
@@ -7146,30 +6416,37 @@ ${currentQuestion}`;
         this.isPinkMode = !this.isPinkMode;
         
         if (this.isPinkMode) {
-            // Change input area to pink
-            minimalHud.style.background = 'rgba(255, 192, 203, 0.95)';
-            
-            // Change chat window to pink
+            if (minimalHud) {
+                minimalHud.style.background = 'rgba(236, 72, 153, 0.92)';
+                minimalHud.style.webkitBackdropFilter = '';
+                minimalHud.style.backdropFilter = '';
+            }
             if (dragOutput) {
-                dragOutput.style.background = 'rgba(255, 192, 203, 0.95)';
+                dragOutput.style.background = 'rgba(236, 72, 153, 0.92)';
+                dragOutput.style.webkitBackdropFilter = '';
+                dragOutput.style.backdropFilter = '';
             }
-            
-            // Change Answer This button to pink
             if (answerThisBtn) {
-                answerThisBtn.style.background = 'rgba(255, 192, 203, 0.95)';
+                answerThisBtn.style.background = 'rgba(236, 72, 153, 0.92)';
+                answerThisBtn.style.webkitBackdropFilter = '';
+                answerThisBtn.style.backdropFilter = '';
             }
-            
             this.addMessage('Jarvis', 'Pink mode activated! 💖', 'assistant');
         } else {
-            // Change back to original colors
-            minimalHud.style.background = 'rgba(0, 0, 0, 0.85)';
-            
+            if (minimalHud) {
+                minimalHud.style.background = '';
+                minimalHud.style.webkitBackdropFilter = '';
+                minimalHud.style.backdropFilter = '';
+            }
             if (dragOutput) {
                 dragOutput.style.background = '';
+                dragOutput.style.webkitBackdropFilter = '';
+                dragOutput.style.backdropFilter = '';
             }
-            
             if (answerThisBtn) {
                 answerThisBtn.style.background = '';
+                answerThisBtn.style.webkitBackdropFilter = '';
+                answerThisBtn.style.backdropFilter = '';
             }
             
             this.addMessage('Jarvis', 'Pink mode deactivated! 🖤', 'assistant');
@@ -7264,59 +6541,6 @@ ${currentQuestion}`;
         });
     }
 
-    toggleGrokFreakyMode(isFreaky = null) {
-        const freakyCheckbox = document.getElementById('freaky-toggle-checkbox');
-        const freakyEmoji = document.getElementById('freaky-emoji');
-        const voiceBtn = document.getElementById('grok-voice-btn');
-        const voiceSelectBtn = document.getElementById('voice-select-btn');
-        
-        // If isFreaky is provided, use it; otherwise toggle
-        this.grokFreakyMode = isFreaky !== null ? isFreaky : !this.grokFreakyMode;
-        
-        // Update checkbox state
-        if (freakyCheckbox) {
-            freakyCheckbox.checked = this.grokFreakyMode;
-        }
-        
-        // Update emoji
-        if (freakyEmoji) {
-            freakyEmoji.textContent = this.grokFreakyMode ? '😈' : '😇';
-        }
-        
-        // Show/hide voice buttons based on freaky mode
-        if (voiceBtn) {
-            if (this.grokFreakyMode) {
-                voiceBtn.classList.remove('hidden');
-            } else {
-                voiceBtn.classList.add('hidden');
-                // Also disable voice mode when freaky mode is turned off
-                this.grokVoiceMode = false;
-                voiceBtn.classList.remove('active');
-            }
-        }
-        
-        // Show/hide voice select button based on freaky mode
-        if (voiceSelectBtn) {
-            if (this.grokFreakyMode) {
-                voiceSelectBtn.classList.remove('hidden');
-            } else {
-                voiceSelectBtn.classList.add('hidden');
-            }
-        }
-        
-        // Select Grok model if not already selected
-        if (this.selectedModel !== 'x-ai/grok-4.1-fast') {
-            this.selectModel('x-ai/grok-4.1-fast', 'Grok 4.1 Fast');
-        }
-        
-        // Send the freaky mode toggle message
-        const message = this.grokFreakyMode ? 'turn on freaky mode' : 'turn off freaky mode';
-        this.processMessage(message);
-        
-        // Hide the model submenu
-        this.hideModelSubmenu();
-    }
-    
     toggleVoiceSelection() {
         const voiceSelectBtn = document.getElementById('voice-select-btn');
         this.useSecondVoice = !this.useSecondVoice;
@@ -7448,18 +6672,7 @@ ${currentQuestion}`;
             }
         }
         
-        // Case 3: Check if the text is very short (likely just "summarize" or similar)
-        const words = textWithoutUrl.split(/\s+/).filter(w => w.length > 0);
-        if (words.length <= 3) {
-            // Short messages with certain keywords suggest document loading
-            const loadKeywords = ['read', 'load', 'open', 'extract', 'summarize', 'summary', 'analyze', 'check', 'article', 'page', 'document'];
-            if (words.some(word => loadKeywords.includes(word))) {
-                console.log('📄 Short message with load keyword - will load document');
-                return true;
-            }
-        }
-        
-        // Case 4: If text is longer or asks a specific question about the URL content
+        // Case 3: If text is longer or asks a specific question about the URL content
         // Don't auto-load - let the AI handle the message naturally
         // This handles cases like:
         // - "what is the price on https://..."
@@ -8613,9 +7826,6 @@ User Question: ${question}`;
 
 
     async answerThis() {
-        // Track for tutorial
-        this.advanceTutorial('answer-screen');
-        
         try {
             // Check if user has reached message limit for free users
             // Re-check subscription status before processing (in case it was cancelled or activated)
@@ -8643,10 +7853,8 @@ User Question: ${question}`;
                 return;
             }
 
-            this.showNotification('📸 Step 1: Initiating screen capture...');
-            this.showNotification('📸 Step 2: Capturing screenshot of your screen...');
+            this.showNotification('📸 Capturing screenshot...');
             
-            // Take screenshot directly
             await this.captureScreen();
             
             if (!this.currentScreenCapture) {
@@ -8654,8 +7862,36 @@ User Question: ${question}`;
                 return;
             }
 
-            this.showNotification('✅ Step 3: Screenshot captured successfully');
-            this.showNotification('🔍 Step 4: Processing screenshot image data...');
+            // If screen capture is black (protected content), try window capture then all windows
+            if (this.isElectron && window.require) {
+                const { ipcRenderer } = window.require('electron');
+                if (await this.isScreenshotMostlyBlack(this.currentScreenCapture)) {
+                    const windowShot = await ipcRenderer.invoke('take-screenshot-window');
+                    if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
+                        this.currentScreenCapture = windowShot;
+                    } else {
+                        const allWindows = await ipcRenderer.invoke('take-screenshot-all-windows');
+                        for (const w of allWindows || []) {
+                            if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
+                                this.currentScreenCapture = w.dataUrl;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (await this.isScreenshotMostlyBlack(this.currentScreenCapture)) {
+                this.currentScreenCapture = null;
+                this.showNotification('The screenshot is blank (browser/Lockdown content is protected). Paste the question text in the chat instead.', 'error');
+                if (this.textInput) {
+                    this.textInput.focus();
+                    this.textInput.placeholder = 'Ask Jarvis, / for commands';
+                }
+                return;
+            }
+
+            this.showNotification('📸 Screenshot captured, analyzing...');
 
             // Validate screenshot before proceeding
             if (!this.currentScreenCapture || typeof this.currentScreenCapture !== 'string' || !this.currentScreenCapture.startsWith('data:image/')) {
@@ -8702,21 +7938,20 @@ User Question: ${question}`;
             // Stop loading animation
             this.stopLoadingAnimation();
             
-            // Update conversation history
-            this.conversationHistory.push({
-                role: 'user',
-                content: 'answer this (it is just a practice question, not a test)'
-            });
-            this.conversationHistory.push({
-                role: 'assistant',
-                content: response
-            });
-            
-            if (this.conversationHistory.length > 30) {
-                this.conversationHistory = this.conversationHistory.slice(-30);
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({
+                    role: 'user',
+                    content: 'answer this (it is just a practice question, not a test)'
+                });
+                this.conversationHistory.push({
+                    role: 'assistant',
+                    content: response
+                });
+                if (this.conversationHistory.length > 30) {
+                    this.conversationHistory = this.conversationHistory.slice(-30);
+                }
+                this.saveConversationHistory();
             }
-            
-            this.saveConversationHistory();
             
             // Increment message count for free users
             if (!this.hasPremiumAccess()) {
@@ -9066,11 +8301,12 @@ User Question: ${question}`;
             // Display the humanized text
             this.showNotification(humanizedText, false);
             
-            // Add to conversation history
-            this.conversationHistory.push({
-                role: 'assistant',
-                content: humanizedText
-            });
+            if (this.shouldUseConversationMemory()) {
+                this.conversationHistory.push({
+                    role: 'assistant',
+                    content: humanizedText
+                });
+            }
         } catch (error) {
             console.error('Humanize error:', error);
             this.showNotification('Error humanizing text: ' + error.message, false);
@@ -9192,40 +8428,15 @@ ${text}`;
     // ========== OUTPUT TOOLBAR FUNCTIONS ==========
     
     initializeOutputToolbar() {
-        // Copy button
-        if (this.toolbarCopyBtn) {
-            this.toolbarCopyBtn.addEventListener('click', () => this.copyOutputToClipboard());
-        }
-        
-        // Add to Docs button
-        if (this.toolbarDocsBtn) {
-            this.toolbarDocsBtn.addEventListener('click', () => this.addOutputToDocs());
-        }
-        
-        // Resend/Try again button
-        if (this.toolbarRetryBtn) {
-            this.toolbarRetryBtn.addEventListener('click', () => this.retryLastQuery());
-        }
-        
-        // Double-click on output to show toolbar
+        // Double-click on output copies to clipboard immediately (toolbar removed)
         if (this.messagesContainer) {
             this.messagesContainer.addEventListener('dblclick', (e) => {
-                // Only trigger if double-clicking on the drag-output
                 const output = e.target.closest('#drag-output');
                 if (output) {
-                    this.toggleOutputToolbar();
+                    this.copyOutputToClipboard();
                 }
             });
         }
-        
-        // Hide toolbar when clicking outside
-        document.addEventListener('click', (e) => {
-            if (this.outputToolbar && !this.outputToolbar.classList.contains('hidden')) {
-                if (!e.target.closest('#output-toolbar') && !e.target.closest('#drag-output')) {
-                    this.hideOutputToolbar();
-                }
-            }
-        });
     }
     
     toggleOutputToolbar() {
@@ -9279,13 +8490,7 @@ ${text}`;
             }
             
             if (success) {
-                // Show visual feedback
-                if (this.toolbarCopyBtn) {
-                    this.toolbarCopyBtn.classList.add('copied');
-                    setTimeout(() => {
-                        this.toolbarCopyBtn.classList.remove('copied');
-                    }, 1500);
-                }
+                this.showNotification('Copied to clipboard', true);
             } else {
                 throw new Error('IPC copy failed');
             }
@@ -9312,615 +8517,15 @@ ${text}`;
     }
     
     async addOutputToDocs() {
-        if (!this.dragOutput) {
-            this.showNotification('No output to add to docs', false);
-            return;
-        }
-        
-        // Hide toolbar
-        this.hideOutputToolbar();
-        
-        // Get the content from the output
-        const htmlContent = this.dragOutput.innerHTML;
-        const textContent = this.dragOutput.dataset.fullText || this.dragOutput.innerText || '';
-        
-        // Use existing writeToDocs method (same as /docs command)
-        if (typeof this.writeToDocs === 'function') {
-            await this.writeToDocs(false); // false = not paste mode, use realistic typing
-        } else {
-            this.showNotification('Google Docs integration not available', false);
-        }
+        // Write to Docs removed from build
+        this.showNotification('Write to Docs is not available in this build', false);
     }
     
     // ========== END OUTPUT TOOLBAR FUNCTIONS ==========
 
-    /**
-     * Show document name modal and return promise with document name
-     */
-    async promptDocumentName(defaultName = '') {
-        return new Promise((resolve) => {
-            if (!this.documentNameModal || !this.documentNameInput) {
-                resolve(defaultName);
-                return;
-            }
-
-            // Make window interactive when showing modal
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                ipcRenderer.invoke('make-interactive').catch(() => {});
-            }
-
-            // Set default value
-            this.documentNameInput.value = defaultName || `Jarvis Output - ${new Date().toLocaleDateString()}`;
-            
-            // Update modal title and button text
-            const modalTitle = this.documentNameModal.querySelector('h3');
-            const confirmBtn = this.documentNameConfirm;
-            if (modalTitle) modalTitle.textContent = 'Name Your Google Doc';
-            if (confirmBtn) confirmBtn.textContent = 'Create';
-            
-            // Show modal
-            this.documentNameModal.classList.remove('hidden');
-            this.documentNameInput.focus();
-            this.documentNameInput.select();
-
-            // Handle confirm
-            const handleConfirm = () => {
-                const name = this.documentNameInput.value.trim() || defaultName;
-                this.documentNameModal.classList.add('hidden');
-                cleanup();
-                resolve(name);
-            };
-
-            // Handle cancel
-            const handleCancel = () => {
-                this.documentNameModal.classList.add('hidden');
-                cleanup();
-                resolve(null);
-            };
-
-            // Handle Enter key
-            const handleKeyPress = (e) => {
-                if (e.key === 'Enter') {
-                    handleConfirm();
-                } else if (e.key === 'Escape') {
-                    handleCancel();
-                }
-            };
-
-            // Cleanup function
-            const cleanup = () => {
-                this.documentNameConfirm.removeEventListener('click', handleConfirm);
-                this.documentNameCancel.removeEventListener('click', handleCancel);
-                this.documentNameInput.removeEventListener('keydown', handleKeyPress);
-            };
-
-            // Add event listeners
-            this.documentNameConfirm.addEventListener('click', handleConfirm);
-            this.documentNameCancel.addEventListener('click', handleCancel);
-            this.documentNameInput.addEventListener('keydown', handleKeyPress);
-        });
-    }
-
-
-    async promptDocumentId() {
-        return new Promise(async (resolve) => {
-            // Re-query elements if they're not found (in case DOM wasn't ready during initialization)
-            if (!this.documentSelectionModal) {
-                this.documentSelectionModal = document.getElementById('document-selection-modal');
-            }
-            if (!this.documentList) {
-                this.documentList = document.getElementById('document-list');
-            }
-            if (!this.documentListLoading) {
-                this.documentListLoading = document.getElementById('document-list-loading');
-            }
-            if (!this.documentSelectionCancel) {
-                this.documentSelectionCancel = document.getElementById('document-selection-cancel');
-            }
-            if (!this.documentSelectionNew) {
-                this.documentSelectionNew = document.getElementById('document-selection-new');
-            }
-            
-            // Debug: Log what elements were found
-            console.log('Document selection modal elements:', {
-                modal: !!this.documentSelectionModal,
-                list: !!this.documentList,
-                loading: !!this.documentListLoading,
-                cancel: !!this.documentSelectionCancel,
-                new: !!this.documentSelectionNew
-            });
-            
-            if (!this.documentSelectionModal || !this.documentList || !this.documentListLoading) {
-                // Fallback to manual input if modal elements still don't exist
-                console.error('Document selection modal elements not found, falling back to manual input', {
-                    modal: !!this.documentSelectionModal,
-                    list: !!this.documentList,
-                    loading: !!this.documentListLoading
-                });
-                resolve(await this.promptDocumentIdManual());
-                return;
-            }
-
-            // Make window interactive when showing modal - do this BEFORE showing modal
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                // Force window to be interactive and focused
-                ipcRenderer.invoke('make-interactive').catch(() => {});
-                // Also ensure focus after a brief delay to make sure it sticks
-                setTimeout(() => {
-                    ipcRenderer.invoke('make-interactive').catch(() => {});
-                }, 50);
-            }
-
-            // Show loading state
-            this.documentListLoading.style.display = 'block';
-            this.documentList.style.display = 'none';
-            this.documentSelectionModal.classList.remove('hidden');
-            
-            // Ensure window stays interactive when modal is visible
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                // Keep window interactive while modal is open
-                const keepInteractive = setInterval(() => {
-                    ipcRenderer.invoke('make-interactive').catch(() => {});
-                }, 100);
-                
-                // Store interval ID for cleanup
-                this._documentModalInterval = keepInteractive;
-            }
-
-            // Load documents
-            let documents = [];
-            try {
-                if (this.isElectron && window.require) {
-                    const { ipcRenderer } = window.require('electron');
-                    const result = await ipcRenderer.invoke('list-google-docs');
-                    if (result.success && result.documents) {
-                        documents = result.documents;
-                    } else {
-                        throw new Error(result.error || 'Failed to load documents');
-                    }
-                } else {
-                    throw new Error('Not in Electron environment');
-                }
-            } catch (error) {
-                console.error('Error loading documents:', error);
-                // Don't fallback to manual input - show error in modal instead
-                this.documentListLoading.style.display = 'none';
-                this.documentList.style.display = 'block';
-                this.documentList.innerHTML = `<div style="text-align: center; padding: 40px; color: #ef4444;">
-                    <div style="margin-bottom: 10px;">⚠️ Failed to load documents</div>
-                    <div style="font-size: 12px; color: #888;">${error.message || 'Unknown error'}</div>
-                    <div style="margin-top: 20px; font-size: 12px; color: #888;">You can still create a new document</div>
-                </div>`;
-                // Continue showing the modal with "New Doc" button available
-                // Don't fallback to manual input - let user use "New Doc" button
-            }
-
-            // Hide loading, show list
-            this.documentListLoading.style.display = 'none';
-            this.documentList.style.display = 'block';
-
-            // Clear previous list
-            this.documentList.innerHTML = '';
-
-            if (documents.length === 0) {
-                this.documentList.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No documents found</div>';
-            } else {
-                // Create list items
-                documents.forEach((doc) => {
-                    const item = document.createElement('div');
-                    item.className = 'document-list-item';
-                    
-                    const name = document.createElement('div');
-                    name.style.cssText = 'font-weight: 500; color: #fff; margin-bottom: 4px;';
-                    name.textContent = doc.name;
-                    
-                    const date = document.createElement('div');
-                    date.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.5);';
-                    if (doc.modifiedTime) {
-                        const modifiedDate = new Date(doc.modifiedTime);
-                        date.textContent = `Modified: ${modifiedDate.toLocaleDateString()} ${modifiedDate.toLocaleTimeString()}`;
-                    }
-                    
-                    item.appendChild(name);
-                    item.appendChild(date);
-                    
-                    // Handle click
-                    item.addEventListener('click', () => {
-                        this.documentSelectionModal.classList.add('hidden');
-                        // Clear interval when modal closes
-                        if (this._documentModalInterval) {
-                            clearInterval(this._documentModalInterval);
-                            this._documentModalInterval = null;
-                        }
-                        cleanup();
-                        // Note: Don't restore click-through here - window needs to stay interactive
-                        // during the writing process. It will be restored after writing completes.
-                        resolve(doc.id);
-                    });
-                    
-                    this.documentList.appendChild(item);
-                });
-            }
-
-            // Handle new document
-            const handleNew = () => {
-                this.documentSelectionModal.classList.add('hidden');
-                // Clear interval when modal closes
-                if (this._documentModalInterval) {
-                    clearInterval(this._documentModalInterval);
-                    this._documentModalInterval = null;
-                }
-                cleanup();
-                // Note: Don't restore click-through here - window needs to stay interactive
-                // during the writing process. It will be restored after writing completes.
-                // Return special value to indicate new document
-                resolve('__NEW_DOC__');
-            };
-
-            // Handle cancel
-            const handleCancel = () => {
-                this.documentSelectionModal.classList.add('hidden');
-                // Clear interval when modal closes - do this immediately
-                if (this._documentModalInterval) {
-                    clearInterval(this._documentModalInterval);
-                    this._documentModalInterval = null;
-                }
-                cleanup();
-                // Restore click-through mode immediately and multiple times to ensure it sticks
-                if (this.isElectron && window.require) {
-                    const { ipcRenderer } = window.require('electron');
-                    // Restore click-through immediately
-                    ipcRenderer.invoke('make-click-through').catch(() => {});
-                    // Also restore after delays to ensure it sticks
-                    setTimeout(() => {
-                        ipcRenderer.invoke('make-click-through').catch(() => {});
-                    }, 50);
-                    setTimeout(() => {
-                        ipcRenderer.invoke('make-click-through').catch(() => {});
-                    }, 200);
-                }
-                resolve(null);
-            };
-
-            // Handle Escape key
-            const handleKeyPress = (e) => {
-                if (e.key === 'Escape') {
-                    handleCancel();
-                }
-            };
-
-            // Cleanup function
-            const cleanup = () => {
-                // Clear interval if still running
-                if (this._documentModalInterval) {
-                    clearInterval(this._documentModalInterval);
-                    this._documentModalInterval = null;
-                }
-                if (this.documentSelectionNew) {
-                    this.documentSelectionNew.removeEventListener('click', handleNew);
-                }
-                if (this.documentSelectionCancel) {
-                    this.documentSelectionCancel.removeEventListener('click', handleCancel);
-                }
-                document.removeEventListener('keydown', handleKeyPress);
-            };
-
-            // Check if cancel button exists - if not, log warning but continue (user can use Escape key)
-            if (!this.documentSelectionCancel) {
-                console.warn('document-selection-cancel button not found, but continuing - user can use Escape key');
-            }
-
-            // Add event listeners
-            if (this.documentSelectionNew) {
-                this.documentSelectionNew.addEventListener('click', handleNew);
-            }
-            if (this.documentSelectionCancel) {
-                this.documentSelectionCancel.addEventListener('click', handleCancel);
-            }
-            document.addEventListener('keydown', handleKeyPress);
-        });
-    }
-
-    async promptDocumentIdManual() {
-        return new Promise((resolve) => {
-            if (!this.documentNameModal || !this.documentNameInput) {
-                resolve(null);
-                return;
-            }
-
-            // Make window interactive when showing modal
-            if (this.isElectron && window.require) {
-                const { ipcRenderer } = window.require('electron');
-                ipcRenderer.invoke('make-interactive').catch(() => {});
-            }
-
-            // Update modal title and button text
-            const modalTitle = this.documentNameModal.querySelector('h3');
-            const confirmBtn = this.documentNameConfirm;
-            if (modalTitle) modalTitle.textContent = 'Enter Google Doc ID or URL';
-            if (confirmBtn) confirmBtn.textContent = 'Add to Doc';
-            
-            // Set placeholder
-            this.documentNameInput.placeholder = 'Paste document ID or full URL...';
-            this.documentNameInput.value = '';
-            
-            // Show modal
-            this.documentNameModal.classList.remove('hidden');
-            this.documentNameInput.focus();
-
-            // Handle confirm
-            const handleConfirm = () => {
-                const input = this.documentNameInput.value.trim();
-                this.documentNameModal.classList.add('hidden');
-                cleanup();
-                
-                if (!input) {
-                    resolve(null);
-                    return;
-                }
-                
-                // Extract document ID from URL if needed
-                const docId = this.extractDocumentId(input);
-                resolve(docId);
-            };
-
-            // Handle cancel
-            const handleCancel = () => {
-                this.documentNameModal.classList.add('hidden');
-                cleanup();
-                resolve(null);
-            };
-
-            // Handle Enter key
-            const handleKeyPress = (e) => {
-                if (e.key === 'Enter') {
-                    handleConfirm();
-                } else if (e.key === 'Escape') {
-                    handleCancel();
-                }
-            };
-
-            // Cleanup function
-            const cleanup = () => {
-                this.documentNameConfirm.removeEventListener('click', handleConfirm);
-                this.documentNameCancel.removeEventListener('click', handleCancel);
-                this.documentNameInput.removeEventListener('keydown', handleKeyPress);
-                // Reset placeholder
-                this.documentNameInput.placeholder = 'Enter document name...';
-            };
-
-            // Add event listeners
-            this.documentNameConfirm.addEventListener('click', handleConfirm);
-            this.documentNameCancel.addEventListener('click', handleCancel);
-            this.documentNameInput.addEventListener('keydown', handleKeyPress);
-        });
-    }
-
-    extractDocumentId(input) {
-        // If it's a URL, extract the document ID
-        if (input.includes('docs.google.com')) {
-            // Match patterns like:
-            // https://docs.google.com/document/d/DOCUMENT_ID/edit
-            // https://docs.google.com/document/d/DOCUMENT_ID
-            const match = input.match(/\/document\/d\/([a-zA-Z0-9-_]+)/);
-            if (match && match[1]) {
-                return match[1];
-            }
-        }
-        // Otherwise assume it's already a document ID
-        return input;
-    }
-
-    showDocsWritingIndicator() {
-        if (this.docsWritingIndicator) {
-            this.docsWritingIndicator.classList.remove('hidden');
-        }
-        if (this.docsDoneIndicator) {
-            this.docsDoneIndicator.classList.add('hidden');
-        }
-    }
-
-    hideDocsWritingIndicator() {
-        if (this.docsWritingIndicator) {
-            this.docsWritingIndicator.classList.add('hidden');
-        }
-    }
-
-    showDocsDoneIndicator(documentUrl) {
-        if (this.docsDoneIndicator) {
-            // Store document URL for the open button
-            this.docsDoneIndicator.dataset.documentUrl = documentUrl || '';
-            this.docsDoneIndicator.classList.remove('hidden');
-        }
-        if (this.docsWritingIndicator) {
-            this.docsWritingIndicator.classList.add('hidden');
-        }
-    }
-
-    hideDocsDoneIndicator() {
-        if (this.docsDoneIndicator) {
-            this.docsDoneIndicator.classList.add('hidden');
-        }
-    }
-
-    openGoogleDoc() {
-        if (this.docsDoneIndicator && this.docsDoneIndicator.dataset.documentUrl) {
-            const url = this.docsDoneIndicator.dataset.documentUrl;
-            if (this.isElectron && window.require) {
-                const { shell } = window.require('electron');
-                shell.openExternal(url);
-            } else {
-                window.open(url, '_blank');
-            }
-            // Hide the indicator after opening
-            this.hideDocsDoneIndicator();
-        }
-    }
-
-    async writeToDocs(usePasteMode = false) {
-        if (!this.dragOutput || this.dragOutput.classList.contains('hidden')) {
-            this.showNotification('No content to write to Docs', false);
-            return;
-        }
-
-        // Get HTML content to preserve table structure
-        const htmlContent = this.dragOutput.innerHTML || '';
-        
-        // Get clean text from the output (without HTML/markdown) for fallback
-        const cleanText = this.dragOutput.dataset.fullText || 
-                         this.dragOutput.textContent || 
-                         this.stripMarkdown(this.dragOutput.innerHTML).replace(/<[^>]*>/g, '').trim();
-
-        if (!cleanText || cleanText.length === 0) {
-            this.showNotification('No content available to write', false);
-            return;
-        }
-
-        if (!this.isElectron || !window.require) {
-            // Fallback: copy to clipboard
-            try {
-                await navigator.clipboard.writeText(cleanText);
-                this.showNotification('Content copied to clipboard! Paste it into Google Docs.', false);
-            } catch (error) {
-                this.showNotification('Failed to copy content. Please copy manually.', false);
-            }
-            return;
-        }
-
-        try {
-            const { ipcRenderer } = window.require('electron');
-            
-            // Show document selection modal directly (with New Doc button)
-            console.log('Calling promptDocumentId() to show document selection modal');
-            let documentId = await this.promptDocumentId();
-            
-            if (!documentId) {
-                // User cancelled - click-through should already be restored by cancel handler
-                console.log('User cancelled document selection');
-                return;
-            }
-            
-            let documentName = null;
-            
-            // Check if user clicked "New Doc" button
-            if (documentId === '__NEW_DOC__') {
-                // Prompt for document name
-                documentName = await this.promptDocumentName(`Jarvis Output - ${new Date().toLocaleDateString()}`);
-                
-                if (documentName === null) {
-                    // User cancelled
-                    return;
-                }
-                documentId = null; // Will create new document
-            }
-            
-            // Check authentication status first
-            const authStatus = await ipcRenderer.invoke('google-docs-auth-status');
-            
-            if (!authStatus.authenticated) {
-                // Not authenticated - prompt user to authenticate
-                const shouldAuthenticate = confirm(
-                    'Google Docs authentication required.\n\n' +
-                    'Click OK to authenticate with Google Docs.\n' +
-                    'This will open a browser window for authentication.'
-                );
-                
-                if (!shouldAuthenticate) {
-                    return;
-                }
-                
-                this.showNotification('Authenticating with Google Docs...', false);
-                const authResult = await ipcRenderer.invoke('google-docs-authenticate');
-                
-                if (!authResult.success || !authResult.authenticated) {
-                    const errorMsg = authResult.error || 'Authentication failed';
-                    this.showNotification(`❌ Authentication failed: ${errorMsg}`, false);
-                    return;
-                }
-            }
-            
-            // Show writing indicator
-            this.showDocsWritingIndicator();
-            
-            // Prepare options
-            const options = {};
-            if (documentId) {
-                options.documentId = documentId;
-            } else {
-                options.title = documentName || `Jarvis Output - ${new Date().toLocaleString()}`;
-            }
-            
-            // Write to Google Docs (with or without realistic typing based on mode)
-            // Pass HTML content to preserve table structure
-            const writeMethod = usePasteMode ? 'write-to-docs' : 'write-to-docs-realistic';
-            ipcRenderer.invoke(writeMethod, htmlContent || cleanText, options).then(result => {
-                // Hide writing indicator
-                this.hideDocsWritingIndicator();
-                
-                if (result && result.success) {
-                    // Always show done indicator with open button if we have a URL
-                    const documentUrl = result.documentUrl || (result.documentId ? `https://docs.google.com/document/d/${result.documentId}` : null);
-                    if (documentUrl) {
-                        this.showDocsDoneIndicator(documentUrl);
-                    } else {
-                        // Fallback: show notification if no URL available
-                        const successMsg = usePasteMode 
-                            ? '✅ Document created successfully!' 
-                            : '✅ Document typed successfully!';
-                        this.showNotification(successMsg, false);
-                    }
-                } else {
-                    const errorMsg = result?.error || result?.message || 'Failed to write to Google Docs';
-                    
-                    // Check if re-authentication is required
-                    if (result?.requiresReauth || errorMsg.includes('insufficient authentication scopes') || errorMsg.includes('Insufficient Permission')) {
-                        // Show notification
-                        this.showNotification(`⚠️ Re-authentication required for Google Docs.\n\nOpening Account settings...`, false);
-                        // Clear authentication status to force re-auth
-                        ipcRenderer.invoke('google-docs-sign-out').catch(() => {});
-                        // Open account window after a short delay
-                        setTimeout(() => {
-                            this.showAccountWindow();
-                        }, 1000);
-                    } else if (errorMsg.includes('OAuth') || errorMsg.includes('credentials') || errorMsg.includes('not configured')) {
-                        this.showNotification(`❌ ${errorMsg}\n\nPlease check your Google OAuth credentials.`, false);
-                    } else if (errorMsg.includes('not found') || errorMsg.includes('permission')) {
-                        this.showNotification(`❌ ${errorMsg}\n\nPlease check that the document ID is correct and you have access to it.`, false);
-                    } else {
-                        this.showNotification(`❌ ${errorMsg}`, false);
-                    }
-                }
-            }).catch(error => {
-                // Hide writing indicator on error
-                this.hideDocsWritingIndicator();
-                console.error('Error writing to Docs:', error);
-                // Don't show error notifications for charBuffer or internal variable names
-                const errorMsg = error?.message || String(error) || '';
-                const lowerErrorMsg = errorMsg.toLowerCase();
-                // Filter out internal variable errors
-                if (!lowerErrorMsg.includes('charbuffer') && 
-                    !lowerErrorMsg.includes('charbuffer is not defined') &&
-                    !lowerErrorMsg.includes('bufferindex') &&
-                    !lowerErrorMsg.includes('currentindex')) {
-                    this.showNotification(`❌ Error: ${errorMsg}`, false);
-                } else {
-                    // If it's an internal error but writing might have succeeded, try to show success
-                    console.warn('Internal error detected, but writing may have completed:', errorMsg);
-                }
-            });
-            
-        } catch (error) {
-            console.error('Error writing to Docs:', error);
-            this.hideDocsWritingIndicator();
-            // Don't show error notifications for charBuffer or internal variable names
-            const errorMsg = error?.message || String(error);
-            if (!errorMsg.toLowerCase().includes('charbuffer')) {
-                this.showNotification(`❌ Error: ${errorMsg}`, false);
-            }
-        }
+    async writeToDocs(_usePasteMode = false) {
+        // Write to Docs removed from build
+        this.showNotification('Write to Docs is not available in this build', false);
     }
 
     positionFloatingClose() {
@@ -9961,7 +8566,6 @@ ${text}`;
     }
 
     hideOutput() {
-        // Cancel any running OpenClaw command
         this.cancelRunningCommand();
         
         if (this.messagesContainer) {
@@ -9990,18 +8594,9 @@ ${text}`;
         this.hideOutputToolbar();
     }
 
-    // Cancel any running command (OpenClaw, OpenAI streaming, etc.)
+    // Cancel any running command (OpenAI streaming, etc.)
     cancelRunningCommand() {
         let cancelled = false;
-        
-        // Cancel OpenClaw command if running
-        if (this.openClawClient && this.openClawClient.isRunning()) {
-            const abortedId = this.openClawClient.abortCurrentRun();
-            if (abortedId) {
-                console.log('🛑 Cancelled OpenClaw command:', abortedId);
-                cancelled = true;
-            }
-        }
         
         // Cancel any streaming response (for OpenAI/OpenRouter)
         if (this.currentAbortController) {
@@ -10240,27 +8835,11 @@ ${text}`;
             ipcRenderer.invoke('make-interactive');
         }
         
-        // Clear drag flag after a short delay to ensure drag-drop completes
+        // Clear drag flag after a short delay to ensure drag-drop completes.
+        // Do not set click-through here based on mouse position – it can be wrong
+        // after drag; mouseleave will set click-through when the user actually leaves.
         setTimeout(() => {
             this.isDraggingOutput = false;
-            
-            // Now check if mouse is still over overlay after drag ends
-            setTimeout(() => {
-                if (!this.isDraggingOutput && !this.isResizing && this.isElectron) {
-                    const { ipcRenderer } = require('electron');
-                    const rect = this.overlay.getBoundingClientRect();
-                    const mouseX = e.clientX || 0;
-                    const mouseY = e.clientY || 0;
-                    // Check if mouse is outside overlay bounds
-                    if (mouseX < rect.left || mouseX > rect.right || mouseY < rect.top || mouseY > rect.bottom || mouseX === 0 && mouseY === 0) {
-                        // Mouse is outside, set click-through
-                        ipcRenderer.invoke('make-click-through');
-                    } else {
-                        // Mouse is still over overlay, keep interactive
-                        ipcRenderer.invoke('make-interactive');
-                    }
-                }
-            }, 50);
         }, delay);
     }
     
@@ -10306,21 +8885,8 @@ ${text}`;
         if (this.boundResizeEnd) {
             document.removeEventListener('mouseup', this.boundResizeEnd);
         }
-        
-        // Check if mouse is outside overlay and set click-through if so
-        setTimeout(() => {
-            if (!this.isDraggingOutput && !this.isResizing) {
-                const rect = this.overlay.getBoundingClientRect();
-                const mouseX = e.clientX;
-                const mouseY = e.clientY;
-                if (mouseX < rect.left || mouseX > rect.right || mouseY < rect.top || mouseY > rect.bottom) {
-                    if (this.isElectron) {
-                        const { ipcRenderer } = require('electron');
-                        ipcRenderer.invoke('make-click-through');
-                    }
-                }
-            }
-        }, 100);
+        // Do not set click-through here based on mouse position – rely on mouseleave only
+        // so the overlay doesn’t get stuck click-through.
     }
 
     startJarvis() {
@@ -10345,22 +8911,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 overlay.style.top = `${centerY}px`;
                 overlay.style.transform = 'none';
                 
-                // Initialize overlay color and opacity (default: black, 95% = original)
+                // Initialize overlay color and opacity (default: black, 100% so first launch is not more transparent)
                 const savedColor = localStorage.getItem('jarvis-overlay-color') || 'black';
-                const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '95';
+                const savedOpacity = localStorage.getItem('jarvis-overlay-opacity') || '100';
                 jarvis.currentOpacity = parseInt(savedOpacity);
                 jarvis.setOverlayColor(savedColor);
                 jarvis.setOverlayOpacity(parseInt(savedOpacity));
                 
-                // Initialize opacity slider and display
                 const opacitySlider = document.getElementById('opacity-slider');
-                const opacityDisplay = document.getElementById('opacity-value-display');
-                if (opacitySlider) {
-                    opacitySlider.value = savedOpacity;
-                }
-                if (opacityDisplay) {
-                    opacityDisplay.textContent = savedOpacity + '%';
-                }
+                if (opacitySlider) opacitySlider.value = savedOpacity;
             }
             
            window.setOpenAIKey = (key) => {

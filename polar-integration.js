@@ -189,7 +189,7 @@ class PolarIntegration {
         const path = require('path');
         
         // Use user's data directory instead of app bundle directory
-        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 6.0');
+        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
         
         // Ensure the directory exists
         if (!fs.existsSync(userDataPath)) {
@@ -425,7 +425,7 @@ class PolarIntegration {
             const path = require('path');
             const { app } = require('electron');
             const userDataPath = app ? app.getPath('userData') : 
-                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-6.0');
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
             
             if (!fs.existsSync(userDataPath)) {
                 fs.mkdirSync(userDataPath, { recursive: true });
@@ -528,10 +528,10 @@ class PolarIntegration {
         try {
             const { app } = require('electron');
             userDataPath = app ? app.getPath('userData') : 
-                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-6.0');
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
         } catch (error) {
             // Fallback if Electron not available
-            userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+            userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
         }
         
         const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
@@ -544,11 +544,6 @@ class PolarIntegration {
             if (this.mainApp) {
                 if (this.mainApp.mainWindow && !this.mainApp.mainWindow.isDestroyed()) {
                     this.mainApp.mainWindow.webContents.send('subscription-cancelled');
-                }
-                
-                // Show paywall if main window is visible
-                if (this.mainApp.mainWindow && !this.mainApp.mainWindow.isDestroyed()) {
-                    this.mainApp.mainWindow.webContents.send('show-paywall');
                 }
                 
                 // Also notify any open account windows to refresh

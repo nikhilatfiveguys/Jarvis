@@ -4,6 +4,7 @@
 // External C functions from the Objective-C++ file
 extern void SetAllElectronWindowsContentProtection(bool enable);
 extern void SetWindowContentProtection(unsigned long windowId, bool enable);
+extern void SetWindowLevelAboveLockdown(unsigned long windowId);
 extern void SetWindowContentProtectionFromPointer(void* windowPointer, bool enable);
 extern unsigned long GetWindowIdFromHandle(void* handle);
 extern void SetContentProtectionForView(void* viewHandle, bool enable);
@@ -13,6 +14,8 @@ extern void SetFullscreenExclusiveMode(unsigned long windowId, bool enable);
 extern void SetProtectedSwapchain(unsigned long windowId, bool enable);
 extern void SetSandboxBehavior(unsigned long windowId, bool enable);
 extern void ApplyComprehensiveStealth(unsigned long windowId, bool enable);
+extern void ApplyComprehensiveStealthUndetectable(unsigned long windowId, bool enable);
+extern void SetActivationPolicyAccessory(bool accessory);
 extern void EnableSecureInputProtection(unsigned long windowId, bool enable);
 extern void EnableGlobalSecureInput(bool enable);
 extern void EnableDRMProtection(unsigned long windowId, bool enable);
@@ -129,6 +132,19 @@ Napi::Value SetContentProtectionFromPointer(const Napi::CallbackInfo& info) {
     
     SetWindowContentProtectionFromPointer(windowPointer, enable);
     
+    return Napi::Boolean::New(env, true);
+}
+
+// Set only window level above Lockdown Browser (so overlay appears on top)
+Napi::Value SetWindowLevelAboveLockdownJs(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+        Napi::TypeError::New(env, "Expected windowId (number)").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    unsigned long windowId = info[0].As<Napi::Number>().Uint32Value();
+    if (windowId == 0) return Napi::Boolean::New(env, false);
+    SetWindowLevelAboveLockdown(windowId);
     return Napi::Boolean::New(env, true);
 }
 
@@ -298,6 +314,19 @@ Napi::Value ComprehensiveStealth(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, true);
 }
 
+// Undetectable stealth: same protections but window level 1000 (less detectable than 3000)
+Napi::Value ComprehensiveStealthUndetectable(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsBoolean()) {
+        Napi::TypeError::New(env, "Expected (windowId, enable)").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    unsigned long windowId = info[0].As<Napi::Number>().Uint32Value();
+    bool enable = info[1].As<Napi::Boolean>().Value();
+    ApplyComprehensiveStealthUndetectable(windowId, enable);
+    return Napi::Boolean::New(env, true);
+}
+
 // Function to enable secure input protection (like password fields)
 Napi::Value SecureInputProtection(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -345,8 +374,23 @@ Napi::Value GlobalSecureInput(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, true);
 }
 
+// Set activation policy to Accessory (hide from Dock + Cmd+Tab) for stealth
+Napi::Value SetActivationPolicyAccessoryJs(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsBoolean()) {
+        Napi::TypeError::New(env, "Expected one boolean argument").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+    SetActivationPolicyAccessory(info[0].As<Napi::Boolean>().Value());
+    return Napi::Boolean::New(env, true);
+}
+
 // Initialize the module
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
+    exports.Set(
+        Napi::String::New(env, "setWindowLevelAboveLockdown"),
+        Napi::Function::New(env, SetWindowLevelAboveLockdownJs)
+    );
     exports.Set(
         Napi::String::New(env, "setAllWindowsContentProtection"),
         Napi::Function::New(env, SetAllWindowsContentProtection)
@@ -395,6 +439,14 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(
         Napi::String::New(env, "applyComprehensiveStealth"),
         Napi::Function::New(env, ComprehensiveStealth)
+    );
+    exports.Set(
+        Napi::String::New(env, "applyComprehensiveStealthUndetectable"),
+        Napi::Function::New(env, ComprehensiveStealthUndetectable)
+    );
+    exports.Set(
+        Napi::String::New(env, "setActivationPolicyAccessory"),
+        Napi::Function::New(env, SetActivationPolicyAccessoryJs)
     );
     
     exports.Set(

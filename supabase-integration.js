@@ -134,33 +134,53 @@ class SupabaseIntegration {
     }
 
     /**
-     * Check subscription by email
+     * Check subscription by email (tries lowercase first, then raw email for case mismatches)
      */
     async checkSubscriptionByEmail(email) {
+        const rawEmail = email && typeof email === 'string' ? email.trim() : '';
+        if (!rawEmail || !rawEmail.includes('@')) {
+            console.warn('checkSubscriptionByEmail: invalid email', rawEmail ? '(length ' + rawEmail.length + ')' : '(empty)');
+            return { hasSubscription: false };
+        }
+        const normalizedEmail = rawEmail.toLowerCase();
+        console.log('Checking subscription for email:', normalizedEmail.replace(/(.{2}).*@(.*)/, '$1***@$2'));
+
         try {
-            console.log('Checking subscription for email:', email);
-            
+        const runQuery = async (addr) => {
             const { data, error } = await this.supabase
                 .from('subscriptions')
                 .select('*')
-                .eq('email', email)
+                .eq('email', addr)
                 .in('status', ['active', 'trialing'])
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
 
-            // PGRST116 = no rows returned (not an error, just no subscription)
             if (error && error.code !== 'PGRST116') {
-                console.error('Supabase query error:', error.code, error.message);
-                // Don't throw - return error info so caller can decide
-                return { 
-                    hasSubscription: false, 
-                    error: error.message,
-                    isError: true // Flag to indicate this is an error, not "no subscription"
-                };
+                return { data: null, error, isError: true };
             }
+            return { data, error: null, isError: false };
+        };
 
-            if (data) {
+        let result = await runQuery(normalizedEmail);
+        if (result.isError) {
+            console.error('Supabase subscription query error:', result.error?.code, result.error?.message);
+            return {
+                hasSubscription: false,
+                error: result.error?.message || 'Query failed',
+                isError: true
+            };
+        }
+        if (!result.data && normalizedEmail !== rawEmail) {
+            result = await runQuery(rawEmail);
+            if (result.isError) {
+                console.error('Supabase subscription query error (raw email):', result.error?.code, result.error?.message);
+                return { hasSubscription: false, error: result.error?.message, isError: true };
+            }
+        }
+
+        const data = result.data;
+        if (data) {
                 // Check if current_period_end exists and is valid
                 if (!data.current_period_end) {
                     console.warn('⚠️ Subscription found but current_period_end is null/undefined - treating as active');
@@ -223,7 +243,7 @@ class SupabaseIntegration {
             }
 
             // No subscription found (PGRST116 or no data)
-            console.log('ℹ️ No active subscription found for email:', email);
+            console.log('ℹ️ No active subscription found for email:', normalizedEmail.replace(/(.{2}).*@(.*)/, '$1***@$2'));
             return { hasSubscription: false };
         } catch (error) {
             console.error('❌ Error checking subscription by email:', error);
@@ -376,7 +396,7 @@ class SupabaseIntegration {
         const path = require('path');
         
         // Use user's data directory instead of app bundle directory
-        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis 6.0');
+        const userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
         
         // Ensure the directory exists
         if (!fs.existsSync(userDataPath)) {
@@ -770,9 +790,9 @@ class SupabaseIntegration {
         try {
             const { app } = require('electron');
             userDataPath = app ? app.getPath('userData') : 
-                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-6.0');
+                path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
         } catch (error) {
-            userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'jarvis-5.0');
+            userDataPath = path.join(process.env.HOME || process.env.USERPROFILE, 'Library', 'Application Support', 'Jarvis');
         }
         
         const subscriptionFile = path.join(userDataPath, 'subscription_status.json');
@@ -785,10 +805,6 @@ class SupabaseIntegration {
             if (this.mainApp) {
                 if (this.mainApp.mainWindow && !this.mainApp.mainWindow.isDestroyed()) {
                     this.mainApp.mainWindow.webContents.send('subscription-cancelled');
-                }
-                
-                if (this.mainApp.mainWindow && !this.mainApp.mainWindow.isDestroyed()) {
-                    this.mainApp.mainWindow.webContents.send('show-paywall');
                 }
                 
                 if (this.mainApp.accountWindow && !this.mainApp.accountWindow.isDestroyed()) {
@@ -820,6 +836,7 @@ class SupabaseIntegration {
         'claude-3-haiku': { input: 0.5, output: 2.5 },
         'anthropic/claude-sonnet-4.5': { input: 0.5, output: 2.5 },
         'anthropic/claude-opus-4.5': { input: 0.5, output: 2.5 },
+        'anthropic/claude-opus-4.6': { input: 0.5, output: 2.5 },
         'anthropic/claude-3-opus': { input: 0.5, output: 2.5 },
         'anthropic/claude-3-sonnet': { input: 0.5, output: 2.5 },
         'anthropic/claude-3-haiku': { input: 0.5, output: 2.5 },

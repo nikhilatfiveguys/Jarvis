@@ -1,4 +1,6 @@
-const { google } = require('googleapis');
+const { calendar } = require('@googleapis/calendar');
+const { OAuth2Client } = require('google-auth-library');
+const axios = require('axios');
 const { BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -46,7 +48,7 @@ class GoogleCalendarIntegration {
                 const tokenData = fs.readFileSync(this.tokenPath, 'utf8');
                 const tokens = JSON.parse(tokenData);
                 
-                this.oAuth2Client = new google.auth.OAuth2(
+                this.oAuth2Client = new OAuth2Client(
                     this.clientId,
                     this.clientSecret,
                     this.redirectUri
@@ -55,7 +57,7 @@ class GoogleCalendarIntegration {
                 this.oAuth2Client.setCredentials(tokens);
                 
                 // Refresh token if expired
-                if (this.oAuth2Client.isTokenExpiring()) {
+                if (this.oAuth2Client.isTokenExpiring && this.oAuth2Client.isTokenExpiring()) {
                     this.refreshAccessToken();
                 }
                 
@@ -109,7 +111,7 @@ class GoogleCalendarIntegration {
             throw new Error('Google OAuth credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.');
         }
 
-        this.oAuth2Client = new google.auth.OAuth2(
+        this.oAuth2Client = new OAuth2Client(
             this.clientId,
             this.clientSecret,
             this.redirectUri
@@ -224,7 +226,7 @@ class GoogleCalendarIntegration {
     async getTokensFromCode(code) {
         try {
             if (!this.oAuth2Client) {
-                this.oAuth2Client = new google.auth.OAuth2(
+                this.oAuth2Client = new OAuth2Client(
                     this.clientId,
                     this.clientSecret,
                     this.redirectUri
@@ -253,17 +255,13 @@ class GoogleCalendarIntegration {
      */
     async getUserEmail() {
         try {
-            if (!this.oAuth2Client) {
+            if (!this.oAuth2Client || !this.oAuth2Client.credentials.access_token) {
                 return null;
             }
-
-            const oauth2 = google.oauth2({
-                auth: this.oAuth2Client,
-                version: 'v2'
+            const { data } = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+                headers: { Authorization: `Bearer ${this.oAuth2Client.credentials.access_token}` }
             });
-
-            const userInfo = await oauth2.userinfo.get();
-            return userInfo.data.email || null;
+            return data.email || null;
         } catch (error) {
             console.error('Error getting user email:', error);
             return null;
@@ -288,7 +286,7 @@ class GoogleCalendarIntegration {
                 throw new Error('Not authenticated. Please authenticate first.');
             }
 
-            const calendar = google.calendar({ version: 'v3', auth: this.oAuth2Client });
+            const calendarClient = calendar({ version: 'v3', auth: this.oAuth2Client });
 
             const event = {
                 summary: eventData.summary,
@@ -305,7 +303,7 @@ class GoogleCalendarIntegration {
                 attendees: eventData.attendees ? eventData.attendees.map(email => ({ email })) : []
             };
 
-            const response = await calendar.events.insert({
+            const response = await calendarClient.events.insert({
                 calendarId: 'primary',
                 resource: event
             });
@@ -336,10 +334,10 @@ class GoogleCalendarIntegration {
                 throw new Error('Not authenticated. Please authenticate first.');
             }
 
-            const calendar = google.calendar({ version: 'v3', auth: this.oAuth2Client });
+            const calendarClient = calendar({ version: 'v3', auth: this.oAuth2Client });
             const now = new Date().toISOString();
 
-            const response = await calendar.events.list({
+            const response = await calendarClient.events.list({
                 calendarId: 'primary',
                 timeMin: now,
                 maxResults: maxResults,

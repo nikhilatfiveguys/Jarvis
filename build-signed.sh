@@ -14,10 +14,14 @@ echo "🔐 Using signing identity: $CSC_NAME"
 
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
-rm -rf dist/mac-arm64 dist/mac 2>/dev/null
-find dist -name "*.dmg" -delete 2>/dev/null
+rm -rf dist-unsigned/mac-arm64 dist/mac-arm64 dist/mac 2>/dev/null || true
+find dist dist-unsigned -name "*.dmg" -delete 2>/dev/null || true
 
 # Build the unsigned app (using unsigned config to skip electron-builder signing)
+# Unset signing env so electron-builder does not try to sign pkg/dmg (we sign manually after)
+unset CSC_NAME CSC_LINK CSC_KEY_PASSWORD CSC_IDENTITY_AUTO_DISCOVERY
+# Give Node more heap to avoid OOM during packaging (electron-builder is memory-heavy)
+export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=8192"
 echo "📦 Building app (unsigned)..."
 npm run build-unsigned
 
@@ -26,11 +30,21 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Find the built app
-APP_PATH=$(find dist -name "*.app" -type d -path "*/mac-arm64/*" | head -1)
-
+# Find the built app (electron-builder-unsigned outputs Jarvis.app to dist-unsigned)
+APP_NAME="Jarvis"
+APP_PATH=""
+if [ -d "dist-unsigned/mac-arm64/${APP_NAME}.app" ]; then
+    APP_PATH="dist-unsigned/mac-arm64/${APP_NAME}.app"
+fi
 if [ -z "$APP_PATH" ]; then
-    echo "❌ Error: Could not find built app in dist/"
+    APP_PATH=$(find dist-unsigned dist -name "${APP_NAME}.app" -type d 2>/dev/null | head -1)
+fi
+if [ -z "$APP_PATH" ]; then
+    APP_PATH=$(find dist-unsigned dist -name "*.app" -type d -path "*/mac-arm64/*" 2>/dev/null | head -1)
+fi
+
+if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+    echo "❌ Error: Could not find built app in dist-unsigned/"
     exit 1
 fi
 
@@ -46,7 +60,7 @@ IDENTITY="Developer ID Application: Aaron Soni (DMH3RU9FQQ)"
 ENTITLEMENTS="build/entitlements.mac.plist"
 
 # Create a clean copy using tar to strip ALL extended attributes
-SIGN_APP="$HOME/Desktop/Jarvis-TO-SIGN.app"
+SIGN_APP="$HOME/Desktop/${APP_NAME}-TO-SIGN.app"
 rm -rf "$SIGN_APP"
 
 echo "  Copying app using tar (strips all extended attributes)..."
@@ -62,7 +76,7 @@ find "$SIGN_APP" -exec xattr -d com.apple.provenance {} \; 2>/dev/null || true
 find "$SIGN_APP" -exec xattr -d com.apple.quarantine {} \; 2>/dev/null || true
 find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
 echo "  Verifying main exec has no xattrs..."
-xattr -l "$SIGN_APP/Contents/MacOS/Jarvis 6.0" 2>&1 || echo "  ✅ No extended attributes on main exec"
+xattr -l "$SIGN_APP/Contents/MacOS/${APP_NAME}" 2>&1 || echo "  ✅ No extended attributes on main exec"
 
 echo "  Signing components..."
 
@@ -106,6 +120,19 @@ for helper in "$SIGN_APP/Contents/Frameworks/"*Helper*.app; do
     fi
 done
 
+# Sign all .node native addons in app.asar.unpacked (required for notarization)
+UNPACKED="$SIGN_APP/Contents/Resources/app.asar.unpacked"
+if [ -d "$UNPACKED" ]; then
+    echo "    Signing native addons (.node) in app.asar.unpacked..."
+    while IFS= read -r -d '' f; do
+        if [ -f "$f" ]; then
+            xattr -cr "$f" 2>/dev/null || true
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$f" 2>&1 | grep -v "resource fork" || true
+            echo "      Signed: $(basename "$f")"
+        fi
+    done < <(find "$UNPACKED" -name "*.node" -type f -print0 2>/dev/null)
+fi
+
 # Clean ALL extended attributes and resource forks from entire bundle BEFORE signing
 echo "  Cleaning all extended attributes from app bundle..."
 find "$SIGN_APP" -name '._*' -delete 2>/dev/null || true
@@ -113,7 +140,7 @@ xattr -cr "$SIGN_APP" 2>/dev/null || true
 
 # Use ditto to create a completely clean copy (removes all resource forks)
 echo "  Creating clean copy of app bundle (removing resource forks)..."
-CLEAN_APP="$HOME/Desktop/Jarvis-CLEAN.app"
+CLEAN_APP="$HOME/Desktop/${APP_NAME}-CLEAN.app"
 rm -rf "$CLEAN_APP"
 ditto --norsrc --noextattr --noacl "$SIGN_APP" "$CLEAN_APP"
 rm -rf "$SIGN_APP"
@@ -121,9 +148,9 @@ mv "$CLEAN_APP" "$SIGN_APP"
 
 # Sign main executable
 echo "  Signing main executable..."
-MAIN_EXEC="$SIGN_APP/Contents/MacOS/Jarvis 6.0"
+MAIN_EXEC="$SIGN_APP/Contents/MacOS/${APP_NAME}"
 if [ -f "$MAIN_EXEC" ]; then
-    echo "    Found main executable: Jarvis 6.0"
+    echo "    Found main executable: ${APP_NAME}"
     codesign --force --sign "$IDENTITY" --options runtime --timestamp --entitlements "$ENTITLEMENTS" "$MAIN_EXEC"
     echo "    Verifying main executable signature..."
     codesign --verify --verbose "$MAIN_EXEC" && echo "    ✅ Main executable signed" || echo "    ❌ Main executable signing failed"
@@ -155,168 +182,100 @@ rm -rf "$SIGN_APP"
 
 # Get version from package.json
 VERSION=$(node -p "require('./package.json').version")
-echo "📦 Creating DMG from signed app (v$VERSION)..."
-DMG_NAME="Jarvis-6.0-${VERSION}-SIGNED.dmg"
+
+# Notarize the APP first (required: Apple checks contents when notarizing DMG)
+echo "🍎 Notarizing app (required before DMG so Gatekeeper accepts the app inside)..."
+mkdir -p dist
+APP_ZIP="dist/${APP_NAME}-${VERSION}-for-notarization.zip"
+rm -f "$APP_ZIP"
+ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$APP_ZIP"
+xattr -cr "$APP_ZIP" 2>/dev/null || true
+NOTARY_APP_OUTPUT=$(mktemp)
+xcrun notarytool submit "$APP_ZIP" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_ID_PASSWORD" --wait 2>&1 | tee "$NOTARY_APP_OUTPUT"
+NOTARY_EXIT=${PIPESTATUS[0]}
+SUBMIT_ID=$(grep -oE 'id: [a-fA-F0-9-]+' "$NOTARY_APP_OUTPUT" 2>/dev/null | head -1 | sed 's/id: *//')
+if [ "$NOTARY_EXIT" -eq 0 ] && grep -q "status: Accepted" "$NOTARY_APP_OUTPUT" 2>/dev/null; then
+  echo "  Stapling notarization ticket to app..."
+  xcrun stapler staple "$APP_PATH"
+  if xcrun stapler validate "$APP_PATH" 2>/dev/null; then
+    echo "  ✅ App notarized and stapled."
+  fi
+  rm -f "$NOTARY_APP_OUTPUT" "$APP_ZIP"
+else
+  echo "  ⚠️ App notarization failed (status was not Accepted). Apple's rejection reason:"
+  if [ -n "$SUBMIT_ID" ]; then
+    echo "  Submission ID: $SUBMIT_ID"
+    xcrun notarytool log "$SUBMIT_ID" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_ID_PASSWORD" 2>&1 || true
+  fi
+  rm -f "$NOTARY_APP_OUTPUT"
+  echo "  ❌ Fix the issues above and re-run this script. Exiting."
+  exit 1
+fi
+
+echo "📦 Creating DMG from signed and notarized app (v$VERSION)..."
+DMG_NAME="${APP_NAME}-${VERSION}-arm64-SIGNED.dmg"
 DMG_PATH="dist/$DMG_NAME"
 rm -f "$DMG_PATH"
 
 # Clean up any existing mounted volumes
-for vol in "/Volumes/JarvisInstall"*; do
+for vol in "/Volumes/AccessibilityAssistantInstall"*; do
     hdiutil detach "$vol" -force 2>/dev/null || true
 done
 hdiutil detach /dev/disk4 -force 2>/dev/null || true
 hdiutil detach /dev/disk5 -force 2>/dev/null || true
 
-# Create DMG source directory in project folder
+# Create DMG with create-dmg (app + arrow + Applications folder layout)
+# Requires: brew install create-dmg
 DMG_TEMP="$PWD/dmg-staging"
 rm -rf "$DMG_TEMP"
 mkdir -p "$DMG_TEMP"
-
-# Copy signed app to staging directory (ditto = no resource forks or xattrs in DMG)
-echo "  Copying app to staging directory (clean copy for notarization)..."
+echo "  Copying app to staging..."
 ditto --norsrc --noextattr --noacl "$APP_PATH" "$DMG_TEMP/$(basename "$APP_PATH")"
-
-# Create Applications symlink
-ln -s /Applications "$DMG_TEMP/Applications"
-
-# Ensure no xattrs on anything in staging (e.g. background image)
 xattr -cr "$DMG_TEMP" 2>/dev/null || true
 
-echo "  Creating styled DMG with drag-to-Applications layout..."
-
-# Remove any existing DMG first
-rm -f "$DMG_PATH"
-
-# Step 1: Create initial compressed DMG (using a simple name to avoid issues)
-echo "  Creating initial DMG..."
-hdiutil create -volname "JarvisInstall" \
-    -srcfolder "$DMG_TEMP" \
-    -format UDZO \
-    -ov \
-    "$DMG_PATH"
-
-if [ -f "$DMG_PATH" ]; then
-    # Step 2: Convert to writable format for styling
-    echo "  Converting to writable format for styling..."
-    TEMP_DMG="/tmp/jarvis-temp-rw.dmg"
-    rm -f "$TEMP_DMG"
-    hdiutil convert "$DMG_PATH" -format UDRW -o "$TEMP_DMG" -ov
-    
-    # Step 3: Mount and apply styling
-    echo "  Mounting and styling DMG..."
-    MOUNT_INFO=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify)
-    
-    if echo "$MOUNT_INFO" | grep -q "JarvisInstall"; then
-        # Apply styling with AppleScript
-        # Create background with arrow using Python
-        echo "  Creating DMG background with arrow..."
-        mkdir -p "$DMG_TEMP/.background"
-        
-        python3 << 'PYTHONSCRIPT'
-import struct
-import zlib
-
-def create_dmg_background(filepath, width=600, height=400):
-    """Create a PNG with dark gray background and white arrow"""
-    def png_chunk(chunk_type, data):
-        chunk_len = len(data)
-        chunk_crc = zlib.crc32(chunk_type + data) & 0xffffffff
-        return struct.pack('>I', chunk_len) + chunk_type + data + struct.pack('>I', chunk_crc)
-    
-    png_signature = b'\x89PNG\r\n\x1a\n'
-    ihdr_data = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
-    ihdr = png_chunk(b'IHDR', ihdr_data)
-    
-    raw_data = b''
-    bg = (60, 60, 60)  # Dark gray
-    arrow = (200, 200, 200)  # Light gray arrow
-    
-    cx, cy = width // 2, height // 2 + 30
-    
-    for y in range(height):
-        raw_data += b'\x00'
-        for x in range(width):
-            rx, ry = x - cx, y - cy
-            is_arrow = False
-            # Shaft
-            if -40 <= rx <= 10 and -6 <= ry <= 6:
-                is_arrow = True
-            # Head
-            if 10 <= rx <= 35:
-                h = 20 * (1 - (rx - 10) / 25)
-                if -h <= ry <= h:
-                    is_arrow = True
-            raw_data += bytes(arrow if is_arrow else bg)
-    
-    compressed = zlib.compress(raw_data, 9)
-    idat = png_chunk(b'IDAT', compressed)
-    iend = png_chunk(b'IEND', b'')
-    
-    with open(filepath, 'wb') as f:
-        f.write(png_signature + ihdr + idat + iend)
-
-create_dmg_background('dmg-staging/.background/background.png')
-print("Background created!")
+# Create arrow background (dark gray bg, light gray arrow)
+mkdir -p "$DMG_TEMP/.background"
+python3 << 'PYTHONSCRIPT'
+import struct, zlib
+def png_chunk(ct, data):
+    cl, cc = len(data), zlib.crc32(ct + data) & 0xffffffff
+    return struct.pack('>I', cl) + ct + data + struct.pack('>I', cc)
+w, h = 600, 400
+sig = b'\x89PNG\r\n\x1a\n'
+ihdr = png_chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+bg, arr = (60, 60, 60), (200, 200, 200)
+cx, cy = w//2, h//2 + 30
+raw = b''
+for y in range(h):
+    raw += b'\x00'
+    for x in range(w):
+        rx, ry = x - cx, y - cy
+        ar = (-40 <= rx <= 10 and -6 <= ry <= 6) or (10 <= rx <= 35 and -20*(1-(rx-10)/25) <= ry <= 20*(1-(rx-10)/25))
+        raw += bytes(arr if ar else bg)
+open('dmg-staging/.background/background.png', 'wb').write(sig + ihdr + png_chunk(b'IDAT', zlib.compress(raw, 9)) + png_chunk(b'IEND', b''))
 PYTHONSCRIPT
 
-        if [ -f "$DMG_TEMP/.background/background.png" ]; then
-            echo "  ✅ Arrow background created!"
-        else
-            echo "  ⚠️ Background creation failed, using default styling"
-        fi
-        
-        # Use AppleScript to style the DMG with background image
-        osascript << APPLESCRIPT
-tell application "Finder"
-    tell disk "JarvisInstall"
-        open
-        delay 2
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set bounds of container window to {200, 200, 800, 550}
-        set theViewOptions to icon view options of container window
-        set arrangement of theViewOptions to not arranged
-        set icon size of theViewOptions to 100
-        try
-            set background picture of theViewOptions to file ".background:background.png"
-        on error
-            set background color of theViewOptions to {15420, 15420, 15420}
-        end try
-        try
-            set position of item "Jarvis 6.0.app" to {150, 200}
-        end try
-        try
-            set position of item "Applications" to {450, 200}
-        end try
-        update without registering applications
-        delay 2
-        close
-    end tell
-end tell
-APPLESCRIPT
-        
-        echo "  ✅ Styling applied!"
-        
-        # Sync and unmount
-        sync
-        hdiutil detach /dev/disk5 -force 2>/dev/null || hdiutil detach /dev/disk4 -force 2>/dev/null || true
-        
-        # Step 4: Convert back to compressed format
-        echo "  Converting to final DMG..."
-        rm -f "$DMG_PATH"
-        hdiutil convert "$TEMP_DMG" -format UDZO -o "$DMG_PATH"
-    else
-        echo "  ⚠️ Could not mount DMG for styling, using basic DMG"
-    fi
-    
-    # Clean up temp DMG
-    rm -f "$TEMP_DMG"
+echo "  Creating styled DMG (app + arrow + Applications)..."
+rm -f "$DMG_PATH" dist/rw.*.dmg 2>/dev/null || true
+# Use unique volname to avoid conflicts with existing mounts
+VOLNAME="JarvisInstall"
+if command -v create-dmg &>/dev/null; then
+    create-dmg \
+        --volname "$VOLNAME" \
+        --window-size 600 400 \
+        --window-pos 200 200 \
+        --icon-size 100 \
+        --icon "${APP_NAME}.app" 120 200 \
+        --app-drop-link 430 200 \
+        --background "$DMG_TEMP/.background/background.png" \
+        --skip-jenkins \
+        "$DMG_PATH" \
+        "$DMG_TEMP" || DMG_PATH=""
 else
-    echo "  ⚠️ Failed to create initial DMG"
+    echo "  ⚠️ create-dmg not found (brew install create-dmg). Using basic hdiutil..."
+    ln -s /Applications "$DMG_TEMP/Applications"
+    hdiutil create -volname "Jarvis" -srcfolder "$DMG_TEMP" -format UDZO -ov "$DMG_PATH" 2>/dev/null || DMG_PATH=""
 fi
-
-# Clean up staging directory
 rm -rf "$DMG_TEMP"
 
 if [ ! -f "$DMG_PATH" ]; then
@@ -356,5 +315,47 @@ if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ]; then
     echo "  DMG is signed but NOT notarized; users will see 'disk is damaged'. Fix the issues above and rebuild."
   fi
 fi
+
+# Create signed PKG installer (double-click to install to /Applications, no drag-and-drop)
+PKG_NAME="${APP_NAME}-${VERSION}-SIGNED.pkg"
+PKG_PATH="dist/$PKG_NAME"
+rm -f "$PKG_PATH"
+if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
+  echo ""
+  echo "📦 Creating installer package (v$VERSION)..."
+  # pkgbuild --component installs the .app to /Applications
+  if pkgbuild --component "$APP_PATH" \
+    --identifier "com.assistive.runtime" \
+    --version "$VERSION" \
+    --install-location "/Applications" \
+    "$PKG_PATH" 2>/dev/null; then
+    echo "  ✅ PKG created."
+    echo "🔐 Signing PKG..."
+    if codesign --sign "$IDENTITY" --timestamp "$PKG_PATH" 2>/dev/null; then
+      echo "🍎 Notarizing PKG..."
+      NOTARY_OUTPUT_PKG=$(mktemp)
+      if xcrun notarytool submit "$PKG_PATH" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_ID_PASSWORD" --wait 2>&1 | tee "$NOTARY_OUTPUT_PKG"; then
+        xcrun stapler staple "$PKG_PATH"
+        echo "  ✅ PKG notarized and stapled."
+        if [ -d "$HOME/Desktop" ]; then
+          cp "$PKG_PATH" "$HOME/Desktop/"
+          echo "📥 Installer copied to Desktop: $HOME/Desktop/$PKG_NAME"
+        fi
+      else
+        echo "  ⚠️ PKG notarization failed (PKG is signed but not notarized)."
+      fi
+      rm -f "$NOTARY_OUTPUT_PKG"
+    else
+      echo "  ⚠️ PKG signing failed."
+    fi
+  else
+    echo "  ⚠️ PKG creation failed."
+  fi
+fi
+
 echo "✅ Build and signing complete!"
 echo "📁 Signed DMG: $DMG_PATH"
+if [ -n "$DMG_PATH" ] && [ -f "$DMG_PATH" ] && [ -d "$HOME/Desktop" ]; then
+  cp "$DMG_PATH" "$HOME/Desktop/"
+  echo "📥 Copied to Desktop: $HOME/Desktop/$(basename "$DMG_PATH")"
+fi

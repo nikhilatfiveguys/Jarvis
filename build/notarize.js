@@ -10,7 +10,7 @@ exports.default = async function notarizing(context) {
   const appName = context.packager.appInfo.productFilename;
 
   return await notarize({
-    appBundleId: 'com.aaronsoni.jarvis',
+    appBundleId: 'com.assistive.runtime',
     appPath: `${appOutDir}/${appName}.app`,
     appleId: process.env.APPLE_ID || 'aaronsoni06@gmail.com',
     appleIdPassword: process.env.APPLE_ID_PASSWORD || 'lijb-fdhv-oqmj-cwwp',

@@ -12,12 +12,12 @@ exports.default = async function beforeSign(context) {
   try {
     const frameworksPath = path.join(appPath, 'Contents', 'Frameworks');
     
-    // Remove signatures from all helper apps
+    // Remove signatures from all helper apps (names follow productName)
     const helpers = [
-      'Jarvis 5.0 Helper.app',
-      'Jarvis 5.0 Helper (GPU).app',
-      'Jarvis 5.0 Helper (Plugin).app',
-      'Jarvis 5.0 Helper (Renderer).app'
+      `${appName} Helper.app`,
+      `${appName} Helper (GPU).app`,
+      `${appName} Helper (Plugin).app`,
+      `${appName} Helper (Renderer).app`
     ];
     
     for (const helper of helpers) {

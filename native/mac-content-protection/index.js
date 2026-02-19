@@ -135,6 +135,41 @@ function setContentProtection(window, enable) {
 }
 
 /**
+ * Hide app from Dock and Cmd+Tab (activation policy Accessory). Use in cheat/stealth mode
+ * so proctoring software doesn't see the app in the app switcher or Dock.
+ */
+function setActivationPolicyAccessory(accessory) {
+    if (!nativeModule || !nativeModule.setActivationPolicyAccessory) return false;
+    try {
+        nativeModule.setActivationPolicyAccessory(accessory);
+        return true;
+    } catch (e) {
+        console.warn('setActivationPolicyAccessory failed:', e);
+        return false;
+    }
+}
+
+/**
+ * Set window level above Lockdown Browser so overlay appears on top when Lockdown Browser is fullscreen.
+ * Call this for the main overlay window so Jarvis works with Respondus Lockdown Browser.
+ */
+function setWindowLevelAboveLockdown(window) {
+    if (!nativeModule || !nativeModule.setWindowLevelAboveLockdown || !window) {
+        return false;
+    }
+    try {
+        const windowId = window.id;
+        if (windowId !== undefined && windowId !== null) {
+            nativeModule.setWindowLevelAboveLockdown(windowId);
+            return true;
+        }
+    } catch (error) {
+        console.warn('setWindowLevelAboveLockdown failed:', error);
+    }
+    return false;
+}
+
+/**
  * Hide window from Mission Control and Exposé (Method 7)
  */
 function hideFromMissionControl(window, hidden) {
@@ -275,6 +310,29 @@ function applyComprehensiveStealth(window, enable) {
 }
 
 /**
+ * Cheat/undetectable mode: same stealth (hidden from capture) but window level 1000 instead of 3000.
+ * Proctoring software is less likely to flag the window when using the standard system level.
+ */
+function applyComprehensiveStealthUndetectable(window, enable) {
+    if (!nativeModule || !nativeModule.applyComprehensiveStealthUndetectable || !window) {
+        console.log('  ⚠️ Native undetectable stealth not available, using standard stealth');
+        return applyComprehensiveStealth(window, enable);
+    }
+    try {
+        const windowId = window.id;
+        if (windowId !== undefined && windowId !== null) {
+            nativeModule.applyComprehensiveStealthUndetectable(windowId, enable);
+            console.log(`  ✅ UNDETECTABLE STEALTH: ${enable ? 'ENABLED' : 'DISABLED'} (level 1000, not 3000)`);
+            return true;
+        }
+    } catch (error) {
+        console.error('Failed to apply undetectable stealth:', error);
+        return applyComprehensiveStealth(window, enable);
+    }
+    return false;
+}
+
+/**
  * Enable secure input protection (Method 11 - like password fields)
  * Makes window appear BLANK or TRANSPARENT in screen shares
  * Same protection as Touch ID, Keychain, system permission dialogs
@@ -406,12 +464,15 @@ function enableBankingAppProtection(window, enable) {
 
 module.exports = {
     setContentProtection,
+    setActivationPolicyAccessory,
+    setWindowLevelAboveLockdown,
     hideFromMissionControl,
     disableHardwareVideoCapture,
     setFullscreenExclusiveMode,
     setProtectedSwapchain,
     setSandboxBehavior,
     applyComprehensiveStealth,
+    applyComprehensiveStealthUndetectable,
     enableSecureInputProtection,
     enableGlobalSecureInput,
     enableDRMProtection,

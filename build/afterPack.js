@@ -40,13 +40,13 @@ exports.default = async function afterPack(context) {
       // SetFile might not be available, ignore
     }
     
-    // Clean all helper apps and remove existing signatures
+    // Clean all helper apps and remove existing signatures (names follow productName)
     const frameworksPath = path.join(appPath, 'Contents', 'Frameworks');
     const helpers = [
-      'Jarvis 5.0 Helper.app',
-      'Jarvis 5.0 Helper (GPU).app',
-      'Jarvis 5.0 Helper (Plugin).app',
-      'Jarvis 5.0 Helper (Renderer).app'
+      `${appName} Helper.app`,
+      `${appName} Helper (GPU).app`,
+      `${appName} Helper (Plugin).app`,
+      `${appName} Helper (Renderer).app`
     ];
     
     for (const helper of helpers) {

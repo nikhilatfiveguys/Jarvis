@@ -1,0 +1,15 @@
+# Prevent build from ever including these (belt-and-suspenders with explicit "files" list)
+dist/
+*.dmg
+*.blockmap
+.git/
+.github/
+node_modules/.cache
+*.log
+build-log.txt
+.env
+.env.*
+!.env.example
+supabase-functions/
+web-account/
+chat/

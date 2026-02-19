@@ -210,84 +210,6 @@
             border-radius: 6px;
         }
 
-        /* Google Services */
-        .service-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 14px 16px;
-            background: #1a1a1a;
-            border-radius: 12px;
-            margin-bottom: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            transition: all 0.2s ease;
-        }
-
-        .service-item:last-child {
-            margin-bottom: 0;
-        }
-
-        .service-item:hover {
-            background: #222222;
-            border-color: rgba(255, 255, 255, 0.12);
-        }
-
-        .service-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .service-icon {
-            font-size: 20px;
-        }
-
-        .service-name {
-            color: #ffffff;
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        .service-status {
-            font-size: 11px;
-            font-weight: 600;
-            padding: 5px 12px;
-            border-radius: 20px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .service-status.connected {
-            color: #10b981;
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-        }
-
-        .service-status.disconnected {
-            color: #f59e0b;
-            background: rgba(245, 158, 11, 0.15);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-        }
-
-        .service-reconnect-btn {
-            padding: 6px 14px;
-            border-radius: 8px;
-            border: 1px solid rgba(99, 102, 241, 0.4);
-            background: rgba(99, 102, 241, 0.2);
-            color: #a5b4fc;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            font-family: inherit;
-        }
-
-        .service-reconnect-btn:hover {
-            background: rgba(99, 102, 241, 0.3);
-            border-color: rgba(99, 102, 241, 0.6);
-            transform: translateY(-1px);
-        }
-
         /* Keyboard Shortcuts */
         .shortcut-item {
             display: flex;
@@ -316,34 +238,6 @@
         .shortcut-desc {
             color: #ffffff;
             font-size: 13px;
-        }
-
-        /* Google Connect Button */
-        .google-connect-btn {
-            background: linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc05 100%);
-            background-size: 200% 200%;
-            animation: googleGradient 3s ease infinite;
-        }
-
-        @keyframes googleGradient {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        .google-account-email {
-            color: #ffffff;
-            font-size: 13px;
-            margin-bottom: 16px;
-            padding: 10px 14px;
-            background: #1a1a1a;
-            border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-family: 'SF Mono', Monaco, monospace;
-        }
-
-        .google-services-individual {
-            margin-bottom: 16px;
         }
 
         /* Sign-in Modal */
@@ -602,7 +496,7 @@
 <body>
     <div class="account-container">
         <div class="header">
-            <img src="ChatGPT Image Oct 18, 2025 at 01_00_33 PM-2.PNG" alt="Jarvis" class="logo">
+            <img src="JarvisLogo.png" alt="Jarvis" class="logo">
             <button id="open-in-browser-btn" class="open-browser-btn" title="Open in browser">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
@@ -672,41 +566,6 @@
                 <button id="get-premium-btn" class="btn btn-success">Get Premium</button>
             </div>
         </div>
-
-        <!-- Google Services Section -->
-        <div class="card">
-            <div class="card-title">Google Services</div>
-            <div id="google-account-email" class="google-account-email" style="display: none;"></div>
-            <div id="google-services-individual" class="google-services-individual" style="display: none;">
-                <div class="service-item">
-                    <div class="service-info">
-                        <span class="service-icon">📄</span>
-                        <span class="service-name">Google Docs</span>
-                    </div>
-                    <span id="docs-status" class="service-status"></span>
-                    <button id="docs-reconnect-btn" class="service-reconnect-btn hidden">Reconnect</button>
-                </div>
-                <div class="service-item">
-                    <div class="service-info">
-                        <span class="service-icon">📧</span>
-                        <span class="service-name">Gmail</span>
-                    </div>
-                    <span id="gmail-status" class="service-status"></span>
-                    <button id="gmail-reconnect-btn" class="service-reconnect-btn hidden">Reconnect</button>
-                </div>
-                <div class="service-item">
-                    <div class="service-info">
-                        <span class="service-icon">📅</span>
-                        <span class="service-name">Calendar</span>
-                    </div>
-                    <span id="calendar-status" class="service-status"></span>
-                    <button id="calendar-reconnect-btn" class="service-reconnect-btn hidden">Reconnect</button>
-                </div>
-            </div>
-            <button id="google-connect-all-btn" class="btn btn-primary google-connect-btn">Connect Google Account</button>
-            <button id="google-disconnect-all-btn" class="btn btn-secondary hidden">Disconnect Google Account</button>
-        </div>
-
 
         <!-- Hidden sections for functionality -->
         <div id="subscription-status" class="status-card" style="display: none;">
@@ -1120,8 +979,6 @@
         function initializeAccountWindow() {
             setupEventListeners();
             checkSubscriptionStatus();
-            setupGoogleServices();
-            updateGoogleServicesStatus();
             setupPasswordHandlers();
         }
 
@@ -1539,210 +1396,6 @@
                 setupEventListeners();
                 setupPasswordHandlers();
             }, 100);
-        }
-
-        function setupGoogleServices() {
-            // Individual service reconnect buttons
-            const docsReconnectBtn = document.getElementById('docs-reconnect-btn');
-            if (docsReconnectBtn) {
-                docsReconnectBtn.addEventListener('click', async () => {
-                    try {
-                        docsReconnectBtn.textContent = 'Connecting...';
-                        docsReconnectBtn.disabled = true;
-                        const result = await ipcRenderer.invoke('google-docs-authenticate');
-                        await updateGoogleServicesStatus();
-                    } catch (error) {
-                        await updateGoogleServicesStatus();
-                    } finally {
-                        docsReconnectBtn.disabled = false;
-                    }
-                });
-            }
-
-            const gmailReconnectBtn = document.getElementById('gmail-reconnect-btn');
-            if (gmailReconnectBtn) {
-                gmailReconnectBtn.addEventListener('click', async () => {
-                    try {
-                        gmailReconnectBtn.textContent = 'Connecting...';
-                        gmailReconnectBtn.disabled = true;
-                        const result = await ipcRenderer.invoke('gmail-authenticate');
-                        await updateGoogleServicesStatus();
-                    } catch (error) {
-                        await updateGoogleServicesStatus();
-                    } finally {
-                        gmailReconnectBtn.disabled = false;
-                    }
-                });
-            }
-
-            const calendarReconnectBtn = document.getElementById('calendar-reconnect-btn');
-            if (calendarReconnectBtn) {
-                calendarReconnectBtn.addEventListener('click', async () => {
-                    try {
-                        calendarReconnectBtn.textContent = 'Connecting...';
-                        calendarReconnectBtn.disabled = true;
-                        const result = await ipcRenderer.invoke('google-calendar-authenticate');
-                        await updateGoogleServicesStatus();
-                    } catch (error) {
-                        await updateGoogleServicesStatus();
-                    } finally {
-                        calendarReconnectBtn.disabled = false;
-                    }
-                });
-            }
-
-            // Connect all Google services button
-            const connectAllBtn = document.getElementById('google-connect-all-btn');
-            if (connectAllBtn) {
-                connectAllBtn.addEventListener('click', async () => {
-                    try {
-                        connectAllBtn.textContent = 'Connecting...';
-                        connectAllBtn.disabled = true;
-                        
-                        await ipcRenderer.invoke('google-docs-authenticate');
-                        await ipcRenderer.invoke('gmail-authenticate');
-                        await ipcRenderer.invoke('google-calendar-authenticate');
-                        await updateGoogleServicesStatus();
-                    } catch (error) {
-                        await updateGoogleServicesStatus();
-                    } finally {
-                        connectAllBtn.disabled = false;
-                        connectAllBtn.textContent = 'Connect Google Account';
-                    }
-                });
-            }
-
-            // Disconnect all Google services button
-            const disconnectAllBtn = document.getElementById('google-disconnect-all-btn');
-            if (disconnectAllBtn) {
-                disconnectAllBtn.addEventListener('click', async () => {
-                    try {
-                        disconnectAllBtn.textContent = 'Disconnecting...';
-                        disconnectAllBtn.disabled = true;
-                        
-                        await ipcRenderer.invoke('google-docs-sign-out');
-                        await ipcRenderer.invoke('gmail-sign-out');
-                        await ipcRenderer.invoke('google-calendar-sign-out');
-                        await updateGoogleServicesStatus();
-                    } catch (error) {
-                        await updateGoogleServicesStatus();
-                    } finally {
-                        disconnectAllBtn.disabled = false;
-                        disconnectAllBtn.textContent = 'Disconnect Google Account';
-                    }
-                });
-            }
-        }
-
-        async function updateGoogleServicesStatus() {
-            try {
-                const docsStatus = await ipcRenderer.invoke('google-docs-auth-status');
-                const driveStatus = await ipcRenderer.invoke('google-drive-auth-status');
-                const gmailStatus = await ipcRenderer.invoke('gmail-auth-status');
-                const calendarStatus = await ipcRenderer.invoke('google-calendar-auth-status');
-
-                const connectedServices = [];
-                if (docsStatus.authenticated) connectedServices.push('docs');
-                if (gmailStatus.authenticated) connectedServices.push('gmail');
-                if (calendarStatus.authenticated) connectedServices.push('calendar');
-
-                const connectAllBtn = document.getElementById('google-connect-all-btn');
-                const disconnectAllBtn = document.getElementById('google-disconnect-all-btn');
-                const accountEmail = document.getElementById('google-account-email');
-                const individualServices = document.getElementById('google-services-individual');
-
-                // Update individual service statuses
-                const docsStatusEl = document.getElementById('docs-status');
-                const docsReconnectBtn = document.getElementById('docs-reconnect-btn');
-                const gmailStatusEl = document.getElementById('gmail-status');
-                const gmailReconnectBtn = document.getElementById('gmail-reconnect-btn');
-                const calendarStatusEl = document.getElementById('calendar-status');
-                const calendarReconnectBtn = document.getElementById('calendar-reconnect-btn');
-
-                if (individualServices) {
-                    individualServices.style.display = 'block';
-                }
-
-                // Update Docs status
-                if (docsStatusEl) {
-                    if (docsStatus.authenticated) {
-                        docsStatusEl.textContent = 'Connected';
-                        docsStatusEl.className = 'service-status connected';
-                        if (docsReconnectBtn) {
-                            docsReconnectBtn.classList.add('hidden');
-                            docsReconnectBtn.style.display = 'none';
-                        }
-                    } else {
-                        docsStatusEl.textContent = 'Disconnected';
-                        docsStatusEl.className = 'service-status disconnected';
-                        if (docsReconnectBtn) {
-                            docsReconnectBtn.classList.remove('hidden');
-                            docsReconnectBtn.style.display = 'inline-block';
-                            docsReconnectBtn.textContent = 'Connect';
-                        }
-                    }
-                }
-
-                // Update Gmail status
-                if (gmailStatusEl) {
-                    if (gmailStatus.authenticated) {
-                        gmailStatusEl.textContent = 'Connected';
-                        gmailStatusEl.className = 'service-status connected';
-                        if (gmailReconnectBtn) gmailReconnectBtn.style.display = 'none';
-                    } else {
-                        gmailStatusEl.textContent = 'Disconnected';
-                        gmailStatusEl.className = 'service-status disconnected';
-                        if (gmailReconnectBtn) {
-                            gmailReconnectBtn.style.display = 'block';
-                            gmailReconnectBtn.textContent = 'Connect';
-                        }
-                    }
-                }
-
-                // Update Calendar status
-                if (calendarStatusEl) {
-                    if (calendarStatus.authenticated) {
-                        calendarStatusEl.textContent = 'Connected';
-                        calendarStatusEl.className = 'service-status connected';
-                        if (calendarReconnectBtn) calendarReconnectBtn.style.display = 'none';
-                    } else {
-                        calendarStatusEl.textContent = 'Disconnected';
-                        calendarStatusEl.className = 'service-status disconnected';
-                        if (calendarReconnectBtn) {
-                            calendarReconnectBtn.style.display = 'block';
-                            calendarReconnectBtn.textContent = 'Connect';
-                        }
-                    }
-                }
-
-                // Get and display email if any service is connected
-                if (docsStatus.authenticated && docsStatus.email) {
-                    if (accountEmail) {
-                        accountEmail.textContent = docsStatus.email;
-                        accountEmail.style.display = 'block';
-                    }
-                } else {
-                    if (accountEmail) accountEmail.style.display = 'none';
-                }
-
-                // Toggle connect/disconnect buttons
-                if (connectedServices.length > 0) {
-                    if (connectAllBtn) connectAllBtn.style.display = 'none';
-                    if (disconnectAllBtn) {
-                        disconnectAllBtn.classList.remove('hidden');
-                        disconnectAllBtn.style.display = 'block';
-                    }
-                } else {
-                    if (accountEmail) accountEmail.style.display = 'none';
-                    if (connectAllBtn) {
-                        connectAllBtn.classList.remove('hidden');
-                        connectAllBtn.style.display = 'block';
-                    }
-                    if (disconnectAllBtn) disconnectAllBtn.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Error updating Google Services status:', error);
-            }
         }
 
         // Listen for subscription status changes

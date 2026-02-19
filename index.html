@@ -3,36 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jarvis 6.0 - AI Overlay Assistant</title>
+    <title>Jarvis - AI Overlay Assistant</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- Default overlay opacity 100% from first paint; Answer screen buttons always 1 -->
+    <style id="overlay-opacity-style">.minimal-hud,.drag-output,#drag-output,.messages-container,.humanize-btn,.reveal-history-btn,.action-buttons-container{opacity:1 !important}#answer-this-btn,#answer-this-btn-moved,.answer-this-btn{opacity:1 !important}</style>
     <!-- KaTeX for math rendering -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
+    <!-- Full-window screenshot so HUD backdrop-filter has real content to blur -->
+    <div id="screen-blur-bg" class="screen-blur-bg" aria-hidden="true"></div>
+    <!-- Sits behind HUD only; HUD's backdrop-filter blurs this (so blur is visible in Electron) -->
+    <div id="blur-backdrop" class="blur-backdrop" aria-hidden="true"></div>
+    <!-- Chrome-style snap drop zone (shown when dragging toward left/right edge) -->
+    <div id="snap-drop-zone" class="snap-drop-zone hidden" aria-hidden="true"></div>
     <!-- True floating overlay - no container -->
     <div id="jarvis-overlay" class="overlay">
-        
-        <!-- Interactive Onboarding Tutorial -->
-        <div id="onboarding-tutorial" class="onboarding-tutorial hidden">
-            <div class="tutorial-content">
-                <span class="tutorial-icon" id="tutorial-icon"></span>
-                <span class="tutorial-text" id="tutorial-text"></span>
-                <button id="tutorial-done-btn" class="tutorial-done-btn hidden">Done</button>
-            </div>
-        </div>
-        
-        <!-- Screen Recording Permission Banner -->
-        <div id="permission-banner" class="permission-banner hidden">
-            <div class="permission-content">
-                <div class="permission-title">Enable screen recording & system audio recording</div>
-                <div class="permission-instructions">Open System Settings → Enable Jarvis 6.0. It will ask you to Quit & Reopen. (if nothing shows up press answer screen)</div>
-                <div class="permission-notice">
-                    <strong>DOES NOT screenshot unless specifically prompted or by pressing "answer screen"</strong> (no images are stored, all information is local on your computer).
-                </div>
-            </div>
-        </div>
         
         <!-- Set Password Notification -->
         <div id="set-password-notification" class="set-password-notification hidden">
@@ -44,66 +32,24 @@
             </div>
         </div>
         
-        <!-- Google Docs Writing Status Indicator -->
-        <div id="docs-writing-indicator" class="docs-writing-indicator hidden">
-            <div class="docs-status-content">
-                <div class="docs-status-icon">
-                    <div class="docs-pulse-dot"></div>
-                </div>
-                <span class="docs-status-text">Writing in docs...</span>
-            </div>
-        </div>
-        
-        <!-- Google Docs Done Indicator -->
-        <div id="docs-done-indicator" class="docs-done-indicator hidden">
-            <div class="docs-status-content">
-                <div class="docs-status-icon done">
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M10 3L4.5 8.5L2 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </div>
-                <span class="docs-status-text">Done!</span>
-                <button id="docs-open-btn" class="docs-open-btn">Open</button>
-                <button id="docs-dismiss-btn" class="docs-dismiss-btn" title="Dismiss">×</button>
-            </div>
-        </div>
-        
         <!-- Sleek minimal HUD -->
         <!-- Attachments bar (appears when files are attached) -->
         <div id="attachments-bar" class="attachments-bar hidden"></div>
 
-        <!-- Main HUD -->
+        <!-- Main HUD (whole bar is draggable) -->
         <div class="minimal-hud">
-            <!-- Drag handle (six dots) -->
-            <div id="drag-handle" class="drag-handle">
-                <div class="drag-dots">
-                    <span class="dot"></span>
-                    <span class="dot"></span>
-                    <span class="dot"></span>
-                    <span class="dot"></span>
-                    <span class="dot"></span>
-                    <span class="dot"></span>
+            <div class="input-section input-section-with-slash">
+                <textarea id="text-input" placeholder="Ask Jarvis, / for commands" rows="1"></textarea>
+                <div id="slash-command-menu" class="slash-command-menu hidden" role="listbox">
+                    <div class="slash-command-section">
+                        <div class="slash-command-section-title">Skills</div>
+                        <div id="slash-command-list" class="slash-command-list"></div>
+                    </div>
                 </div>
             </div>
-            
-            <!-- Text input area -->
-            <div class="input-section">
-                <input type="text" id="text-input" placeholder="Ask Jarvis anything...">
-            </div>
-            
-            <!-- Message counter for free users -->
             <div id="message-counter" class="message-counter hidden">
                 <span id="message-count-text">0/10</span>
             </div>
-            
-            <!-- Add file button -->
-            <button id="add-btn" class="add-btn" title="Add file">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </button>
-            <input type="file" id="file-input" class="hidden" multiple accept="image/*,.pdf,.txt,.doc,.docx,.md,.json,.csv">
-            <!-- Settings button -->
             <button id="settings-btn" class="settings-btn" title="Settings">
                 <div class="menu-icon">
                     <span></span>
@@ -112,6 +58,7 @@
                 </div>
             </button>
         </div>
+        <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Capture screen and get an answer (or paste the question if screenshot is blank)">Answer screen</button>
         
         <!-- Settings menu -->
         <div id="settings-menu" class="settings-menu hidden">
@@ -122,11 +69,6 @@
                 </svg>
             </div>
             <div id="model-submenu" class="model-submenu hidden">
-                <!-- J bot Gateway (local AI) -->
-                <div class="model-item" data-model="openclaw" data-tier="high">
-                    <span class="model-name">J bot</span>
-                    <span class="model-desc">🤖 Local AI Gateway</span>
-                </div>
                 <!-- Main models (always visible) -->
                 <div class="model-item" data-model="default" data-tier="high">
                     <span class="model-name">ChatGPT 5.2</span>
@@ -142,10 +84,6 @@
                     <span class="model-name">Gemini 3 Pro</span>
                     <span class="model-desc">Google's newest model</span>
                 </div>
-                <div class="model-item" data-model="perplexity/sonar-pro-search" data-tier="high">
-                    <span class="model-name">Perplexity Pro</span>
-                    <span class="model-desc">🔍 Live web search</span>
-                </div>
                 <div class="model-item" data-model="anthropic/claude-sonnet-4.5" data-tier="high">
                     <span class="model-name">Claude Sonnet 4.5</span>
                     <span class="model-desc">Best for reasoning</span>
@@ -153,14 +91,6 @@
                 <div class="model-item" data-model="x-ai/grok-4.1-fast" data-tier="high">
                     <span class="model-name">Grok 4.1 Fast</span>
                     <span class="model-desc">xAI's fast model</span>
-                    <div class="freaky-toggle" id="freaky-toggle" title="Toggle Freaky Mode">
-                        <label class="freaky-switch">
-                            <input type="checkbox" id="freaky-toggle-checkbox">
-                            <span class="freaky-slider">
-                                <span class="freaky-emoji" id="freaky-emoji">😇</span>
-                            </span>
-                        </label>
-                    </div>
                 </div>
                 
                 <!-- More models button -->
@@ -189,8 +119,11 @@
                 </svg>
             </div>
             <div id="settings-submenu" class="settings-submenu hidden">
+                <div class="settings-item" id="lockdown-launcher-btn" title="Runs a watcher that relaunches Jarvis when Lockdown kills it" style="display:none">
+                    <span class="settings-text">Run Lockdown Launcher</span>
+                </div>
                 <div class="settings-item settings-item-toggle" id="stealth-mode-toggle">
-                    <span class="settings-text">Stealth Mode</span>
+                    <span class="settings-text">Cheat Mode</span>
                     <label class="toggle-switch" for="stealth-mode-checkbox">
                         <input type="checkbox" id="stealth-mode-checkbox">
                         <span class="toggle-slider"></span>
@@ -199,8 +132,8 @@
                 <div class="settings-item" id="opacity-slider-item">
                     <span class="settings-text">Opacity</span>
                     <div class="slider-container">
-                        <input type="range" id="opacity-slider" min="5" max="95" value="95" 
-                               ondblclick="this.value=95; window.handleOpacitySlider(95);"
+                        <input type="range" id="opacity-slider" min="5" max="100" value="100" 
+                               ondblclick="this.value=100; window.handleOpacitySlider(100);"
                                oninput="window.handleOpacitySlider(this.value)" 
                                onchange="window.handleOpacitySlider(this.value)">
                     </div>
@@ -217,16 +150,9 @@
                 <div class="settings-item" id="hotkeys-btn">
                     <span class="settings-text">Hotkeys</span>
                 </div>
-                <div class="settings-item" id="check-updates-btn">
-                    <span class="settings-text">Check for Updates</span>
-                    <span class="settings-version" id="app-version-display">v1.0.0</span>
-                </div>
                 <div class="settings-item settings-item-update hidden" id="update-available-menu-item">
                     <span class="settings-text">🔄 Update Available</span>
                     <span class="settings-version" id="update-version-display">v1.0.0</span>
-                </div>
-                <div class="settings-item" id="quit-app-btn">
-                    <span class="settings-text">Quit Jarvis</span>
                 </div>
             </div>
             <div class="settings-item" id="account-info-btn">
@@ -236,7 +162,7 @@
                 <span class="settings-text">Clear Chat History</span>
             </div>
             <div class="settings-item" id="settings-close-btn">
-                <span class="settings-text">Close</span>
+                <span class="settings-text">Quit Jarvis</span>
             </div>
         </div>
         
@@ -248,10 +174,6 @@
             </svg>
         </button>
         
-        <!-- Answer Screen button - positioned under HUD when no output, moves to action buttons container when output shown -->
-        <button id="answer-this-btn" class="answer-this-btn answer-this-default" title="Answer what's on screen">Answer Screen</button>
-        
-
         <!-- Messages container - scrollable, contains all messages -->
         <div id="messages-container" class="messages-container hidden">
             <!-- Previous messages will be dynamically added here (hidden above) -->
@@ -265,11 +187,8 @@
         </div>
         <!-- Action buttons container -->
         <div class="action-buttons-container hidden" id="action-buttons-container">
-            <!-- Answer Screen button (moves here when output is shown) -->
-            <button id="answer-this-btn-moved" class="answer-this-btn hidden" title="Answer what's on screen">Answer Screen</button>
-            <!-- Humanize button -->
-            <button id="humanize-btn" class="humanize-btn hidden" title="Make it sound more human">Humanize</button>
-            <!-- Grok Voice button (only shows in freaky mode) -->
+            <button id="answer-this-btn-moved" class="answer-this-btn hidden" title="Capture screen and get an answer (or paste the question if screenshot is blank)">Answer screen</button>
+            <!-- Grok Voice button (shows when Grok model is selected) -->
             <button id="grok-voice-btn" class="grok-voice-btn hidden" title="Toggle voice responses">
                 <svg class="voice-inactive" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="4" cy="10" r="1.2" fill="currentColor"/>
@@ -290,33 +209,6 @@
             </button>
         </div>
         
-        <!-- Output Toolbar (icon buttons) - appears on double-click -->
-        <div id="output-toolbar" class="output-toolbar hidden">
-            <!-- Copy button -->
-            <button id="toolbar-copy-btn" class="toolbar-btn" title="Copy to clipboard">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-            </button>
-            <!-- Add to Docs button -->
-            <button id="toolbar-docs-btn" class="toolbar-btn" title="Add to Google Docs">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="12" y1="18" x2="12" y2="12"></line>
-                    <line x1="9" y1="15" x2="15" y2="15"></line>
-                </svg>
-            </button>
-            <!-- Resend/Try Again button -->
-            <button id="toolbar-retry-btn" class="toolbar-btn" title="Resend">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                </svg>
-            </button>
-        </div>
-        
         <!-- Floating close button positioned outside the output box -->
         <button id="close-output-floating" class="close-output-floating hidden" aria-label="Hide output" title="Hide">×</button>
     </div>
@@ -331,35 +223,6 @@
 
     <!-- Hidden file input for Add File action -->
     <input id="file-input" type="file" multiple class="hidden" accept="*/*" />
-
-    <!-- Document Name Modal -->
-    <div id="document-name-modal" class="document-name-modal hidden">
-        <div class="document-name-modal-content">
-            <h3>Name Your Google Doc</h3>
-            <input type="text" id="document-name-input" placeholder="Enter document name..." />
-            <div class="document-name-modal-buttons">
-                <button id="document-name-cancel" class="document-name-btn-cancel">Cancel</button>
-                <button id="document-name-confirm" class="document-name-btn-confirm">Create</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Document Selection Modal -->
-    <div id="document-selection-modal" class="document-name-modal hidden">
-        <div class="document-name-modal-content" style="max-width: 500px; max-height: 600px;">
-            <h3>Select a Google Doc</h3>
-            <div id="document-list-container" style="max-height: 400px; overflow-y: auto; margin: 20px 0;">
-                <div id="document-list-loading" style="text-align: center; padding: 40px; color: #888;">
-                    Loading documents...
-                </div>
-                <div id="document-list" style="display: none;"></div>
-            </div>
-            <div class="document-name-modal-buttons">
-                <button id="document-selection-new" class="document-name-btn-confirm" style="margin-right: auto;">New Doc</button>
-                <button id="document-selection-cancel" class="document-name-btn-cancel">Cancel</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Account Info Modal -->
     <div id="account-modal" class="account-modal hidden">
@@ -381,89 +244,15 @@
                     <div class="account-section">
                         <div class="account-label">Features:</div>
                         <div id="feature-list" class="feature-list">
-                            <div class="feature-item">✅ Voice Recording</div>
                             <div class="feature-item">✅ Screenshot Analysis</div>
                             <div class="feature-item">✅ Web Search</div>
                             <div class="feature-item">❌ Document Processing</div>
-                        </div>
-                    </div>
-                    <div class="account-section google-services-section">
-                        <div class="account-label">Google Services:</div>
-                        <div class="google-services-list">
-                            <div class="google-service-item">
-                                <div class="google-service-info">
-                                    <span class="google-service-name">📄 Google Docs</span>
-                                    <span id="docs-status" class="google-service-status">Not connected</span>
-                                </div>
-                                <button id="docs-connect-btn" class="google-connect-btn">Connect</button>
-                                <button id="docs-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
-                            </div>
-                            <div class="google-service-item">
-                                <div class="google-service-info">
-                                    <span class="google-service-name">📊 Google Sheets</span>
-                                    <span id="sheets-status" class="google-service-status">Not connected</span>
-                                </div>
-                                <button id="sheets-connect-btn" class="google-connect-btn">Connect</button>
-                                <button id="sheets-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
-                            </div>
-                            <div class="google-service-item">
-                                <div class="google-service-info">
-                                    <span class="google-service-name">📁 Google Drive</span>
-                                    <span id="drive-status" class="google-service-status">Not connected</span>
-                                </div>
-                                <button id="drive-connect-btn" class="google-connect-btn">Connect</button>
-                                <button id="drive-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
-                            </div>
-                            <div class="google-service-item">
-                                <div class="google-service-info">
-                                    <span class="google-service-name">📧 Gmail</span>
-                                    <span id="gmail-status" class="google-service-status">Not connected</span>
-                                </div>
-                                <button id="gmail-connect-btn" class="google-connect-btn">Connect</button>
-                                <button id="gmail-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
-                            </div>
-                            <div class="google-service-item">
-                                <div class="google-service-info">
-                                    <span class="google-service-name">📅 Google Calendar</span>
-                                    <span id="calendar-status" class="google-service-status">Not connected</span>
-                                </div>
-                                <button id="calendar-connect-btn" class="google-connect-btn">Connect</button>
-                                <button id="calendar-disconnect-btn" class="google-disconnect-btn hidden">Disconnect</button>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
             <div class="account-modal-footer">
                 <button id="account-modal-ok" class="account-modal-btn">OK</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- J Bot Warning Modal -->
-    <div id="jbot-warning-modal" class="jbot-warning-modal hidden">
-        <div class="jbot-warning-modal-content">
-            <div class="jbot-warning-header">
-                <span class="jbot-warning-icon">⚠️</span>
-                <h3>J Bot - Warning</h3>
-            </div>
-            <div class="jbot-warning-body">
-                <p class="jbot-warning-text">
-                    This product is an <strong>opensource AGI</strong> that can be dangerous if used incorrectly. 
-                    <span class="jbot-warning-highlight">Use with caution.</span>
-                </p>
-                <p class="jbot-warning-liability">
-                    You are liable for anything you decide to use it for.
-                </p>
-                <div class="jbot-password-section">
-                    <label for="jbot-password-input">Enter Password:</label>
-                    <input type="password" id="jbot-password-input" placeholder="Enter password to unlock..." />
-                    <div id="jbot-password-error" class="jbot-password-error hidden">Incorrect password</div>
-                </div>
-            </div>
-            <div class="jbot-warning-footer">
-                <button id="jbot-warning-cancel" class="jbot-warning-btn-cancel">Cancel</button>
-                <button id="jbot-warning-accept" class="jbot-warning-btn-accept">Accept Conditions</button>
             </div>
         </div>
     </div>

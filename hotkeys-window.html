@@ -130,7 +130,7 @@
 <body>
     <div class="hotkeys-container">
         <div class="header">
-            <img src="ChatGPT Image Oct 18, 2025 at 01_00_33 PM-2.PNG" alt="Jarvis Logo" class="logo" onerror="this.style.display='none'">
+            <img src="JarvisLogo.png" alt="Jarvis Logo" class="logo" onerror="this.style.display='none'">
             <h1>Hotkeys</h1>
             <p class="subtitle">Customize your keyboard shortcuts</p>
         </div>
@@ -157,38 +157,6 @@
                 </div>
             </div>
             <div class="shortcut-item">
-                <div class="shortcut-desc">Speech to text</div>
-                <div class="shortcut-key-wrapper">
-                    <div class="shortcut-key" id="voice-shortcut" data-action="voice">Not set</div>
-                    <div class="rebind-hint">(click to rebind, double-click to unbind)</div>
-                </div>
-            </div>
-            <div class="shortcut-item">
-                <div class="shortcut-desc">Push-to-talk</div>
-                <div class="shortcut-key-wrapper">
-                    <div class="shortcut-key">Hold ⌃ Control</div>
-                    <div class="rebind-hint">(hold to record, release to stop)</div>
-                </div>
-            </div>
-            <div class="shortcut-item">
-                <div class="shortcut-desc">Add files</div>
-                <div class="shortcut-key-wrapper">
-                    <div class="shortcut-key">📎 Paperclip</div>
-                </div>
-            </div>
-            <div class="shortcut-item">
-                <div class="shortcut-desc">Double-click output</div>
-                <div class="shortcut-key-wrapper">
-                    <div class="shortcut-key">Docs / Copy / Re-ask</div>
-                </div>
-            </div>
-            <div class="shortcut-item">
-                <div class="shortcut-desc">Drag & drop output</div>
-                <div class="shortcut-key-wrapper">
-                    <div class="shortcut-key">Into any text box</div>
-                </div>
-            </div>
-            <div class="shortcut-item">
                 <div class="shortcut-desc">Resize overlay</div>
                 <div class="shortcut-key-wrapper">
                     <div class="shortcut-key">⌘ +/-</div>
@@ -210,17 +178,17 @@
         let currentShortcut = null;
         let currentAction = null;
         
-        // Load saved shortcuts
+        // Default shortcuts when user hasn't set a custom one
+        const DEFAULT_TOGGLE = 'Alt+Space';
+        const DEFAULT_ANSWER_SCREEN = '⌃⇧A';
+
+        // Load saved shortcuts (show default when not set)
         ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
-            document.getElementById('toggle-shortcut').textContent = shortcut || 'Not set';
+            document.getElementById('toggle-shortcut').textContent = shortcut || DEFAULT_TOGGLE;
         });
-        
+
         ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
-            document.getElementById('answer-screen-shortcut').textContent = shortcut || 'Not set';
-        });
-        
-        ipcRenderer.invoke('get-voice-shortcut').then(shortcut => {
-            document.getElementById('voice-shortcut').textContent = shortcut || 'Not set';
+            document.getElementById('answer-screen-shortcut').textContent = shortcut || DEFAULT_ANSWER_SCREEN;
         });
         
         // Double-click detection helper
@@ -248,11 +216,11 @@
                         ipcRenderer.send('start-shortcut-listening', action);
                     }, 250);
                 } else if (clickCount === 2) {
-                    // Double click - unbind
+                    // Double click - unbind (restore default label)
                     clearTimeout(clickTimer);
                     clickCount = 0;
-                    
-                    element.textContent = 'Not set';
+                    const defaultText = action === 'toggle' ? DEFAULT_TOGGLE : action === 'answer-screen' ? DEFAULT_ANSWER_SCREEN : 'Not set';
+                    element.textContent = defaultText;
                     ipcRenderer.invoke(`unbind-${action}-shortcut`);
                 }
             });
@@ -264,28 +232,20 @@
         // Answer Screen shortcut
         setupShortcutHandlers('answer-screen-shortcut', 'answer-screen', 'Not set');
         
-        // Voice/Speech to text shortcut
-        setupShortcutHandlers('voice-shortcut', 'voice', 'Not set');
-        
         // Listen for shortcut captured
         ipcRenderer.on('shortcut-captured', (event, shortcut, action) => {
             if (currentShortcut && isListening) {
                 currentShortcut.classList.remove('editing');
                 
                 if (action === 'toggle' || currentAction === 'toggle') {
-                    currentShortcut.textContent = shortcut || 'Not set';
+                    currentShortcut.textContent = shortcut || DEFAULT_TOGGLE;
                     if (shortcut) {
                         ipcRenderer.invoke('set-toggle-shortcut', shortcut);
                     }
                 } else if (action === 'answer-screen' || currentAction === 'answer-screen') {
-                    currentShortcut.textContent = shortcut || 'Not set';
+                    currentShortcut.textContent = shortcut || DEFAULT_ANSWER_SCREEN;
                     if (shortcut) {
                         ipcRenderer.invoke('set-answer-screen-shortcut', shortcut);
-                    }
-                } else if (action === 'voice' || currentAction === 'voice') {
-                    currentShortcut.textContent = shortcut || 'Not set';
-                    if (shortcut) {
-                        ipcRenderer.invoke('set-voice-shortcut', shortcut);
                     }
                 }
                 
@@ -302,15 +262,11 @@
                     currentShortcut.classList.remove('editing');
                     if (currentAction === 'toggle') {
                         ipcRenderer.invoke('get-toggle-shortcut').then(shortcut => {
-                            currentShortcut.textContent = shortcut || 'Not set';
+                            currentShortcut.textContent = shortcut || DEFAULT_TOGGLE;
                         });
                     } else if (currentAction === 'answer-screen') {
                         ipcRenderer.invoke('get-answer-screen-shortcut').then(shortcut => {
-                            currentShortcut.textContent = shortcut || 'Not set';
-                        });
-                    } else if (currentAction === 'voice') {
-                        ipcRenderer.invoke('get-voice-shortcut').then(shortcut => {
-                            currentShortcut.textContent = shortcut || 'Not set';
+                            currentShortcut.textContent = shortcut || DEFAULT_ANSWER_SCREEN;
                         });
                     }
                     isListening = false;

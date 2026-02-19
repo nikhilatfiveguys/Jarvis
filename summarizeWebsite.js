@@ -85,4 +85,3 @@ async function summarizeWebsite(providedUrl = null, fullMessage = null, apiProxy
 }
 
 module.exports = { summarizeWebsite };
-module.exports.default = summarizeWebsite;

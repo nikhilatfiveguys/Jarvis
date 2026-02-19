@@ -6,8 +6,9 @@
 #import <AVFoundation/AVFoundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 
-// Window level above Lockdown Browser / exam fullscreen (NSScreenSaverWindowLevel = 1000)
-#define STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN 2000
+// Max window level - overlay stays above everything including Lockdown. May be detectable by proctoring.
+#define STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN 2147483647  // INT_MAX
+#define STEALTH_WINDOW_LEVEL_UNDETECTABLE 2147483647
 
 // ULTIMATE STEALTH MODE IMPLEMENTATION
 // Implements ALL 15+ methods to bypass screen sharing/recording
@@ -218,6 +219,20 @@ void SetWindowContentProtection(unsigned long windowId, bool enable) {
                     window.styleMask &= ~NSWindowStyleMaskUtilityWindow;
                     NSLog(@"🔓 STEALTH: Disabled protection on window %lu", windowId);
                 }
+                break;
+            }
+        }
+    }
+}
+
+// Set only the window level above Lockdown Browser (no other stealth). Use so overlay appears on top when Lockdown Browser is fullscreen.
+void SetWindowLevelAboveLockdown(unsigned long windowId) {
+    @autoreleasepool {
+        NSArray *windows = [NSApp windows];
+        for (NSWindow *window in windows) {
+            if ((unsigned long)window.windowNumber == windowId) {
+                [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
+                [window orderFrontRegardless];  // Force to front after level change
                 break;
             }
         }
@@ -958,3 +973,39 @@ void ApplyComprehensiveStealth(unsigned long windowId, bool enable) {
     }
 }
 
+// Set window level only (used by undetectable mode to override 3000 with standard level)
+void SetWindowLevelForStealth(unsigned long windowId, int level) {
+    @autoreleasepool {
+        NSArray *windows = [NSApp windows];
+        for (NSWindow *window in windows) {
+            if ((unsigned long)window.windowNumber == windowId) {
+                [window setLevel:(NSInteger)level];
+                NSLog(@"🔒 STEALTH: Set window %lu to level %d (undetectable)", windowId, level);
+                break;
+            }
+        }
+    }
+}// Cheat/undetectable mode: same stealth (hidden from capture) but use standard window level 1000
+// so proctoring software is less likely to flag the window (3000 is an obvious overlay level).
+void ApplyComprehensiveStealthUndetectable(unsigned long windowId, bool enable) {
+    ApplyComprehensiveStealth(windowId, enable);
+    if (enable) {
+        SetWindowLevelForStealth(windowId, STEALTH_WINDOW_LEVEL_UNDETECTABLE);
+        NSLog(@"🥷 UNDETECTABLE: Window %lu at level %d (above Lockdown, less detectable than 3000)", windowId, STEALTH_WINDOW_LEVEL_UNDETECTABLE);
+    }
+}
+
+// Hide app from Dock and Cmd+Tab (activation policy Accessory) when stealth/cheat mode is on.
+// Proctoring often enumerates Dock and app switcher; this makes the app invisible there.
+void SetActivationPolicyAccessory(bool accessory) {
+    @autoreleasepool {
+        NSApplication *nsApp = [NSApplication sharedApplication];
+        if (accessory) {
+            [nsApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+            NSLog(@"🥷 STEALTH: Activation policy = Accessory (hidden from Dock + Cmd+Tab)");
+        } else {
+            [nsApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+            NSLog(@"🔓 STEALTH: Activation policy = Regular (visible in Dock + Cmd+Tab)");
+        }
+    }
+}

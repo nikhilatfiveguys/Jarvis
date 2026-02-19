@@ -60,6 +60,7 @@ class SecureConfig {
                 perplexity: productionConfig.perplexity || { apiKey: '' },
                 openrouter: productionConfig.openrouter || { apiKey: '' },
                 google: productionConfig.google || { clientId: '', clientSecret: '' },
+                composio: productionConfig.composio || { apiKey: '', googleDocsAuthConfigId: '', entityId: '' },
                 resend: productionConfig.resend || { apiKey: '', fromEmail: 'onboarding@resend.dev' },
                 app: {
                     environment: 'production',
@@ -78,6 +79,7 @@ class SecureConfig {
                 perplexity: { apiKey: process.env.PPLX_API_KEY || '' },
                 openrouter: { apiKey: process.env.OPENROUTER_API_KEY || '' },
                 google: { clientId: process.env.GOOGLE_CLIENT_ID || '', clientSecret: process.env.GOOGLE_CLIENT_SECRET || '' },
+                composio: { apiKey: process.env.COMPOSIO_API_KEY || '', googleDocsAuthConfigId: process.env.COMPOSIO_GOOGLEDOCS_AUTH_CONFIG_ID || '', entityId: process.env.COMPOSIO_ENTITY_ID || '' },
                 resend: { apiKey: process.env.RESEND_API_KEY || '', fromEmail: 'onboarding@resend.dev' },
                 app: { environment: 'development', isProduction: false }
             };
@@ -129,6 +131,10 @@ class SecureConfig {
         }
         
         return { clientId, clientSecret };
+    }
+
+    getComposioConfig() {
+        return this.config.composio || { apiKey: '', googleDocsAuthConfigId: '', entityId: '' };
     }
 
     getSupabaseApiProxyUrl() {

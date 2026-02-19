@@ -1,4 +1,6 @@
-const { google } = require('googleapis');
+const { gmail } = require('@googleapis/gmail');
+const { OAuth2Client } = require('google-auth-library');
+const axios = require('axios');
 const { BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -46,7 +48,7 @@ class GmailIntegration {
                 const tokenData = fs.readFileSync(this.tokenPath, 'utf8');
                 const tokens = JSON.parse(tokenData);
                 
-                this.oAuth2Client = new google.auth.OAuth2(
+                this.oAuth2Client = new OAuth2Client(
                     this.clientId,
                     this.clientSecret,
                     this.redirectUri
@@ -55,7 +57,7 @@ class GmailIntegration {
                 this.oAuth2Client.setCredentials(tokens);
                 
                 // Refresh token if expired
-                if (this.oAuth2Client.isTokenExpiring()) {
+                if (this.oAuth2Client.isTokenExpiring && this.oAuth2Client.isTokenExpiring()) {
                     this.refreshAccessToken();
                 }
                 
@@ -109,7 +111,7 @@ class GmailIntegration {
             throw new Error('Google OAuth credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.');
         }
 
-        this.oAuth2Client = new google.auth.OAuth2(
+        this.oAuth2Client = new OAuth2Client(
             this.clientId,
             this.clientSecret,
             this.redirectUri
@@ -224,7 +226,7 @@ class GmailIntegration {
     async getTokensFromCode(code) {
         try {
             if (!this.oAuth2Client) {
-                this.oAuth2Client = new google.auth.OAuth2(
+                this.oAuth2Client = new OAuth2Client(
                     this.clientId,
                     this.clientSecret,
                     this.redirectUri
@@ -253,17 +255,13 @@ class GmailIntegration {
      */
     async getUserEmail() {
         try {
-            if (!this.oAuth2Client) {
+            if (!this.oAuth2Client || !this.oAuth2Client.credentials.access_token) {
                 return null;
             }
-
-            const oauth2 = google.oauth2({
-                auth: this.oAuth2Client,
-                version: 'v2'
+            const { data } = await axios.get('https://www.googleapis.com/oauth2/v2/userinfo', {
+                headers: { Authorization: `Bearer ${this.oAuth2Client.credentials.access_token}` }
             });
-
-            const userInfo = await oauth2.userinfo.get();
-            return userInfo.data.email || null;
+            return data.email || null;
         } catch (error) {
             console.error('Error getting user email:', error);
             return null;
@@ -282,9 +280,9 @@ class GmailIntegration {
                 throw new Error('Not authenticated. Please authenticate first.');
             }
 
-            const gmail = google.gmail({ version: 'v1', auth: this.oAuth2Client });
+            const gmailClient = gmail({ version: 'v1', auth: this.oAuth2Client });
 
-            const response = await gmail.users.messages.list({
+            const response = await gmailClient.users.messages.list({
                 userId: 'me',
                 q: query,
                 maxResults: maxResults
@@ -296,7 +294,7 @@ class GmailIntegration {
             // Get details for each message
             for (const message of messages) {
                 try {
-                    const messageDetail = await gmail.users.messages.get({
+                    const messageDetail = await gmailClient.users.messages.get({
                         userId: 'me',
                         id: message.id,
                         format: 'full'

@@ -18,10 +18,10 @@ exports.default = async function customSign(context) {
   // Sign helpers first (electron-builder will skip them if already signed)
   const frameworksPath = path.join(appPath, 'Contents', 'Frameworks');
   const helpers = [
-    'Jarvis 5.0 Helper.app',
-    'Jarvis 5.0 Helper (GPU).app',
-    'Jarvis 5.0 Helper (Plugin).app',
-    'Jarvis 5.0 Helper (Renderer).app'
+    `${appName} Helper.app`,
+    `${appName} Helper (GPU).app`,
+    `${appName} Helper (Plugin).app`,
+    `${appName} Helper (Renderer).app`
   ];
   
   for (const helper of helpers) {
