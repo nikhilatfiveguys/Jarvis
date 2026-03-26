@@ -147,6 +147,7 @@ class JarvisApp {
         this.lastRescueSpawnAt = 0; // When we last spawned a rescue process (relaunch if killed by Lockdown)
         this.quittingFromOverlayMenu = false; // Only allow quit when user clicks "Quit Jarvis" in overlay (or update)
         this.lowProfileMode = false; // When true: don't use overlay levels (avoid Lockdown detecting us)
+        this.isClickThrough = false; // When true: overlay is click-through, enforcement loop should not re-activate
         this.lastBlurredAt = 0;
         this.screenRecordingCheckInterval = null; // Track screen recording detection
         this.currentUserEmail = null; // Track current user for token usage
@@ -1142,6 +1143,13 @@ class JarvisApp {
         
         this.mainWindow = new BrowserWindow(mainWindowOptions);
 
+        // Hide traffic light buttons (close/minimize/maximize) — this is an overlay, not a regular window
+        if (process.platform === 'darwin') {
+            try {
+                this.mainWindow.setWindowButtonVisibility(false);
+            } catch (_) {}
+        }
+
         // Cheat/stealth mode: low profile from startup if stealth was on (undetectable on Lockdown)
         this.lowProfileMode = this.getStealthModePreference();
 
@@ -1201,8 +1209,8 @@ class JarvisApp {
         this.mainWindow.setIgnoreMouseEvents(true);
         
 
-        // Hide Dock for overlay utility feel (macOS) - only when packaged so dev (npm start) keeps dock visible
-        if (app.isPackaged && process.platform === 'darwin' && app.dock) { try { app.dock.hide(); } catch (_) {} }
+        // Hide Dock for overlay utility feel (macOS)
+        if (process.platform === 'darwin' && app.dock) { try { app.dock.hide(); } catch (_) {} }
 
         // Load the HTML file
         this.mainWindow.loadFile('index.html').catch(err => {
@@ -1477,42 +1485,9 @@ class JarvisApp {
             
             if (this.mainWindow) {
                 try {
-                    console.log('🔵 [MAIN] make-interactive called (focus-safe mode)');
-                    
-                    // CRITICAL: Only enable mouse events - DO NOT call focus()
-                    // This allows interaction without triggering browser blur events
+                    this.isClickThrough = false;
                     this.mainWindow.setIgnoreMouseEvents(false);
-                    console.log('🔵 [MAIN] setIgnoreMouseEvents(false) called');
-                    
-                    // Make window focusable but don't actually focus it
-                    // The user clicking on the input will naturally give it focus
-                    // without the OS registering it as an app switch
                     this.mainWindow.setFocusable(true);
-                    
-                    // Ensure window is visible and on top without stealing focus
-                    if (process.platform === 'darwin') {
-                        this.mainWindow.showInactive(); // Show without activating
-                        // Re-assert always on top without focus
-                        setTimeout(() => {
-                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                this.mainWindow.setIgnoreMouseEvents(false);
-                                this.mainWindow.setFocusable(true);
-                                // Use setAlwaysOnTop to keep visible without focus
-                                this.mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-                            }
-                        }, 50);
-                    } else if (process.platform === 'win32') {
-                        // On Windows, show without focus
-                        this.mainWindow.showInactive();
-                        setTimeout(() => {
-                            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-                                this.mainWindow.setFocusable(true);
-                                this.mainWindow.setIgnoreMouseEvents(false);
-                            }
-                        }, 100);
-                    }
-                    
-                    console.log('✅ [MAIN] make-interactive completed (no focus steal)');
                     return { success: true };
                 } catch (error) {
                     console.error('❌ [MAIN] Error making window interactive:', error);
@@ -1562,19 +1537,18 @@ class JarvisApp {
         // Handle making overlay click-through
         ipcMain.handle('make-click-through', () => {
             if (this.mainWindow) {
+                this.isClickThrough = true;
                 this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-                try { 
-                    // On Windows, keep window focusable but blurred so it can regain focus when clicked
-                    // This prevents the "background process" issue
-                    if (process.platform === 'win32') {
-                        // Don't set focusable to false - keep it focusable so it can regain focus
-                        this.mainWindow.blur();
-                    } else {
-                        // On macOS/Linux, we can safely make it unfocusable
-                        this.mainWindow.setFocusable(false);
-                    }
-                } catch (_) {}
+                // Deactivate the app so macOS gives focus to the window behind (scroll events go there)
+                if (process.platform === 'darwin' && this.getNativeContentProtection() && this.nativeContentProtection.deactivateApp) {
+                    this.nativeContentProtection.deactivateApp();
+                }
             }
+        });
+
+        // Scroll passthrough: renderer tells us to stay click-through while user scrolls over overlay
+        ipcMain.handle('scroll-passthrough', () => {
+            this._scrollPassthroughUntil = Date.now() + 400;
         });
         
         // Handle overlay hide
@@ -2196,10 +2170,9 @@ class JarvisApp {
                     if (this.getNativeContentProtection() && this.nativeContentProtection.setActivationPolicyAccessory) {
                         this.nativeContentProtection.setActivationPolicyAccessory(enabled);
                     }
+                    // Always keep Dock hidden — this is an overlay, never show in Dock
                     if (app.dock) {
-                        try {
-                            if (enabled) app.dock.hide(); else app.dock.show();
-                        } catch (_) {}
+                        try { app.dock.hide(); } catch (_) {}
                     }
                 }
                 
@@ -3922,7 +3895,12 @@ class JarvisApp {
         if (!this.mainWindow.isVisible()) {
             try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
         }
-        
+
+        // Re-hide traffic light buttons — level changes and showInactive can cause them to reappear on macOS panels
+        if (process.platform === 'darwin') {
+            try { this.mainWindow.setWindowButtonVisibility(false); } catch (_) {}
+        }
+
         try {
             // CRITICAL: Must set these in order
             try {
@@ -3967,9 +3945,10 @@ class JarvisApp {
                 this.nativeContentProtection.setWindowLevelAboveLockdown(this.mainWindow);
             }
             
-            // Reinforce so we win against LockDown Browser. Skip moveTop - it steals focus.
+            // Reinforce so we win against LockDown Browser. Skip when click-through to avoid re-activating.
             const reinforce = () => {
                 if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return;
+                if (this.isClickThrough) return;
                 try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
                 try { this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) { try { this.mainWindow.setVisibleOnAllWorkspaces(true); } catch (__) {} }
                 try { this.mainWindow.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { try { this.mainWindow.setAlwaysOnTop(true, 'pop-up-menu'); } catch (__) { try { this.mainWindow.setAlwaysOnTop(true, 'floating'); } catch (___) {} } }
@@ -4061,72 +4040,15 @@ class JarvisApp {
             }
         }
         
-        // Start INTERACTIVE so user can click/type immediately. Switch to click-through when cursor leaves.
-        try {
-            this.mainWindow.setIgnoreMouseEvents(false);
-            try { if (process.platform !== 'win32') this.mainWindow.setFocusable(true); } catch (_) {}
-            try { this.mainWindow.webContents.send('overlay-now-interactive'); } catch (_) {}
-        } catch (_) {}
-        
-        this.isOverlayVisible = true; // Set before poll so immediate check works
-        
-        // Poll: when cursor is over the overlay pill/UI, make interactive; otherwise keep click-through so user can click other apps.
-        // Uses overlayScreenRect from renderer (not full window bounds) so we don't block the entire screen.
-        if (this.overlayHoverActivateInterval) clearInterval(this.overlayHoverActivateInterval);
-        let lastCursorWasInside = false;
-        let pollCount = 0;
-        const PADDING = 40; // px padding around overlay rect for easier activation
-        const checkAndActivate = () => {
-            if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) return true;
-            try {
-                const pos = screen.getCursorScreenPoint();
-                const r = this.overlayScreenRect;
-                let bounds;
-                if (r && r.width > 0 && r.height > 0) {
-                    bounds = { x: r.x - PADDING, y: r.y - PADDING, width: r.width + 2 * PADDING, height: r.height + 2 * PADDING };
-                } else {
-                    // No rect yet (or zero size) - use full window bounds so overlay is clickable
-                    const b = this.mainWindow.getBounds();
-                    bounds = { x: b.x, y: b.y, width: b.width, height: b.height };
-                }
-                const inside = pos.x >= bounds.x && pos.x < bounds.x + bounds.width && pos.y >= bounds.y && pos.y < bounds.y + bounds.height;
-                pollCount++;
-                if (inside && !lastCursorWasInside) {
-                    this.mainWindow.setIgnoreMouseEvents(false);
-                    try { if (process.platform !== 'win32') this.mainWindow.setFocusable(true); } catch (_) {}
-                    try { this.mainWindow.webContents.send('overlay-now-interactive'); } catch (_) {}
-                    return true;
-                } else if (inside && pollCount >= 2) {
-                    this.mainWindow.setIgnoreMouseEvents(false);
-                    try { if (process.platform !== 'win32') this.mainWindow.setFocusable(true); } catch (_) {}
-                    try { this.mainWindow.webContents.send('overlay-now-interactive'); } catch (_) {}
-                    return true;
-                }
-                lastCursorWasInside = inside;
-            } catch (_) {}
-            return false;
-        };
-        this.overlayHoverActivateInterval = setInterval(() => {
-            if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) {
-                if (this.overlayHoverActivateInterval) {
-                    clearInterval(this.overlayHoverActivateInterval);
-                    this.overlayHoverActivateInterval = null;
-                }
-                return;
-            }
-            checkAndActivate();
-        }, 100);
-        
-        // Ensure window is focusable
-        try {
-            this.mainWindow.setFocusable(true);
-        } catch (_) {}
-        
+        this.isOverlayVisible = true;
+
         // macOS: prevent window from being closed (red button / Cmd+W) so Lockdown can't close us
         if (process.platform === 'darwin') {
             try { this.mainWindow.setClosable(false); } catch (_) {}
+            // Re-hide traffic light buttons — showInactive/level changes can cause them to reappear
+            try { this.mainWindow.setWindowButtonVisibility(false); } catch (_) {}
         }
-        
+
         // macOS-only: Reinforce content protection when showing (use stealth mode preference)
         const stealthEnabled = this.getStealthModePreference();
         this.setWindowContentProtection(this.mainWindow, stealthEnabled);
@@ -4142,20 +4064,63 @@ class JarvisApp {
             this.mainWindow.show(); // Fallback if showInactive not available
         }
         // Skip moveTop - steals focus on macOS. setAlwaysOnTop keeps overlay on top.
-        
+
         // Stealth: keep window title as innocuous name when stealth is on
         this.applyStealthWindowTitle();
-        
+
         // DO NOT call focus() - this would trigger browser blur events
         // The window will receive input when the user clicks on it naturally
-        
+
         // Use the robust fullscreen visibility method
         this.forceFullscreenVisibility();
-        
+
         // Start continuous enforcement loop for fullscreen visibility
         this.startFullscreenEnforcement();
+
+        // LAST: Set click-through AFTER all window setup so nothing overrides it.
+        // Renderer mouseover on visible overlay children will call make-interactive;
+        // mouseout will restore click-through.
+        this.isClickThrough = true;
+        try {
+            this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
+            // Deactivate the app so macOS gives focus to the window behind (scroll events go there)
+            if (process.platform === 'darwin' && this.getNativeContentProtection() && this.nativeContentProtection.deactivateApp) {
+                this.nativeContentProtection.deactivateApp();
+            }
+        } catch (_) {}
+
+        // Safety poll: if the overlay is click-through but the cursor is over the overlay bounds,
+        // re-enable interactivity. This recovers from mouseout firing in gaps between children.
+        // Only transitions click-through → interactive; renderer mouseout handles the reverse.
+        if (this.overlayHoverActivateInterval) clearInterval(this.overlayHoverActivateInterval);
+        const PADDING = 10;
+        this.overlayHoverActivateInterval = setInterval(() => {
+            if (!this.mainWindow || this.mainWindow.isDestroyed() || !this.isOverlayVisible) {
+                if (this.overlayHoverActivateInterval) {
+                    clearInterval(this.overlayHoverActivateInterval);
+                    this.overlayHoverActivateInterval = null;
+                }
+                return;
+            }
+            if (!this.isClickThrough) return; // already interactive, nothing to do
+            // Don't re-activate while user is scrolling through the overlay
+            if (this._scrollPassthroughUntil && Date.now() < this._scrollPassthroughUntil) return;
+            try {
+                const pos = screen.getCursorScreenPoint();
+                const r = this.overlayScreenRect;
+                if (!r || r.width <= 0 || r.height <= 0) return;
+                const bounds = { x: r.x - PADDING, y: r.y - PADDING, width: r.width + 2 * PADDING, height: r.height + 2 * PADDING };
+                const inside = pos.x >= bounds.x && pos.x < bounds.x + bounds.width && pos.y >= bounds.y && pos.y < bounds.y + bounds.height;
+                if (inside) {
+                    this.isClickThrough = false;
+                    this.mainWindow.setIgnoreMouseEvents(false);
+                    this.mainWindow.setFocusable(true);
+                    try { this.mainWindow.webContents.send('overlay-now-interactive'); } catch (_) {}
+                }
+            } catch (_) {}
+        }, 200);
     }
-    
+
     startFullscreenEnforcement() {
         // Clear any existing interval
         if (this.fullscreenEnforcementInterval) {
@@ -4182,19 +4147,49 @@ class JarvisApp {
             if (this.passwordResetWindow && !this.passwordResetWindow.isDestroyed() && this.passwordResetWindow.isFocused()) {
                 return;
             }
-            
+
+            // When click-through, skip all enforcement that could re-activate the app
+            // (setAlwaysOnTop, showInactive, native level calls, stealth re-apply).
+            // The window stays on top from the initial setAlwaysOnTop; only rescue is kept.
+            if (this.isClickThrough) {
+                // Rescue only: relaunch if Lockdown kills us
+                if (app.isPackaged && process.platform === 'darwin') {
+                    const now = Date.now();
+                    if (now - this.lastRescueSpawnAt > 1500) {
+                        this.lastRescueSpawnAt = now;
+                        try {
+                            const quitFile = path.join(app.getPath('userData'), '.jarvis-quitting');
+                            const q = quitFile.replace(/'/g, "'\"'\"'");
+                            const cmd = `( export JQ='${q}'; sh -c 'sleep 2; [ -f "$JQ" ] && exit 0; pgrep -x Jarvis >/dev/null || open -a "Jarvis"' & ); exit 0`;
+                            const child = spawn('sh', ['-c', cmd], { detached: true, stdio: 'ignore', env: {} });
+                            child.unref();
+                        } catch (_) {}
+                    }
+                }
+                return;
+            }
+
             try {
                 // Cheat/stealth mode ON: do NOT auto re-show when hidden (avoids hide/show loop). OFF: re-show so overlay stays available.
                 if (!this.mainWindow.isVisible() && !this.getStealthModePreference()) {
                     try { this.mainWindow.showInactive(); } catch (_) { try { this.mainWindow.show(); } catch (__) {} }
                 }
-                try {
-                    this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-                } catch (_) {
-                    this.mainWindow.setVisibleOnAllWorkspaces(true);
+                // Re-hide traffic light buttons — level changes can cause them to reappear
+                if (process.platform === 'darwin') {
+                    try { this.mainWindow.setWindowButtonVisibility(false); } catch (_) {}
                 }
-                
+
+                // Skip aggressive level re-assertions when overlay is interactive (user hovering).
+                // forceFullscreenVisibility already set the levels — re-calling setAlwaysOnTop,
+                // setVisibleOnAllWorkspaces, setWindowLevelAboveLockdown at 100fps steals tab focus on macOS.
+                // Only keep aggressive enforcement in lowProfileMode (cheat mode fighting Lockdown).
                 if (this.lowProfileMode) {
+                    try {
+                        this.mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+                    } catch (_) {
+                        this.mainWindow.setVisibleOnAllWorkspaces(true);
+                    }
+
                     // Cheat mode: use native max level so overlay stays above Lockdown fullscreen
                     if (process.platform === 'darwin') {
                         try {
@@ -4222,29 +4217,15 @@ class JarvisApp {
                     }
                     // moveTop every tick in cheat mode - max aggression
                     this.mainWindow.moveTop();
-                } else {
-                    try {
-                        this.mainWindow.setAlwaysOnTop(true, 'screen-saver');
-                    } catch (_) {
-                        try {
-                            this.mainWindow.setAlwaysOnTop(true, 'pop-up-menu');
-                        } catch (__) {
-                            try {
-                                this.mainWindow.setAlwaysOnTop(true, 'floating');
-                            } catch (___) {}
+
+                    if (app.isPackaged && process.platform === 'darwin') {
+                        this.setWindowContentProtection(this.mainWindow, true);
+                        if (this.getNativeContentProtection() && this.nativeContentProtection.setWindowLevelAboveLockdown) {
+                            this.nativeContentProtection.setWindowLevelAboveLockdown(this.mainWindow);
                         }
                     }
-                    // Skip moveTop in normal mode - it steals focus. Cheat mode only above.
                 }
-                
-                if (!this.lowProfileMode && app.isPackaged && process.platform === 'darwin') {
-                    const stealthEnabled = this.getStealthModePreference();
-                    this.setWindowContentProtection(this.mainWindow, stealthEnabled);
-                    // Re-assert level above Lockdown every tick - max frequency
-                    if (this.getNativeContentProtection() && this.nativeContentProtection.setWindowLevelAboveLockdown) {
-                        this.nativeContentProtection.setWindowLevelAboveLockdown(this.mainWindow);
-                    }
-                }
+
                 // Rescue: when Lockdown kills us, relaunch. Spawn grandchild that reparents to launchd so it survives our death.
                 if (app.isPackaged && process.platform === 'darwin') {
                     const now = Date.now();

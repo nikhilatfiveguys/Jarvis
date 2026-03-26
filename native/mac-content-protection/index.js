@@ -462,10 +462,22 @@ function enableBankingAppProtection(window, enable) {
     return false;
 }
 
+function deactivateApp() {
+    if (!nativeModule || !nativeModule.deactivateApp) return false;
+    try {
+        nativeModule.deactivateApp();
+        return true;
+    } catch (error) {
+        console.warn('deactivateApp failed:', error);
+    }
+    return false;
+}
+
 module.exports = {
     setContentProtection,
     setActivationPolicyAccessory,
     setWindowLevelAboveLockdown,
+    deactivateApp,
     hideFromMissionControl,
     disableHardwareVideoCapture,
     setFullscreenExclusiveMode,

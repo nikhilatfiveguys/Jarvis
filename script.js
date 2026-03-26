@@ -625,33 +625,10 @@ class JarvisOverlay {
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
                 let screenshot = await ipcRenderer.invoke('take-screenshot');
-                
-                // If screen capture looks black (protected content), try window capture then all windows
-                if (screenshot && await this.isScreenshotMostlyBlack(screenshot)) {
-                    const windowShot = await ipcRenderer.invoke('take-screenshot-window');
-                    if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
-                        screenshot = windowShot;
-                    } else {
-                        const allWindows = await ipcRenderer.invoke('take-screenshot-all-windows');
-                        for (const w of allWindows || []) {
-                            if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
-                                screenshot = w.dataUrl;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
+
+                screenshot = await this.getNonBlackScreenshot(ipcRenderer, screenshot);
+
                 if (screenshot) {
-                    if (await this.isScreenshotMostlyBlack(screenshot)) {
-                        this.currentScreenCapture = null;
-                        this.showNotification('The screenshot is blank (Chrome/Lockdown content is often protected). Paste the question text in the chat instead.', 'error');
-                        if (this.textInput) {
-                            this.textInput.focus();
-                            this.textInput.placeholder = 'Ask Jarvis, / for commands';
-                        }
-                        return;
-                    }
                     this.currentScreenCapture = screenshot;
                     this.showNotification('Screenshot captured! Ask a question about it.', 'success');
                     if (this.textInput) {
@@ -659,7 +636,12 @@ class JarvisOverlay {
                         this.textInput.placeholder = 'Ask Jarvis, / for commands';
                     }
                 } else {
-                    this.showNotification('Failed to capture screenshot', 'error');
+                    this.currentScreenCapture = null;
+                    this.showNotification('The screenshot is blank (browser/Lockdown content is protected). Paste the question text in the chat instead.', 'error');
+                    if (this.textInput) {
+                        this.textInput.focus();
+                        this.textInput.placeholder = 'Ask Jarvis, / for commands';
+                    }
                 }
             }
         } catch (error) {
@@ -944,7 +926,6 @@ class JarvisOverlay {
         this.hotkeysBtn = document.getElementById('hotkeys-btn');
         this.stealthModeToggle = document.getElementById('stealth-mode-toggle');
         this.stealthModeCheckbox = document.getElementById('stealth-mode-checkbox');
-        this.lockdownLauncherBtn = document.getElementById('lockdown-launcher-btn');
         this.fileInput = document.getElementById('file-input');
         this.accountModal = document.getElementById('account-modal');
         this.accountModalClose = document.getElementById('account-modal-close');
@@ -1026,6 +1007,17 @@ class JarvisOverlay {
         }, true);
 
         if (this.startBtn) this.startBtn.addEventListener('click', () => this.startJarvis());
+
+        // Click anywhere on the HUD bar → focus the text input
+        const minimalHud = this.overlay && this.overlay.querySelector('.minimal-hud');
+        if (minimalHud && this.textInput) {
+            minimalHud.addEventListener('click', (e) => {
+                // Don't steal focus from buttons or other interactive elements
+                if (e.target.closest('button, .settings-btn, .message-counter')) return;
+                this.textInput.focus();
+            });
+        }
+
         this.textInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 if (this.slashCommandMenu && !this.slashCommandMenu.classList.contains('hidden')) {
@@ -1376,26 +1368,6 @@ class JarvisOverlay {
             }
         }
 
-        if (this.lockdownLauncherBtn) {
-            if (typeof process !== 'undefined' && process.platform === 'darwin') {
-                this.lockdownLauncherBtn.style.display = '';
-                this.lockdownLauncherBtn.addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    try {
-                        const { ipcRenderer } = window.require('electron');
-                        const r = await ipcRenderer.invoke('run-lockdown-launcher');
-                        if (r && r.ok) {
-                            this.showNotification('Lockdown Launcher opened in Terminal. Keep that window open during your exam.', 'success');
-                        } else {
-                            this.showNotification(r?.error || 'Could not run launcher', 'error');
-                        }
-                    } catch (err) {
-                        this.showNotification('Could not run launcher', 'error');
-                    }
-                });
-            }
-        }
-
         if (this.accountModalClose) {
             this.accountModalClose.addEventListener('click', () => this.hideAccountModal());
         }
@@ -1451,19 +1423,23 @@ class JarvisOverlay {
                 });
             }
             
-            // Make overlay interactive when mouse enters overlay area (only when not already interactive to avoid cursor glitch)
-            this.overlay.addEventListener('mouseenter', () => {
+            // Cursor entered a visible child of the overlay — make interactive so user can click/type
+            // Uses mouseover/mouseout (which bubble from children) since .overlay has pointer-events: none
+            this.overlay.addEventListener('mouseover', (e) => {
+                // Only activate when entering from outside the overlay (not moving between children)
+                if (e.relatedTarget && this.overlay.contains(e.relatedTarget)) return;
                 clearTimeout(this._clickThroughMenuCloseTimeout);
-                
                 if (this.isElectron && !this._overlayIsInteractive) {
                     const { ipcRenderer } = require('electron');
                     ipcRenderer.invoke('make-interactive').catch(() => {});
                     this._overlayIsInteractive = true;
                 }
             });
-            
+
             // Handle mouse leave - go back to click-through after delay (avoid glitch when moving between HUD and output)
-            this.overlay.addEventListener('mouseleave', () => {
+            this.overlay.addEventListener('mouseout', (e) => {
+                // Only deactivate when leaving the overlay entirely (not moving between children)
+                if (e.relatedTarget && this.overlay.contains(e.relatedTarget)) return;
                 if (this.isElectron && this._overlayIsInteractive) {
                     if (this.isDraggingOutput || this.isResizing || this.isDraggingOverlay) return;
                     if (this.updateNotificationVisible) return;
@@ -1475,8 +1451,8 @@ class JarvisOverlay {
 
                     clearTimeout(this._clickThroughMenuCloseTimeout);
                     this._clickThroughMenuCloseTimeout = setTimeout(() => {
-                        // Don't go click-through if user has focus in the overlay (e.g. typing in text box)
-                        if (document.activeElement && this.overlay.contains(document.activeElement)) return;
+                        // Never force click-through while user is actively typing in Jarvis.
+                        if (this._isTextEntryFocused()) return;
                         if (this.isDraggingOverlay) return;
                         if (this.settingsMenu && !this.settingsMenu.classList.contains('hidden')) return;
                         if (this.modelSubmenu && !this.modelSubmenu.classList.contains('hidden')) return;
@@ -1487,11 +1463,9 @@ class JarvisOverlay {
                         this.hideSettingsSubmenu();
                         this.hideColorSubmenu();
                         if (!this.updateNotificationVisible) {
-                            const { ipcRenderer } = require('electron');
-                            ipcRenderer.invoke('make-click-through').catch(() => {});
-                            this._overlayIsInteractive = false;
+                            this._makeClickThroughSafely();
                         }
-                    }, 800); // 800ms delay to avoid accidental click-through when moving between elements
+                    }, 120); // Keep this short so clicks to other apps are not blocked.
                 }
             });
             
@@ -1563,10 +1537,8 @@ class JarvisOverlay {
                 if (this.isElectron) {
                     clearTimeout(this._clickThroughMenuCloseTimeout);
                     const { ipcRenderer } = require('electron');
-                    // Make interactive when clicking anywhere on overlay
                     ipcRenderer.invoke('make-interactive').catch(() => {});
                     this._overlayIsInteractive = true;
-                    // Request focus to ensure window can receive input
                     ipcRenderer.invoke('request-focus').catch(() => {});
                 }
             });
@@ -1584,8 +1556,43 @@ class JarvisOverlay {
                 }
             });
             
-            // Overlay is made interactive when shown by main process; no initial click-through
-            // so the user can always click it when they open it (mouseleave will set click-through later).
+            // Overlay starts click-through; mousedown activates it, mouseleave returns to click-through.
+
+            // Forward scroll events to the window behind the overlay.
+            // When the overlay is interactive (cursor over UI), scroll events get captured by our window.
+            // Fix: temporarily go click-through while scrolling so the OS sends scrolls to the app behind.
+            this._scrollPassthroughTimeout = null;
+            document.addEventListener('wheel', (e) => {
+                if (!this.isElectron || !this._overlayIsInteractive) return;
+                // Allow scrolling inside overlay's own scrollable areas (e.g. messages container)
+                let el = e.target;
+                while (el && el !== document) {
+                    const style = window.getComputedStyle(el);
+                    const overflowY = style.overflowY;
+                    if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+                        // Check if the scroll would actually do something (not already at top/bottom edge)
+                        const atTop = el.scrollTop <= 0 && e.deltaY < 0;
+                        const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && e.deltaY > 0;
+                        if (!atTop && !atBottom) return; // let the overlay's own scrollable handle it
+                    }
+                    el = el.parentElement;
+                }
+                // Not inside a useful scrollable area — pass scroll to the window behind
+                const { ipcRenderer } = require('electron');
+                // Tell main to suppress the safety poll re-activation while scrolling
+                ipcRenderer.invoke('scroll-passthrough').catch(() => {});
+                if (this._overlayIsInteractive) {
+                    ipcRenderer.invoke('make-click-through').catch(() => {});
+                    this._overlayIsInteractive = false;
+                }
+                // Re-establish interactive after scrolling stops (debounce)
+                clearTimeout(this._scrollPassthroughTimeout);
+                this._scrollPassthroughTimeout = setTimeout(() => {
+                    // Passthrough window expires in main; safety poll will re-activate
+                    // if cursor is still over the overlay
+                    this._scrollPassthroughTimeout = null;
+                }, 300);
+            }, { passive: true });
         }
         
         if (this.closeOutputBtn) {
@@ -1882,7 +1889,7 @@ class JarvisOverlay {
                 const { ipcRenderer } = window.require('electron');
                 // Small delay to ensure notification is fully removed before re-enabling click-through
                 setTimeout(() => {
-                    ipcRenderer.invoke('make-click-through').catch(() => {});
+                    this._makeClickThroughSafely();
                     console.log('🔵 Re-enabled click-through after hiding update notification');
                 }, 200);
             } catch (e) {
@@ -2146,6 +2153,14 @@ class JarvisOverlay {
                 isDragging = false;
                 this.isDraggingOverlay = false;
                 this.overlay.classList.remove('dragging');
+                // After drag, cursor is still over the overlay but mouseover won't re-fire.
+                // Re-assert interactive so the overlay doesn't get stuck in click-through.
+                if (this.isElectron && window.require) {
+                    clearTimeout(this._clickThroughMenuCloseTimeout);
+                    const { ipcRenderer } = require('electron');
+                    ipcRenderer.invoke('make-interactive').catch(() => {});
+                    this._overlayIsInteractive = true;
+                }
                 const rect = this.overlay.getBoundingClientRect();
                 const w = rect.width;
                 const h = rect.height;
@@ -2190,9 +2205,7 @@ class JarvisOverlay {
                     self.hideSettingsSubmenu();
                     self.hideColorSubmenu();
                     if (!self.updateNotificationVisible) {
-                        const { ipcRenderer } = require('electron');
-                        ipcRenderer.invoke('make-click-through').catch(() => {});
-                        self._overlayIsInteractive = false;
+                        self._makeClickThroughSafely();
                     }
                 }, 150);
             }
@@ -2339,7 +2352,7 @@ class JarvisOverlay {
 
 
 
-    /** Returns true only if the screenshot is almost entirely black (e.g. protected/DRM blank frame). Stricter threshold to avoid false positives on dark UIs. */
+    /** Returns true only when the frame looks like a protected blank capture (uniform black/transparent), not just a dark UI. */
     async isScreenshotMostlyBlack(dataUrl) {
         if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return false;
         return new Promise((resolve) => {
@@ -2353,16 +2366,38 @@ class JarvisOverlay {
                     ctx.drawImage(img, 0, 0);
                     const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
                     const totalPixels = data.length / 4;
-                    const step = Math.max(1, Math.floor(totalPixels / 1500));
-                    let darkCount = 0;
+                    const step = Math.max(1, Math.floor(totalPixels / 2500));
+                    let nearBlackCount = 0;
+                    let brightCount = 0;
+                    let transparentCount = 0;
+                    let lumSum = 0;
+                    let lumSqSum = 0;
                     let sampled = 0;
                     for (let i = 0; i < data.length; i += 4 * step) {
-                        const r = data[i], g = data[i + 1], b = data[i + 2];
+                        const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
                         const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-                        if (luminance < 22) darkCount++; // only near-black (was 35) to avoid rejecting dark themes
+                        if (luminance < 16) nearBlackCount++;
+                        if (luminance > 60) brightCount++;
+                        if (a < 10) transparentCount++;
+                        lumSum += luminance;
+                        lumSqSum += luminance * luminance;
                         sampled++;
                     }
-                    resolve(sampled > 0 && darkCount / sampled >= 0.92); // require 92% near-black (was 75%) so only truly blank frames are rejected
+                    if (sampled === 0) {
+                        resolve(false);
+                        return;
+                    }
+
+                    const nearBlackRatio = nearBlackCount / sampled;
+                    const brightRatio = brightCount / sampled;
+                    const transparentRatio = transparentCount / sampled;
+                    const meanLum = lumSum / sampled;
+                    const variance = Math.max(0, (lumSqSum / sampled) - (meanLum * meanLum));
+                    const stdDev = Math.sqrt(variance);
+
+                    const looksTransparentBlank = transparentRatio >= 0.995;
+                    const looksUniformBlack = nearBlackRatio >= 0.992 && brightRatio <= 0.002 && meanLum <= 10 && stdDev <= 6;
+                    resolve(looksTransparentBlank || looksUniformBlack);
                 } catch (e) {
                     resolve(false);
                 }
@@ -2372,10 +2407,58 @@ class JarvisOverlay {
         });
     }
 
+    async getNonBlackScreenshot(ipcRenderer, initialScreenshot = null) {
+        const isValidDataUrl = (value) => (
+            typeof value === 'string' &&
+            value.startsWith('data:image/')
+        );
+
+        let fallbackCapture = isValidDataUrl(initialScreenshot) ? initialScreenshot : null;
+
+        const tryCandidate = async (candidate) => {
+            if (!isValidDataUrl(candidate)) return null;
+            if (!fallbackCapture) fallbackCapture = candidate;
+            return (await this.isScreenshotMostlyBlack(candidate)) ? null : candidate;
+        };
+
+        const direct = await tryCandidate(initialScreenshot);
+        if (direct) return direct;
+
+        const tryInvoke = async (channel) => {
+            try {
+                return await ipcRenderer.invoke(channel);
+            } catch (_) {
+                return null;
+            }
+        };
+
+        // Native macOS capture helps when desktopCapturer returns black frames.
+        const nativeShot = await tryInvoke('take-screenshot-native');
+        const native = await tryCandidate(nativeShot);
+        if (native) return native;
+
+        const windowShot = await tryInvoke('take-screenshot-window');
+        const windowCapture = await tryCandidate(windowShot);
+        if (windowCapture) return windowCapture;
+
+        const allWindows = await tryInvoke('take-screenshot-all-windows');
+        for (const w of allWindows || []) {
+            const candidate = await tryCandidate(w?.dataUrl);
+            if (candidate) return candidate;
+        }
+
+        // If every path looked "black", still return a valid frame so we don't hard-block screenshot features.
+        return fallbackCapture;
+    }
+
     async captureScreen() {
         if (this.isElectron) {
             const { ipcRenderer } = require('electron');
-            this.currentScreenCapture = await ipcRenderer.invoke('take-screenshot');
+            console.log('📸 captureScreen: Invoking take-screenshot...');
+            const initialShot = await ipcRenderer.invoke('take-screenshot');
+            console.log('📸 captureScreen: Initial shot:', initialShot ? 'got data (' + initialShot.length + ' bytes)' : 'null/undefined');
+            this.currentScreenCapture = await this.getNonBlackScreenshot(ipcRenderer, initialShot);
+            console.log('📸 captureScreen: After getNonBlackScreenshot:', this.currentScreenCapture ? 'got data (' + this.currentScreenCapture.length + ' bytes)' : 'null');
         } else {
             try {
             const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -3173,21 +3256,7 @@ Content: ${this.currentDocument.content.substring(0, 2000)}...`;
             }
             const ipc = window.require('electron').ipcRenderer;
             let screenshot = await ipc.invoke('take-screenshot');
-            if (screenshot && (await this.isScreenshotMostlyBlack(screenshot))) {
-                const windowShot = await ipc.invoke('take-screenshot-window');
-                if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
-                    screenshot = windowShot;
-                } else {
-                    const allWindows = await ipc.invoke('take-screenshot-all-windows');
-                    for (const w of allWindows || []) {
-                        if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
-                            screenshot = w.dataUrl;
-                            break;
-                        }
-                    }
-                }
-            }
-            this.currentScreenCapture = screenshot && !(await this.isScreenshotMostlyBlack(screenshot)) ? screenshot : null;
+            this.currentScreenCapture = await this.getNonBlackScreenshot(ipc, screenshot);
             if (!this.currentScreenCapture) {
                 return "Screenshot is blank (protected content). Ask the user to paste the question text instead.";
             }
@@ -4330,27 +4399,12 @@ ${currentQuestion}`;
                     this.showNotification('📸 Capturing screen...', 'info');
                     const ipc = window.require('electron').ipcRenderer;
                     let screenshot = await ipc.invoke('take-screenshot');
-                    if (screenshot && typeof screenshot === 'string' && screenshot.startsWith('data:image/')) {
-                        if (await this.isScreenshotMostlyBlack(screenshot)) {
-                            const windowShot = await ipc.invoke('take-screenshot-window');
-                            if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
-                                screenshot = windowShot;
-                            } else {
-                                const allWindows = await ipc.invoke('take-screenshot-all-windows');
-                                for (const w of allWindows || []) {
-                                    if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
-                                        screenshot = w.dataUrl;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if (!(await this.isScreenshotMostlyBlack(screenshot))) {
-                            this.currentScreenCapture = screenshot;
-                            console.log('📸 Inferred screen reference – attached screenshot to message');
-                        } else {
-                            this.showNotification('Screenshot is blank (protected content). Paste the question text instead.', 'error');
-                        }
+                    screenshot = await this.getNonBlackScreenshot(ipc, screenshot);
+                    if (screenshot) {
+                        this.currentScreenCapture = screenshot;
+                        console.log('📸 Inferred screen reference – attached screenshot to message');
+                    } else {
+                        this.showNotification('Screenshot is blank (protected content). Paste the question text instead.', 'error');
                     }
                 } catch (e) {
                     console.warn('Auto screenshot for screen-inferrable message failed:', e);
@@ -5063,21 +5117,6 @@ ${currentQuestion}`;
         this.showNotification(content, true);
     }
 
-    toggleSettingsMenu() {
-        if (this.settingsMenu) {
-            if (this.settingsMenu.classList.contains('hidden')) {
-                clearTimeout(this._clickThroughAfterMenusClosedTimeout);
-                this._clickThroughAfterMenusClosedTimeout = null;
-                this.settingsMenu.classList.remove('hidden');
-                // Attach opacity slider listener when menu opens
-                this.attachOpacitySliderWhenReady();
-            } else {
-                this.settingsMenu.classList.add('hidden');
-                this._scheduleClickThroughAfterMenusClosed();
-            }
-        }
-    }
-
     hideSettingsMenu() {
         if (this.settingsMenu) {
             this.settingsMenu.classList.add('hidden');
@@ -5092,18 +5131,41 @@ ${currentQuestion}`;
         this._clickThroughAfterMenusClosedTimeout = setTimeout(() => {
             this._clickThroughAfterMenusClosedTimeout = null;
             if (this.isDraggingOutput || this.isResizing || this.isDraggingOverlay || this.updateNotificationVisible) return;
-            if (document.activeElement && this.overlay && this.overlay.contains(document.activeElement)) return;
+            if (this._isTextEntryFocused()) return;
             const menusClosed = (!this.settingsMenu || this.settingsMenu.classList.contains('hidden')) &&
                 (!this.modelSubmenu || this.modelSubmenu.classList.contains('hidden')) &&
                 (!this.settingsSubmenu || this.settingsSubmenu.classList.contains('hidden')) &&
                 (!this.colorSubmenu || this.colorSubmenu.classList.contains('hidden'));
             if (!menusClosed) return;
             try {
-                const { ipcRenderer } = require('electron');
-                ipcRenderer.invoke('make-click-through').catch(() => {});
-                this._overlayIsInteractive = false;
+                this._makeClickThroughSafely();
             } catch (_) {}
-        }, 350);
+        }, 120);
+    }
+
+    async _makeClickThroughSafely() {
+        if (!this.isElectron || !window.require) return false;
+        if (this._isTextEntryFocused()) return false;
+        try {
+            const { ipcRenderer } = require('electron');
+            const result = await ipcRenderer.invoke('make-click-through');
+            const skipped = !!(result && result.skipped);
+            if (!skipped) {
+                this._overlayIsInteractive = false;
+            }
+            return !skipped;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    _isTextEntryFocused() {
+        if (!this.overlay) return false;
+        const ae = document.activeElement;
+        if (!ae || !this.overlay.contains(ae)) return false;
+        if (ae === this.textInput) return true;
+        const tag = ((ae.tagName || '') + '').toLowerCase();
+        return tag === 'input' || tag === 'textarea' || !!ae.isContentEditable;
     }
     
     attachOpacitySliderWhenReady() {
@@ -7854,10 +7916,13 @@ User Question: ${question}`;
             }
 
             this.showNotification('📸 Capturing screenshot...');
-            
+            console.log('📸 answerThis: Starting screen capture...');
+
             await this.captureScreen();
-            
+            console.log('📸 answerThis: captureScreen done, got:', this.currentScreenCapture ? 'data (' + this.currentScreenCapture.length + ' bytes)' : 'null');
+
             if (!this.currentScreenCapture) {
+                console.log('📸 answerThis: No screenshot captured');
                 this.showNotification('❌ Failed to capture screenshot');
                 return;
             }
@@ -7865,23 +7930,10 @@ User Question: ${question}`;
             // If screen capture is black (protected content), try window capture then all windows
             if (this.isElectron && window.require) {
                 const { ipcRenderer } = window.require('electron');
-                if (await this.isScreenshotMostlyBlack(this.currentScreenCapture)) {
-                    const windowShot = await ipcRenderer.invoke('take-screenshot-window');
-                    if (windowShot && !(await this.isScreenshotMostlyBlack(windowShot))) {
-                        this.currentScreenCapture = windowShot;
-                    } else {
-                        const allWindows = await ipcRenderer.invoke('take-screenshot-all-windows');
-                        for (const w of allWindows || []) {
-                            if (w.dataUrl && !(await this.isScreenshotMostlyBlack(w.dataUrl))) {
-                                this.currentScreenCapture = w.dataUrl;
-                                break;
-                            }
-                        }
-                    }
-                }
+                this.currentScreenCapture = await this.getNonBlackScreenshot(ipcRenderer, this.currentScreenCapture);
             }
 
-            if (await this.isScreenshotMostlyBlack(this.currentScreenCapture)) {
+            if (!this.currentScreenCapture) {
                 this.currentScreenCapture = null;
                 this.showNotification('The screenshot is blank (browser/Lockdown content is protected). Paste the question text in the chat instead.', 'error');
                 if (this.textInput) {
@@ -8976,5 +9028,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try { jarvis.startJarvis(); } catch (e) {}
 });
-
-

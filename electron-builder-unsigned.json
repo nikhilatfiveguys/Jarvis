@@ -138,9 +138,7 @@
   "node_modules/uiohook-napi/prebuilds/**/*",
   "node_modules/electron-updater/**/*"
  ],
- "extraResources": [
-  { "from": "scripts/lockdown-launcher.command", "to": "lockdown-launcher.command" }
- ],
+ "extraResources": [],
   "afterPack": "build/afterPack-unsigned.js",
   "mac": {
     "category": "public.app-category.accessibility",

@@ -134,11 +134,29 @@ class SupabaseIntegration {
     }
 
     /**
+     * Build normalized email lookup candidates
+     */
+    getEmailCandidates(email) {
+        const rawEmail = email && typeof email === 'string' ? email.trim() : '';
+        if (!rawEmail || !rawEmail.includes('@')) {
+            return [];
+        }
+
+        const normalizedEmail = rawEmail.toLowerCase();
+        if (normalizedEmail === rawEmail) {
+            return [rawEmail];
+        }
+
+        return [normalizedEmail, rawEmail];
+    }
+
+    /**
      * Check subscription by email (tries lowercase first, then raw email for case mismatches)
      */
     async checkSubscriptionByEmail(email) {
         const rawEmail = email && typeof email === 'string' ? email.trim() : '';
-        if (!rawEmail || !rawEmail.includes('@')) {
+        const emailCandidates = this.getEmailCandidates(rawEmail);
+        if (emailCandidates.length === 0) {
             console.warn('checkSubscriptionByEmail: invalid email', rawEmail ? '(length ' + rawEmail.length + ')' : '(empty)');
             return { hasSubscription: false };
         }
@@ -498,6 +516,14 @@ class SupabaseIntegration {
     async setPassword(email, password) {
         try {
             console.log('🔐 Setting password for:', email);
+
+            const emailCandidates = this.getEmailCandidates(email);
+            if (emailCandidates.length === 0) {
+                return {
+                    success: false,
+                    error: 'Invalid email address'
+                };
+            }
             
             if (!password || password.length < 6) {
                 return {
@@ -516,12 +542,18 @@ class SupabaseIntegration {
                     password_hash: passwordHash,
                     updated_at: new Date().toISOString()
                 })
-                .eq('email', email)
-                .select()
-                .single();
+                .in('email', emailCandidates)
+                .select('id');
 
             if (error) {
                 throw error;
+            }
+
+            if (!Array.isArray(data) || data.length === 0) {
+                return {
+                    success: false,
+                    error: 'No account found with this email'
+                };
             }
 
             console.log('✅ Password set for:', email);
@@ -544,17 +576,34 @@ class SupabaseIntegration {
         try {
             console.log('🔐 Verifying password for:', email);
 
+            const emailCandidates = this.getEmailCandidates(email);
+            if (emailCandidates.length === 0) {
+                return {
+                    success: false,
+                    error: 'Invalid email address'
+                };
+            }
+
             const { data, error } = await this.supabase
                 .from('subscriptions')
                 .select('password_hash')
-                .eq('email', email)
-                .single();
+                .in('email', emailCandidates)
+                .limit(1000);
 
             if (error) {
                 throw error;
             }
 
-            if (!data || !data.password_hash) {
+            const rows = Array.isArray(data) ? data : [];
+            if (rows.length === 0) {
+                return {
+                    success: false,
+                    error: 'No account found with this email'
+                };
+            }
+
+            const passwordRows = rows.filter((row) => !!row.password_hash);
+            if (passwordRows.length === 0) {
                 return {
                     success: false,
                     error: 'No password set for this account'
@@ -565,7 +614,8 @@ class SupabaseIntegration {
             const CryptoJS = require('crypto-js');
             const providedHash = CryptoJS.SHA256(password).toString();
 
-            if (providedHash === data.password_hash) {
+            const isMatch = passwordRows.some((row) => row.password_hash === providedHash);
+            if (isMatch) {
                 console.log('✅ Password verified for:', email);
                 return {
                     success: true
@@ -591,19 +641,28 @@ class SupabaseIntegration {
      */
     async hasPassword(email) {
         try {
+            const emailCandidates = this.getEmailCandidates(email);
+            if (emailCandidates.length === 0) {
+                return {
+                    success: true,
+                    hasPassword: false
+                };
+            }
+
             const { data, error } = await this.supabase
                 .from('subscriptions')
                 .select('password_hash')
-                .eq('email', email)
-                .single();
+                .in('email', emailCandidates)
+                .limit(1000);
 
-            if (error && error.code !== 'PGRST116') {
+            if (error) {
                 throw error;
             }
 
+            const rows = Array.isArray(data) ? data : [];
             return {
                 success: true,
-                hasPassword: !!(data && data.password_hash)
+                hasPassword: rows.some((row) => !!row.password_hash)
             };
         } catch (error) {
             console.error('❌ Error checking password:', error);
@@ -622,18 +681,26 @@ class SupabaseIntegration {
         try {
             console.log('🔐 Generating password reset token for:', email);
 
+            const emailCandidates = this.getEmailCandidates(email);
+            if (emailCandidates.length === 0) {
+                return {
+                    success: false,
+                    error: 'Invalid email address'
+                };
+            }
+
             // First check if the email exists and has an active subscription
-            const { data: user, error: userError } = await this.supabase
+            const { data: users, error: userError } = await this.supabase
                 .from('subscriptions')
                 .select('id, email')
-                .eq('email', email)
-                .single();
+                .in('email', emailCandidates)
+                .limit(1000);
 
-            if (userError && userError.code !== 'PGRST116') {
+            if (userError) {
                 throw userError;
             }
 
-            if (!user) {
+            if (!Array.isArray(users) || users.length === 0) {
                 return {
                     success: false,
                     error: 'No account found with this email'
@@ -647,17 +714,25 @@ class SupabaseIntegration {
             const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
             // Store the reset token
-            const { error: updateError } = await this.supabase
+            const { data: updatedRows, error: updateError } = await this.supabase
                 .from('subscriptions')
                 .update({
                     reset_token: resetCode,
                     reset_token_expires: expiresAt,
                     updated_at: new Date().toISOString()
                 })
-                .eq('email', email);
+                .in('email', emailCandidates)
+                .select('id');
 
             if (updateError) {
                 throw updateError;
+            }
+
+            if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
+                return {
+                    success: false,
+                    error: 'No account found with this email'
+                };
             }
 
             console.log('✅ Password reset token generated for:', email);
@@ -681,37 +756,55 @@ class SupabaseIntegration {
         try {
             console.log('🔐 Verifying password reset token for:', email);
 
+            const emailCandidates = this.getEmailCandidates(email);
+            if (emailCandidates.length === 0) {
+                return {
+                    success: false,
+                    error: 'Invalid email address'
+                };
+            }
+
             const { data, error } = await this.supabase
                 .from('subscriptions')
                 .select('reset_token, reset_token_expires')
-                .eq('email', email)
-                .single();
+                .in('email', emailCandidates)
+                .limit(1000);
 
             if (error) {
                 throw error;
             }
 
-            if (!data || !data.reset_token) {
+            const rows = Array.isArray(data) ? data : [];
+            const rowsWithToken = rows.filter((row) => !!row.reset_token);
+
+            if (rowsWithToken.length === 0) {
                 return {
                     success: false,
                     error: 'No reset code found. Please request a new one.'
                 };
             }
 
-            // Check if token has expired
-            const expiresAt = new Date(data.reset_token_expires);
-            if (expiresAt < new Date()) {
-                return {
-                    success: false,
-                    error: 'Reset code has expired. Please request a new one.'
-                };
-            }
-
             // Check if token matches
-            if (data.reset_token !== token) {
+            const matchingRows = rowsWithToken.filter((row) => row.reset_token === token);
+            if (matchingRows.length === 0) {
                 return {
                     success: false,
                     error: 'Invalid reset code'
+                };
+            }
+
+            // Check if any matching token is still valid
+            const now = new Date();
+            const hasValidToken = matchingRows.some((row) => {
+                if (!row.reset_token_expires) return false;
+                const expiresAt = new Date(row.reset_token_expires);
+                return !isNaN(expiresAt.getTime()) && expiresAt >= now;
+            });
+
+            if (!hasValidToken) {
+                return {
+                    success: false,
+                    error: 'Reset code has expired. Please request a new one.'
                 };
             }
 
@@ -733,6 +826,14 @@ class SupabaseIntegration {
      */
     async resetPasswordWithToken(email, token, newPassword) {
         try {
+            const emailCandidates = this.getEmailCandidates(email);
+            if (emailCandidates.length === 0) {
+                return {
+                    success: false,
+                    error: 'Invalid email address'
+                };
+            }
+
             // First verify the token
             const verifyResult = await this.verifyPasswordResetToken(email, token);
             if (!verifyResult.success) {
@@ -744,7 +845,7 @@ class SupabaseIntegration {
             const passwordHash = CryptoJS.SHA256(newPassword).toString();
 
             // Update password and clear reset token
-            const { error } = await this.supabase
+            const { data, error } = await this.supabase
                 .from('subscriptions')
                 .update({
                     password_hash: passwordHash,
@@ -752,10 +853,18 @@ class SupabaseIntegration {
                     reset_token_expires: null,
                     updated_at: new Date().toISOString()
                 })
-                .eq('email', email);
+                .in('email', emailCandidates)
+                .select('id');
 
             if (error) {
                 throw error;
+            }
+
+            if (!Array.isArray(data) || data.length === 0) {
+                return {
+                    success: false,
+                    error: 'No account found with this email'
+                };
             }
 
             console.log('✅ Password reset successfully for:', email);
@@ -1264,4 +1373,3 @@ class SupabaseIntegration {
 }
 
 module.exports = SupabaseIntegration;
-

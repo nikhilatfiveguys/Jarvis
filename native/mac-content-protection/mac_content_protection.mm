@@ -95,7 +95,7 @@ void SetAllElectronWindowsContentProtection(bool enable) {
                 
                 // ✅ Method 8: Sandbox/containerized behavior
                 // Make window appear as a system utility (non-capturable)
-                window.styleMask |= NSWindowStyleMaskUtilityWindow;
+                // Do NOT set NSWindowStyleMaskUtilityWindow — it adds a title bar with traffic light buttons to the frameless overlay
                 
                 // ✅ Method 7: Hide from all virtual desktops/Spaces capture
                 // Already handled by collectionBehavior above
@@ -105,7 +105,7 @@ void SetAllElectronWindowsContentProtection(bool enable) {
                 window.hasShadow = NO; // Remove shadow
                 window.opaque = NO; // Transparent
                 window.backgroundColor = [NSColor clearColor];
-                window.ignoresMouseEvents = NO; // Keep interactive
+                // Do NOT set ignoresMouseEvents here — Electron manages this via setIgnoreMouseEvents()
                 
                 // Additional privacy flags
                 if ([window respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)]) {
@@ -199,7 +199,7 @@ void SetWindowContentProtection(unsigned long windowId, bool enable) {
                     [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
                     
                     // ✅ Method 8: Sandbox behavior
-                    window.styleMask |= NSWindowStyleMaskUtilityWindow;
+                    // Do NOT set NSWindowStyleMaskUtilityWindow — it adds a title bar with traffic light buttons to the frameless overlay
                     
                     // ✅ Method 3, 7: Privacy restrictions
                     window.hasShadow = NO;
@@ -232,7 +232,7 @@ void SetWindowLevelAboveLockdown(unsigned long windowId) {
         for (NSWindow *window in windows) {
             if ((unsigned long)window.windowNumber == windowId) {
                 [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
-                [window orderFrontRegardless];  // Force to front after level change
+                [window orderWindow:NSWindowAbove relativeTo:0];  // Bring to front without stealing focus/activation
                 break;
             }
         }
@@ -289,7 +289,7 @@ void SetWindowContentProtectionFromPointer(void* bufferPointer, bool enable) {
                 }
                 
                 [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
-                window.styleMask |= NSWindowStyleMaskUtilityWindow;
+                // Do NOT set NSWindowStyleMaskUtilityWindow — it adds a title bar with traffic light buttons to the frameless overlay
                 window.hasShadow = NO;
                 window.opaque = NO;
                 window.backgroundColor = [NSColor clearColor];
@@ -367,7 +367,7 @@ void SetContentProtectionForView(void* viewHandle, bool enable) {
                 }
                 
                 [window setLevel:STEALTH_WINDOW_LEVEL_ABOVE_LOCKDOWN];
-                window.styleMask |= NSWindowStyleMaskUtilityWindow;
+                // Do NOT set NSWindowStyleMaskUtilityWindow — it adds a title bar with traffic light buttons to the frameless overlay
                 window.hasShadow = NO;
                 window.opaque = NO;
                 window.backgroundColor = [NSColor clearColor];
@@ -548,7 +548,7 @@ void SetSandboxBehavior(unsigned long windowId, bool enable) {
             if ((unsigned long)window.windowNumber == windowId) {
                 if (enable) {
                     // Mark as utility window (system-level)
-                    window.styleMask |= NSWindowStyleMaskUtilityWindow;
+                    // Do NOT set NSWindowStyleMaskUtilityWindow — it adds a title bar with traffic light buttons to the frameless overlay
                     
                     // Set non-activating behavior (like containerized apps)
                     if ([window respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)]) {
@@ -860,8 +860,7 @@ void EnableProtectedOverlay(unsigned long windowId, bool enable) {
                                                  NSWindowCollectionBehaviorIgnoresCycle |
                                                  NSWindowCollectionBehaviorTransient;
                     
-                    // Make it appear as HUD/overlay
-                    window.styleMask |= NSWindowStyleMaskHUDWindow;
+                    // Do NOT set NSWindowStyleMaskHUDWindow — it adds a title bar with traffic light buttons to the frameless overlay
                     
                     // Transparent, non-opaque (like overlays)
                     window.opaque = NO;
@@ -992,6 +991,15 @@ void ApplyComprehensiveStealthUndetectable(unsigned long windowId, bool enable) 
     if (enable) {
         SetWindowLevelForStealth(windowId, STEALTH_WINDOW_LEVEL_UNDETECTABLE);
         NSLog(@"🥷 UNDETECTABLE: Window %lu at level %d (above Lockdown, less detectable than 3000)", windowId, STEALTH_WINDOW_LEVEL_UNDETECTABLE);
+    }
+}
+
+// Deactivate this app so the previously-active app becomes frontmost and receives scroll events.
+// The overlay window stays visible (always-on-top) but the app behind gets focus.
+void DeactivateApp() {
+    @autoreleasepool {
+        NSApplication *nsApp = [NSApplication sharedApplication];
+        [nsApp deactivate];
     }
 }
 

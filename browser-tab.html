@@ -24,6 +24,7 @@
 
         .chrome {
             flex-shrink: 0;
+            -webkit-app-region: drag;
         }
 
         /* Only the strip behind the tab: super dark gray; no line below */
@@ -110,6 +111,17 @@
             min-height: 44px;
             background: #e8e8ed;
             border-bottom: 1px solid #d2d2d7;
+        }
+
+        .tab,
+        .nav-buttons,
+        .address-bar-wrap,
+        .toolbar-actions,
+        .nav-btn,
+        .toolbar-btn,
+        .address-bar,
+        webview {
+            -webkit-app-region: no-drag;
         }
 
         .nav-buttons {

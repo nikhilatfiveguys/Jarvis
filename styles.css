@@ -469,10 +469,15 @@ body {
     left: 50%;
     background: transparent;
     z-index: 9999;
-    pointer-events: auto;
+    pointer-events: none;
     --overlay-bg-color: #ffffff;
     --text-color: #000000;
     opacity: 1;
+}
+
+/* Only visible children of the overlay should receive mouse events */
+.overlay > * {
+    pointer-events: auto;
 }
 
 /* Attachments bar */

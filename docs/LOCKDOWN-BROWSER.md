@@ -11,15 +11,7 @@ Lockdown Browser (Respondus) **terminates** AXRuntime when you click "Start Test
 1. **Open AXRuntime** – Get the overlay visible.
 2. **Enable Cheat mode** (Settings → Cheat Mode) – See stealth options below.
 3. **Open Lockdown Browser** – Launch from your LMS, click "Start Test".
-4. AXRuntime will **auto-relaunch** if Lockdown killed it (~2 seconds). If it does not (Lockdown sometimes kills the rescue too), use the **Lockdown Launcher** below.
-
-## If auto-relaunch does not work
-
-Lockdown may kill the rescue process too. Run the **Lockdown Launcher** before opening Lockdown:
-
-1. In Finder, go to your Jarvis folder → `scripts` → double-click **lockdown-launcher.command**
-2. A Terminal window will open and watch for AXRuntime. **Leave it open** during your exam.
-3. When Lockdown kills AXRuntime, the launcher (running separately) will detect it and reopen the app in ~2 seconds.
+4. AXRuntime will **auto-relaunch** if Lockdown killed it (~2 seconds). If it does not, reopen AXRuntime manually (Alt+Space or from Applications).
 
 ## Maximizing stealth (cheat mode)
 

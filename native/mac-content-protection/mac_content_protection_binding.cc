@@ -15,6 +15,7 @@ extern void SetProtectedSwapchain(unsigned long windowId, bool enable);
 extern void SetSandboxBehavior(unsigned long windowId, bool enable);
 extern void ApplyComprehensiveStealth(unsigned long windowId, bool enable);
 extern void ApplyComprehensiveStealthUndetectable(unsigned long windowId, bool enable);
+extern void DeactivateApp();
 extern void SetActivationPolicyAccessory(bool accessory);
 extern void EnableSecureInputProtection(unsigned long windowId, bool enable);
 extern void EnableGlobalSecureInput(bool enable);
@@ -374,6 +375,13 @@ Napi::Value GlobalSecureInput(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, true);
 }
 
+// Deactivate the app so the window behind receives scroll/keyboard events
+Napi::Value DeactivateAppJs(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    DeactivateApp();
+    return Napi::Boolean::New(env, true);
+}
+
 // Set activation policy to Accessory (hide from Dock + Cmd+Tab) for stealth
 Napi::Value SetActivationPolicyAccessoryJs(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -447,6 +455,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(
         Napi::String::New(env, "setActivationPolicyAccessory"),
         Napi::Function::New(env, SetActivationPolicyAccessoryJs)
+    );
+    exports.Set(
+        Napi::String::New(env, "deactivateApp"),
+        Napi::Function::New(env, DeactivateAppJs)
     );
     
     exports.Set(
